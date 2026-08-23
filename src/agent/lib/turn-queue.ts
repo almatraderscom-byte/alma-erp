@@ -28,6 +28,8 @@ export interface TurnJobInput {
   /** AGENT-IOS-001 — tapped ask-card id; rides to the worker's internal chat call. */
   askCardId?: string | null
   internalControl?: boolean
+  /** Prose protocol the client advertised (prose-lifecycle.ts); rides to the worker. */
+  agentProseProtocol?: number | string | null
 }
 
 export interface TurnJobData {
@@ -40,6 +42,7 @@ export interface TurnJobData {
   clientRequestId: string | null
   askCardId: string | null
   internalControl: boolean
+  agentProseProtocol: 1 | 2
 }
 
 /**
@@ -75,6 +78,7 @@ export function buildTurnJobData(
         ? body.askCardId.trim()
         : null,
     internalControl: body.internalControl === true,
+    agentProseProtocol: body.agentProseProtocol === 2 || body.agentProseProtocol === '2' ? 2 : 1,
   }
 }
 

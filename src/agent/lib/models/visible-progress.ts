@@ -11,6 +11,12 @@
 export interface ProgressUpdateEvent {
   type: 'progress_update'
   label: string
+  /**
+   * Which lifecycle fact this is. `round` = a provider request was sent (a new
+   * model round). The prose-lifecycle tracker treats a round start as a hard
+   * prose-segment boundary; clients ignore the field.
+   */
+  stage?: 'round' | 'tool' | 'response'
 }
 const BN_DIGITS = '০১২৩৪৫৬৭৮৯'
 
@@ -34,10 +40,10 @@ export function createVisibleProgressContract(): {
 } {
   const emitted = new Set<string>()
 
-  const once = (key: string, label: string): ProgressUpdateEvent | null => {
+  const once = (key: string, label: string, stage: 'tool' | 'response'): ProgressUpdateEvent | null => {
     if (emitted.has(key)) return null
     emitted.add(key)
-    return { type: 'progress_update', label: cleanLabel(label) }
+    return { type: 'progress_update', label: cleanLabel(label), stage }
   }
 
   return {
@@ -47,15 +53,16 @@ export function createVisibleProgressContract(): {
       return {
         type: 'progress_update',
         label: `ধাপ ${bn(round)} · পরের পদক্ষেপ প্রস্তুত হচ্ছে`,
+        stage: 'round',
       }
     },
     toolSelected(round, toolLabel) {
       const safe = cleanLabel(toolLabel)
       if (!safe) return null
-      return once(`tool:${round}:${safe}`, `ধাপ ${bn(round)} · ${safe}`)
+      return once(`tool:${round}:${safe}`, `ধাপ ${bn(round)} · ${safe}`, 'tool')
     },
     responseStarted(round) {
-      return once(`response:${round}`, `ধাপ ${bn(round)} · ফল যাচাই করে উত্তর প্রস্তুত হচ্ছে`)
+      return once(`response:${round}`, `ধাপ ${bn(round)} · ফল যাচাই করে উত্তর প্রস্তুত হচ্ছে`, 'response')
     },
   }
 }

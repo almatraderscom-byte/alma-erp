@@ -1,0 +1,1020 @@
+{
+  "name": "golden-lead-progress-final",
+  "description": "Handoff Phase 0 golden transcript: lead L → tool A (+polite progress P1 with a post-tool tail) → silent tool B → forced update P2 → final draft D superseded by verifier → final F → done. Every layer (server tracker, document, GET projection, web reducer, iOS reducer) must agree on the visible prose after every event.",
+  "turnId": "turn-fx-1",
+  "messageId": "msg-fx-1",
+  "script": [
+    {
+      "timeline": {
+        "t": "think",
+        "text": "অর্ডার আর স্টক দুটোই লাগবে"
+      }
+    },
+    {
+      "emit": {
+        "type": "thinking_delta",
+        "delta": "অর্ডার আর স্টক দুটোই লাগবে"
+      },
+      "v2": [
+        {
+          "type": "thinking_delta",
+          "delta": "অর্ডার আর স্টক দুটোই লাগবে"
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "text_delta",
+        "delta": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+      },
+      "visible": [
+        {
+          "id": "turn-fx-1:p1",
+          "kind": "draft",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        }
+      ],
+      "v2": [
+        {
+          "type": "prose_start",
+          "blockId": "turn-fx-1:p1",
+          "kind": "draft",
+          "revision": 1
+        },
+        {
+          "type": "text_delta",
+          "delta": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।",
+          "blockId": "turn-fx-1:p1",
+          "revision": 1
+        }
+      ]
+    },
+    {
+      "timeline": {
+        "t": "text",
+        "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।",
+        "lead": true
+      }
+    },
+    {
+      "emit": {
+        "type": "preamble",
+        "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+      },
+      "visible": [
+        {
+          "id": "turn-fx-1:p1",
+          "kind": "lead",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        }
+      ],
+      "v2": [
+        {
+          "type": "prose_commit",
+          "blockId": "turn-fx-1:p1",
+          "kind": "lead",
+          "revision": 1,
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        },
+        {
+          "type": "preamble",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "progress_update",
+        "label": "ধাপ ১ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+        "stage": "round"
+      },
+      "v2": [
+        {
+          "type": "progress_update",
+          "label": "ধাপ ১ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+          "stage": "round"
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "progress_update",
+        "label": "ধাপ ১ · ফল যাচাই করে উত্তর প্রস্তুত হচ্ছে",
+        "stage": "response"
+      },
+      "v2": [
+        {
+          "type": "progress_update",
+          "label": "ধাপ ১ · ফল যাচাই করে উত্তর প্রস্তুত হচ্ছে",
+          "stage": "response"
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "text_delta",
+        "delta": "\n\nআগে স্টক দেখছি…"
+      },
+      "visible": [
+        {
+          "id": "turn-fx-1:p1",
+          "kind": "lead",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        },
+        {
+          "id": "turn-fx-1:p2",
+          "kind": "draft",
+          "text": "আগে স্টক দেখছি…"
+        }
+      ],
+      "v2": [
+        {
+          "type": "prose_start",
+          "blockId": "turn-fx-1:p2",
+          "kind": "draft",
+          "revision": 1
+        },
+        {
+          "type": "text_delta",
+          "delta": "আগে স্টক দেখছি…",
+          "blockId": "turn-fx-1:p2",
+          "revision": 1
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "progress_update",
+        "label": "ধাপ ১ · স্টক",
+        "stage": "tool"
+      },
+      "v2": [
+        {
+          "type": "progress_update",
+          "label": "ধাপ ১ · স্টক",
+          "stage": "tool"
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "tool_start",
+        "id": "tA",
+        "name": "get_inventory_status"
+      },
+      "note": "THE incident assertion: the progress line survives the next tool start",
+      "visible": [
+        {
+          "id": "turn-fx-1:p1",
+          "kind": "lead",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        },
+        {
+          "id": "turn-fx-1:p2",
+          "kind": "progress",
+          "text": "আগে স্টক দেখছি…"
+        }
+      ],
+      "v2": [
+        {
+          "type": "prose_commit",
+          "blockId": "turn-fx-1:p2",
+          "kind": "progress",
+          "revision": 1,
+          "text": "আগে স্টক দেখছি…"
+        },
+        {
+          "type": "tool_start",
+          "id": "tA",
+          "name": "get_inventory_status"
+        }
+      ]
+    },
+    {
+      "timeline": {
+        "t": "think",
+        "text": "স্টক আগে"
+      }
+    },
+    {
+      "emit": {
+        "type": "thinking_delta",
+        "delta": "স্টক আগে"
+      },
+      "v2": [
+        {
+          "type": "thinking_delta",
+          "delta": "স্টক আগে"
+        }
+      ]
+    },
+    {
+      "timeline": {
+        "t": "text",
+        "text": "আগে স্টক দেখছি… (২ গুদাম)"
+      }
+    },
+    {
+      "emit": {
+        "type": "text_delta",
+        "delta": " (২ গুদাম)"
+      },
+      "note": "round-end tail after the early tool_start continues the SAME block",
+      "visible": [
+        {
+          "id": "turn-fx-1:p1",
+          "kind": "lead",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        },
+        {
+          "id": "turn-fx-1:p2",
+          "kind": "progress",
+          "text": "আগে স্টক দেখছি… (২ গুদাম)"
+        }
+      ],
+      "v2": [
+        {
+          "type": "text_delta",
+          "delta": " (২ গুদাম)",
+          "blockId": "turn-fx-1:p2",
+          "revision": 1
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "tool_start",
+        "id": "tA",
+        "name": "get_inventory_status",
+        "input": {
+          "warehouse": "all"
+        }
+      },
+      "v2": [
+        {
+          "type": "prose_commit",
+          "blockId": "turn-fx-1:p2",
+          "kind": "progress",
+          "revision": 2,
+          "text": "আগে স্টক দেখছি… (২ গুদাম)"
+        },
+        {
+          "type": "tool_start",
+          "id": "tA",
+          "name": "get_inventory_status",
+          "input": {
+            "warehouse": "all"
+          }
+        }
+      ]
+    },
+    {
+      "timeline": {
+        "t": "tool",
+        "name": "get_inventory_status",
+        "ok": true,
+        "result": "2 warehouses"
+      }
+    },
+    {
+      "emit": {
+        "type": "tool_end",
+        "id": "tA",
+        "name": "get_inventory_status",
+        "success": true,
+        "resultPreview": "2 warehouses"
+      },
+      "v2": [
+        {
+          "type": "tool_end",
+          "id": "tA",
+          "name": "get_inventory_status",
+          "success": true,
+          "resultPreview": "2 warehouses"
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "progress_update",
+        "label": "ধাপ ২ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+        "stage": "round"
+      },
+      "v2": [
+        {
+          "type": "progress_update",
+          "label": "ধাপ ২ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+          "stage": "round"
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "tool_start",
+        "id": "tB",
+        "name": "analyze_pricing"
+      },
+      "visible": [
+        {
+          "id": "turn-fx-1:p1",
+          "kind": "lead",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        },
+        {
+          "id": "turn-fx-1:p2",
+          "kind": "progress",
+          "text": "আগে স্টক দেখছি… (২ গুদাম)"
+        }
+      ],
+      "v2": [
+        {
+          "type": "tool_start",
+          "id": "tB",
+          "name": "analyze_pricing"
+        }
+      ]
+    },
+    {
+      "timeline": {
+        "t": "think",
+        "text": "দাম মেলাই"
+      }
+    },
+    {
+      "timeline": {
+        "t": "tool",
+        "name": "analyze_pricing",
+        "ok": true,
+        "result": "ok"
+      }
+    },
+    {
+      "emit": {
+        "type": "tool_start",
+        "id": "tB",
+        "name": "analyze_pricing",
+        "input": {}
+      },
+      "v2": [
+        {
+          "type": "tool_start",
+          "id": "tB",
+          "name": "analyze_pricing",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "tool_end",
+        "id": "tB",
+        "name": "analyze_pricing",
+        "success": true,
+        "resultPreview": "ok"
+      },
+      "v2": [
+        {
+          "type": "tool_end",
+          "id": "tB",
+          "name": "analyze_pricing",
+          "success": true,
+          "resultPreview": "ok"
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "progress_update",
+        "label": "ধাপ ৩ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+        "stage": "round"
+      },
+      "v2": [
+        {
+          "type": "progress_update",
+          "label": "ধাপ ৩ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+          "stage": "round"
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "text_delta",
+        "delta": "\n\nএ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।"
+      },
+      "visible": [
+        {
+          "id": "turn-fx-1:p1",
+          "kind": "lead",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        },
+        {
+          "id": "turn-fx-1:p2",
+          "kind": "progress",
+          "text": "আগে স্টক দেখছি… (২ গুদাম)"
+        },
+        {
+          "id": "turn-fx-1:p3",
+          "kind": "draft",
+          "text": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।"
+        }
+      ],
+      "v2": [
+        {
+          "type": "prose_start",
+          "blockId": "turn-fx-1:p3",
+          "kind": "draft",
+          "revision": 1
+        },
+        {
+          "type": "text_delta",
+          "delta": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।",
+          "blockId": "turn-fx-1:p3",
+          "revision": 1
+        }
+      ]
+    },
+    {
+      "timeline": {
+        "t": "text",
+        "text": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।"
+      }
+    },
+    {
+      "emit": {
+        "type": "progress_update",
+        "label": "ধাপ ৪ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+        "stage": "round"
+      },
+      "note": "a new provider round is a hard boundary: the forced update commits as progress",
+      "visible": [
+        {
+          "id": "turn-fx-1:p1",
+          "kind": "lead",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        },
+        {
+          "id": "turn-fx-1:p2",
+          "kind": "progress",
+          "text": "আগে স্টক দেখছি… (২ গুদাম)"
+        },
+        {
+          "id": "turn-fx-1:p3",
+          "kind": "progress",
+          "text": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।"
+        }
+      ],
+      "v2": [
+        {
+          "type": "prose_commit",
+          "blockId": "turn-fx-1:p3",
+          "kind": "progress",
+          "revision": 1,
+          "text": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।"
+        },
+        {
+          "type": "progress_update",
+          "label": "ধাপ ৪ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+          "stage": "round"
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "text_delta",
+        "delta": "\n\nকাজ শেষ, সব ঠিক আছে Boss!"
+      },
+      "visible": [
+        {
+          "id": "turn-fx-1:p1",
+          "kind": "lead",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        },
+        {
+          "id": "turn-fx-1:p2",
+          "kind": "progress",
+          "text": "আগে স্টক দেখছি… (২ গুদাম)"
+        },
+        {
+          "id": "turn-fx-1:p3",
+          "kind": "progress",
+          "text": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।"
+        },
+        {
+          "id": "turn-fx-1:p4",
+          "kind": "draft",
+          "text": "কাজ শেষ, সব ঠিক আছে Boss!"
+        }
+      ],
+      "v2": [
+        {
+          "type": "prose_start",
+          "blockId": "turn-fx-1:p4",
+          "kind": "draft",
+          "revision": 1
+        },
+        {
+          "type": "text_delta",
+          "delta": "কাজ শেষ, সব ঠিক আছে Boss!",
+          "blockId": "turn-fx-1:p4",
+          "revision": 1
+        }
+      ]
+    },
+    {
+      "timeline": {
+        "t": "text",
+        "text": "কাজ শেষ, সব ঠিক আছে Boss!"
+      }
+    },
+    {
+      "emit": {
+        "type": "verification_retry",
+        "attempt": 1,
+        "maxAttempts": 2,
+        "categories": [
+          "completion_claim"
+        ],
+        "snippets": [
+          "কাজ শেষ"
+        ]
+      },
+      "note": "during the verifier retry the previous stable prose stays visible",
+      "visible": [
+        {
+          "id": "turn-fx-1:p1",
+          "kind": "lead",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        },
+        {
+          "id": "turn-fx-1:p2",
+          "kind": "progress",
+          "text": "আগে স্টক দেখছি… (২ গুদাম)"
+        },
+        {
+          "id": "turn-fx-1:p3",
+          "kind": "progress",
+          "text": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।"
+        },
+        {
+          "id": "turn-fx-1:p4",
+          "kind": "draft",
+          "text": "কাজ শেষ, সব ঠিক আছে Boss!"
+        }
+      ],
+      "v2": [
+        {
+          "type": "prose_supersede",
+          "blockId": "turn-fx-1:p4",
+          "replacementBlockId": "turn-fx-1:p5",
+          "reason": "completion_claim"
+        }
+      ]
+    },
+    {
+      "timeline": {
+        "t": "verify",
+        "attempt": 1,
+        "max": 2
+      }
+    },
+    {
+      "emit": {
+        "type": "progress_update",
+        "label": "ধাপ ৫ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+        "stage": "round"
+      },
+      "v2": [
+        {
+          "type": "progress_update",
+          "label": "ধাপ ৫ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+          "stage": "round"
+        }
+      ]
+    },
+    {
+      "emit": {
+        "type": "text_delta",
+        "delta": "\n\nBoss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।"
+      },
+      "note": "the replacement streams hidden; the stable answer is still on screen",
+      "visible": [
+        {
+          "id": "turn-fx-1:p1",
+          "kind": "lead",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        },
+        {
+          "id": "turn-fx-1:p2",
+          "kind": "progress",
+          "text": "আগে স্টক দেখছি… (২ গুদাম)"
+        },
+        {
+          "id": "turn-fx-1:p3",
+          "kind": "progress",
+          "text": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।"
+        },
+        {
+          "id": "turn-fx-1:p4",
+          "kind": "draft",
+          "text": "কাজ শেষ, সব ঠিক আছে Boss!"
+        }
+      ],
+      "v2": [
+        {
+          "type": "prose_start",
+          "blockId": "turn-fx-1:p5",
+          "kind": "draft",
+          "revision": 1,
+          "replaces": "turn-fx-1:p4"
+        },
+        {
+          "type": "text_delta",
+          "delta": "Boss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।",
+          "blockId": "turn-fx-1:p5",
+          "revision": 1
+        }
+      ]
+    },
+    {
+      "timeline": {
+        "t": "text",
+        "text": "Boss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।"
+      }
+    },
+    {
+      "save": true
+    },
+    {
+      "emit": {
+        "type": "done",
+        "messageId": "msg-fx-1",
+        "tokensIn": 10,
+        "tokensOut": 5
+      },
+      "visible": [
+        {
+          "id": "turn-fx-1:p1",
+          "kind": "lead",
+          "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+        },
+        {
+          "id": "turn-fx-1:p2",
+          "kind": "progress",
+          "text": "আগে স্টক দেখছি… (২ গুদাম)"
+        },
+        {
+          "id": "turn-fx-1:p3",
+          "kind": "progress",
+          "text": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।"
+        },
+        {
+          "id": "turn-fx-1:p5",
+          "kind": "final",
+          "text": "Boss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।"
+        }
+      ],
+      "v2": [
+        {
+          "type": "prose_commit",
+          "blockId": "turn-fx-1:p5",
+          "kind": "final",
+          "revision": 1,
+          "text": "Boss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।"
+        },
+        {
+          "type": "done",
+          "messageId": "msg-fx-1",
+          "tokensIn": 10,
+          "tokensOut": 5
+        }
+      ]
+    }
+  ],
+  "expectedV2Events": [
+    {
+      "type": "thinking_delta",
+      "delta": "অর্ডার আর স্টক দুটোই লাগবে"
+    },
+    {
+      "type": "prose_start",
+      "blockId": "turn-fx-1:p1",
+      "kind": "draft",
+      "revision": 1
+    },
+    {
+      "type": "text_delta",
+      "delta": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।",
+      "blockId": "turn-fx-1:p1",
+      "revision": 1
+    },
+    {
+      "type": "prose_commit",
+      "blockId": "turn-fx-1:p1",
+      "kind": "lead",
+      "revision": 1,
+      "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+    },
+    {
+      "type": "preamble",
+      "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+    },
+    {
+      "type": "progress_update",
+      "label": "ধাপ ১ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+      "stage": "round"
+    },
+    {
+      "type": "progress_update",
+      "label": "ধাপ ১ · ফল যাচাই করে উত্তর প্রস্তুত হচ্ছে",
+      "stage": "response"
+    },
+    {
+      "type": "prose_start",
+      "blockId": "turn-fx-1:p2",
+      "kind": "draft",
+      "revision": 1
+    },
+    {
+      "type": "text_delta",
+      "delta": "আগে স্টক দেখছি…",
+      "blockId": "turn-fx-1:p2",
+      "revision": 1
+    },
+    {
+      "type": "progress_update",
+      "label": "ধাপ ১ · স্টক",
+      "stage": "tool"
+    },
+    {
+      "type": "prose_commit",
+      "blockId": "turn-fx-1:p2",
+      "kind": "progress",
+      "revision": 1,
+      "text": "আগে স্টক দেখছি…"
+    },
+    {
+      "type": "tool_start",
+      "id": "tA",
+      "name": "get_inventory_status"
+    },
+    {
+      "type": "thinking_delta",
+      "delta": "স্টক আগে"
+    },
+    {
+      "type": "text_delta",
+      "delta": " (২ গুদাম)",
+      "blockId": "turn-fx-1:p2",
+      "revision": 1
+    },
+    {
+      "type": "prose_commit",
+      "blockId": "turn-fx-1:p2",
+      "kind": "progress",
+      "revision": 2,
+      "text": "আগে স্টক দেখছি… (২ গুদাম)"
+    },
+    {
+      "type": "tool_start",
+      "id": "tA",
+      "name": "get_inventory_status",
+      "input": {
+        "warehouse": "all"
+      }
+    },
+    {
+      "type": "tool_end",
+      "id": "tA",
+      "name": "get_inventory_status",
+      "success": true,
+      "resultPreview": "2 warehouses"
+    },
+    {
+      "type": "progress_update",
+      "label": "ধাপ ২ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+      "stage": "round"
+    },
+    {
+      "type": "tool_start",
+      "id": "tB",
+      "name": "analyze_pricing"
+    },
+    {
+      "type": "tool_start",
+      "id": "tB",
+      "name": "analyze_pricing",
+      "input": {}
+    },
+    {
+      "type": "tool_end",
+      "id": "tB",
+      "name": "analyze_pricing",
+      "success": true,
+      "resultPreview": "ok"
+    },
+    {
+      "type": "progress_update",
+      "label": "ধাপ ৩ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+      "stage": "round"
+    },
+    {
+      "type": "prose_start",
+      "blockId": "turn-fx-1:p3",
+      "kind": "draft",
+      "revision": 1
+    },
+    {
+      "type": "text_delta",
+      "delta": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।",
+      "blockId": "turn-fx-1:p3",
+      "revision": 1
+    },
+    {
+      "type": "prose_commit",
+      "blockId": "turn-fx-1:p3",
+      "kind": "progress",
+      "revision": 1,
+      "text": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।"
+    },
+    {
+      "type": "progress_update",
+      "label": "ধাপ ৪ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+      "stage": "round"
+    },
+    {
+      "type": "prose_start",
+      "blockId": "turn-fx-1:p4",
+      "kind": "draft",
+      "revision": 1
+    },
+    {
+      "type": "text_delta",
+      "delta": "কাজ শেষ, সব ঠিক আছে Boss!",
+      "blockId": "turn-fx-1:p4",
+      "revision": 1
+    },
+    {
+      "type": "prose_supersede",
+      "blockId": "turn-fx-1:p4",
+      "replacementBlockId": "turn-fx-1:p5",
+      "reason": "completion_claim"
+    },
+    {
+      "type": "progress_update",
+      "label": "ধাপ ৫ · পরের পদক্ষেপ প্রস্তুত হচ্ছে",
+      "stage": "round"
+    },
+    {
+      "type": "prose_start",
+      "blockId": "turn-fx-1:p5",
+      "kind": "draft",
+      "revision": 1,
+      "replaces": "turn-fx-1:p4"
+    },
+    {
+      "type": "text_delta",
+      "delta": "Boss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।",
+      "blockId": "turn-fx-1:p5",
+      "revision": 1
+    },
+    {
+      "type": "prose_commit",
+      "blockId": "turn-fx-1:p5",
+      "kind": "final",
+      "revision": 1,
+      "text": "Boss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।"
+    },
+    {
+      "type": "done",
+      "messageId": "msg-fx-1",
+      "tokensIn": 10,
+      "tokensOut": 5
+    }
+  ],
+  "expectedDocument": {
+    "version": 2,
+    "protocol": 2,
+    "turnId": "turn-fx-1",
+    "messageId": "msg-fx-1",
+    "blocks": [
+      {
+        "id": "turn-fx-1:p1",
+        "kind": "lead",
+        "state": "committed",
+        "revision": 1,
+        "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।",
+        "timelineIndex": 1
+      },
+      {
+        "id": "turn-fx-1:p2",
+        "kind": "progress",
+        "state": "committed",
+        "revision": 2,
+        "text": "আগে স্টক দেখছি… (২ গুদাম)",
+        "timelineIndex": 3
+      },
+      {
+        "id": "turn-fx-1:p3",
+        "kind": "progress",
+        "state": "committed",
+        "revision": 1,
+        "text": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।",
+        "timelineIndex": 7
+      },
+      {
+        "id": "turn-fx-1:p4",
+        "kind": "draft",
+        "state": "superseded",
+        "revision": 1,
+        "text": "কাজ শেষ, সব ঠিক আছে Boss!",
+        "timelineIndex": 8,
+        "reason": "completion_claim"
+      },
+      {
+        "id": "turn-fx-1:p5",
+        "kind": "final",
+        "state": "committed",
+        "revision": 1,
+        "text": "Boss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।",
+        "timelineIndex": 10,
+        "replaces": "turn-fx-1:p4"
+      }
+    ]
+  },
+  "expectedPresentationV2": {
+    "sequence": [
+      "activity:thinking",
+      "prose:lead:turn-fx-1:p1",
+      "activity:thinking",
+      "prose:progress:turn-fx-1:p2",
+      "activity:tool",
+      "activity:thinking",
+      "activity:tool",
+      "prose:progress:turn-fx-1:p3",
+      "activity:verification",
+      "prose:final:turn-fx-1:p5"
+    ],
+    "selfCorrected": true
+  },
+  "expectedV1Projection": {
+    "proseStates": [
+      "final",
+      "progress",
+      "progress",
+      "final"
+    ],
+    "legacyIosVisibleTexts": [
+      "বস, অর্ডার আর স্টক দেখে নিচ্ছি।",
+      "Boss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।"
+    ]
+  },
+  "expectedOldClientEventTypes": [
+    "thinking_delta",
+    "text_delta",
+    "preamble",
+    "progress_update",
+    "progress_update",
+    "text_delta",
+    "progress_update",
+    "tool_start",
+    "thinking_delta",
+    "text_delta",
+    "tool_start",
+    "tool_end",
+    "progress_update",
+    "tool_start",
+    "tool_start",
+    "tool_end",
+    "progress_update",
+    "text_delta",
+    "progress_update",
+    "text_delta",
+    "verification_retry",
+    "progress_update",
+    "text_delta",
+    "done"
+  ],
+  "expectedOwnerVisibleText": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।\n\nআগে স্টক দেখছি… (২ গুদাম)\n\nএ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।\n\nBoss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।",
+  "expectedFinalVisible": [
+    {
+      "id": "turn-fx-1:p1",
+      "kind": "lead",
+      "text": "বস, অর্ডার আর স্টক দেখে নিচ্ছি।"
+    },
+    {
+      "id": "turn-fx-1:p2",
+      "kind": "progress",
+      "text": "আগে স্টক দেখছি… (২ গুদাম)"
+    },
+    {
+      "id": "turn-fx-1:p3",
+      "kind": "progress",
+      "text": "এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।"
+    },
+    {
+      "id": "turn-fx-1:p5",
+      "kind": "final",
+      "text": "Boss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।"
+    }
+  ]
+}

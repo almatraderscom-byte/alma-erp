@@ -100,7 +100,10 @@ export function createTurnEventPublisher(
   const maxDeltaChars = opts?.maxDeltaChars ?? 2000
   let seq = -1
   let chain: Promise<void> = Promise.resolve()
-  let pendingDelta: { type: 'text_delta' | 'thinking_delta'; delta: string } | null = null
+  // Prose lifecycle v2: a text delta may carry `blockId`/`revision`. Deltas are
+  // coalesced only within ONE block — merging across blocks would corrupt the
+  // identity a v2 client addresses prose by.
+  let pendingDelta: { type: 'text_delta' | 'thinking_delta'; delta: string; blockId?: unknown; revision?: unknown } | null = null
   let deltaTimer: ReturnType<typeof setTimeout> | null = null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let redis: any | null = null
@@ -155,18 +158,28 @@ export function createTurnEventPublisher(
     if (!pendingDelta) return
     const d = pendingDelta
     pendingDelta = null
-    writeRow({ type: d.type, delta: d.delta } as { type: string })
+    writeRow({
+      type: d.type,
+      delta: d.delta,
+      ...(d.blockId !== undefined ? { blockId: d.blockId } : {}),
+      ...(d.revision !== undefined ? { revision: d.revision } : {}),
+    } as { type: string })
   }
 
   return {
     emit(event) {
       if (event.type === 'text_delta' || event.type === 'thinking_delta') {
         const delta = typeof event.delta === 'string' ? event.delta : ''
-        if (pendingDelta && pendingDelta.type === event.type) {
+        if (
+          pendingDelta
+          && pendingDelta.type === event.type
+          && pendingDelta.blockId === event.blockId
+          && pendingDelta.revision === event.revision
+        ) {
           pendingDelta.delta += delta
         } else {
-          flushDelta()   // switching delta kind is chronology — flush the old kind
-          pendingDelta = { type: event.type, delta }
+          flushDelta()   // switching delta kind/block is chronology — flush the old one
+          pendingDelta = { type: event.type, delta, blockId: event.blockId, revision: event.revision }
         }
         if (pendingDelta.delta.length >= maxDeltaChars) {
           flushDelta()

@@ -5666,3 +5666,244 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertLessThan(AgentLiveDockStore.macStreamRenewSeconds, 120)
     }
 }
+
+// MARK: - Prose lifecycle v2 (incident 2026-08-22 — reply vanished at tool start)
+
+/// Cross-layer golden fixture (shared byte-for-byte with the server/web tests:
+/// src/agent/protocol/fixtures/prose-lifecycle-v2/golden-lead-progress-final.json).
+/// The native reducer must agree with the server tracker and the web reducer on
+/// the visible prose after EVERY checkpoint — live, same-batch, settled, cold.
+@MainActor
+final class ProseLifecycleV2Tests: XCTestCase {
+    private func loadFixture() throws -> [String: Any] {
+        let bundle = Bundle(for: ProseLifecycleV2Tests.self)
+        let url = try XCTUnwrap(bundle.url(forResource: "prose-lifecycle-v2-golden", withExtension: "json"),
+                                "fixture must be bundled with the unit-test target")
+        let data = try Data(contentsOf: url)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private func events(_ raw: [[String: Any]]) throws -> [AgentTurnEvent] {
+        try raw.map { object in
+            let data = try JSONSerialization.data(withJSONObject: object)
+            let dto = try JSONDecoder().decode(AgentSSEEvent.self, from: data)
+            let event = AgentTurnEvent(dto: dto)
+            if case .unknown(let type) = event { XCTFail("fixture event decoded as unknown: \(type)") }
+            return event
+        }
+    }
+
+    private func visible(_ vm: AssistantVM) -> [[String]] {
+        (vm.messages.last?.visibleProseBlocks ?? []).map { [$0.id, $0.kind, $0.text] }
+    }
+
+    private func expected(_ raw: [[String: Any]]) -> [[String]] {
+        raw.map { [$0["id"] as? String ?? "", $0["kind"] as? String ?? "", $0["text"] as? String ?? ""] }
+    }
+
+    private func scriptSteps(_ fx: [String: Any]) throws -> [[String: Any]] {
+        try XCTUnwrap(fx["script"] as? [[String: Any]])
+    }
+
+    private func allV2Events(_ fx: [String: Any]) throws -> [[String: Any]] {
+        try scriptSteps(fx).flatMap { $0["v2"] as? [[String: Any]] ?? [] }
+    }
+
+    func testGoldenFixtureStepwiseMatchesEveryCheckpoint() throws {
+        let fx = try loadFixture()
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2)])
+        var checkpoints = 0
+        for step in try scriptSteps(fx) {
+            guard let v2 = step["v2"] as? [[String: Any]] else { continue }
+            vm.debugApplyTurnEvents(try events(v2))
+            if let vis = step["visible"] as? [[String: Any]] {
+                checkpoints += 1
+                XCTAssertEqual(visible(vm), expected(vis),
+                               "checkpoint after \(step["note"] ?? (step["emit"] as? [String: Any])?["type"] ?? "?")")
+            }
+        }
+        XCTAssertGreaterThan(checkpoints, 5)
+        let final = try XCTUnwrap(fx["expectedFinalVisible"] as? [[String: Any]])
+        XCTAssertEqual(visible(vm), expected(final))
+        XCTAssertEqual(vm.messages.last?.text, fx["expectedOwnerVisibleText"] as? String)
+        // The rendered block list carries the SAME prose ids, in order, with the
+        // tool rows between them — nothing was deleted by a tool boundary.
+        let proseIds = vm.messages.last?.blocks.compactMap { block -> String? in
+            if case .prose(let id, _) = block { return id }
+            return nil
+        }
+        XCTAssertEqual(proseIds, final.map { $0["id"] as? String ?? "" })
+        XCTAssertEqual(vm.messages.last?.tools.count, 2)
+        XCTAssertTrue(vm.messages.last?.selfCorrected == true, "the verifier rewrite sets the badge")
+    }
+
+    func testGoldenFixtureOneBatchEqualsStepwise() throws {
+        // Same-batch variant (handoff Phase 0): prose + the following tool_start
+        // applied in ONE reducer pass must produce the same state.
+        let fx = try loadFixture()
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2)] + (try events(try allV2Events(fx))))
+        let final = try XCTUnwrap(fx["expectedFinalVisible"] as? [[String: Any]])
+        XCTAssertEqual(visible(vm), expected(final))
+        XCTAssertEqual(vm.messages.last?.text, fx["expectedOwnerVisibleText"] as? String)
+    }
+
+    func testInAppDebugFixtureIsTheSharedGoldenTranscript() throws {
+        // The simulator screenshot fixture replays a Swift literal; it must stay
+        // byte-equal (after decoding) to the bundled shared fixture.
+        let fx = try loadFixture()
+        let shared = try events(try allV2Events(fx)).map { "\($0)" }
+        let literal = AssistantVM.proseLifecycleFixtureEvents.map { json -> String in
+            let data = Data(json.utf8)
+            let dto = try! JSONDecoder().decode(AgentSSEEvent.self, from: data)
+            return "\(AgentTurnEvent(dto: dto))"
+        }
+        XCTAssertEqual(literal, shared)
+    }
+
+    func testToolStartNeverClearsCommittedProgressOnV2Turn() {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2)])
+        vm.debugApplyTurnEvents([.proseStart(id: "t:p1", kind: "draft", revision: 1, replaces: nil)])
+        vm.debugApplyTurnEvents([.textDelta("আগে স্টক দেখছি…", blockId: "t:p1")])
+        // The incident shape: commit + tool start land in the SAME batch.
+        vm.debugApplyTurnEvents([
+            .proseCommit(id: "t:p1", kind: "progress", revision: 1, text: "আগে স্টক দেখছি…"),
+            .toolStart(id: "tool-1", name: "get_inventory_status", inputPretty: nil),
+        ])
+        XCTAssertEqual(visible(vm), [["t:p1", "progress", "আগে স্টক দেখছি…"]])
+        XCTAssertEqual(vm.messages.last?.text, "আগে স্টক দেখছি…")
+        XCTAssertTrue(vm.messages.last?.blocks.contains { block in
+            if case .prose(let id, let text) = block { return id == "t:p1" && text == "আগে স্টক দেখছি…" }
+            return false
+        } == true, "the progress block must still be rendered after the tool start")
+        // A second tool, its end, and an anonymous legacy delta change nothing.
+        vm.debugApplyTurnEvents([
+            .toolStart(id: "tool-2", name: "analyze_pricing", inputPretty: nil),
+            .toolEnd(id: "tool-2", ok: true, resultPreview: "ok", screenshot: nil),
+            .verificationRetry(attempt: 1, maxAttempts: 1),
+        ])
+        XCTAssertEqual(visible(vm), [["t:p1", "progress", "আগে স্টক দেখছি…"]])
+    }
+
+    func testLegacyV1ToolStartStillClearsNarration() {
+        // Mixed-version safety: without a negotiated v2 protocol the old reducer
+        // keeps its contract (untyped provider text can still be an unsafe draft).
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.textDelta("পুরোনো narration")])
+        vm.debugApplyTurnEvents([.toolStart(id: "tool-1", name: "get_orders", inputPretty: nil)])
+        XCTAssertEqual(vm.messages.last?.text, "")
+        XCTAssertFalse(vm.messages.last?.blocks.contains { block in
+            if case .prose = block { return true }
+            return false
+        } == true)
+    }
+
+    func testVerifierReplacementStaysHiddenUntilCommitThenSwapsAtomically() {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2)])
+        vm.debugApplyTurnEvents([.textDelta("কাজ শেষ, সব ঠিক আছে!", blockId: "t:p1")])
+        vm.debugApplyTurnEvents([.proseSupersede(id: "t:p1", replacementId: "t:p2", reason: "completion_claim")])
+        vm.debugApplyTurnEvents([.textDelta("আসলে এখনো বাকি আছে।", blockId: "t:p2")])
+        XCTAssertEqual(visible(vm).map { $0[2] }, ["কাজ শেষ, সব ঠিক আছে!"],
+                       "the stable answer stays on screen while the rewrite streams")
+        vm.debugApplyTurnEvents([.proseCommit(id: "t:p2", kind: "final", revision: 1, text: "আসলে এখনো বাকি আছে।")])
+        XCTAssertEqual(visible(vm).map { $0[2] }, ["আসলে এখনো বাকি আছে।"])
+        XCTAssertEqual(vm.messages.last?.proseBlocks.map(\.id), ["t:p2"])
+        XCTAssertTrue(vm.messages.last?.selfCorrected == true)
+    }
+
+    func testColdDecodePrefersPresentationV2OverSingleAnswerProjection() throws {
+        let json = #"""
+        {"id":"m2","role":"assistant","content":[{"type":"text","text":"লিড\n\nআপডেট\n\nফাইনাল"}],
+         "presentation":{"version":1,"messageId":"m2","blocks":[
+           {"id":"m2:b0","type":"prose","text":"লিড","state":"final"},
+           {"id":"m2:b1","type":"activity","activityType":"tool","label":"get_orders","status":"done","toolName":"get_orders"},
+           {"id":"m2:b2","type":"prose","text":"আপডেট","state":"progress"},
+           {"id":"m2:b3","type":"prose","text":"ফাইনাল","state":"final"}]},
+         "presentationV2":{"version":2,"messageId":"m2","protocol":2,"fingerprint":"abc",
+          "blocks":[
+           {"id":"turn-1:p1","type":"prose","kind":"lead","state":"committed","revision":1,"text":"লিড"},
+           {"id":"m2:b0","type":"activity","activityType":"tool","label":"get_orders","status":"done","toolName":"get_orders","result":"12"},
+           {"id":"turn-1:p2","type":"prose","kind":"progress","state":"committed","revision":2,"text":"আপডেট"},
+           {"id":"m2:b1","type":"activity","activityType":"verification","label":"নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি (1/2)…","status":"done"},
+           {"id":"turn-1:p4","type":"prose","kind":"final","state":"committed","revision":1,"text":"ফাইনাল"}],
+          "selfCorrected":true,
+          "usage":{"tokensIn":10,"tokensOut":5,"cacheCreation":0,"cacheRead":0,"totalTokens":15,"apiRounds":3}}}
+        """#
+        let wire = try JSONDecoder().decode(AgentMessageWire.self, from: Data(json.utf8))
+        let message = AgentChatMessage.from(wire)
+        XCTAssertEqual(message.proseProtocol, 2)
+        XCTAssertEqual(message.visibleProseBlocks.map(\.id), ["turn-1:p1", "turn-1:p2", "turn-1:p4"])
+        XCTAssertEqual(message.blocks.map(\.id), ["turn-1:p1", "m2:b0", "turn-1:p2", "m2:b1", "turn-1:p4"])
+        XCTAssertEqual(message.text, "লিড\n\nআপডেট\n\nফাইনাল")
+        XCTAssertEqual(message.leadProseId, "turn-1:p1")
+        XCTAssertEqual(message.tools.first?.id, "m2:b0")
+        XCTAssertEqual(message.apiRounds, 3)
+        XCTAssertTrue(message.selfCorrected)
+    }
+
+    func testSnapshotProtocolSelectsTheReducerOnRecovery() throws {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnSnapshot(turnId: "t1", conversationId: "c1", status: "running",
+                                               lastSeq: 3, agentProseProtocol: 2)])
+        vm.debugApplyTurnEvents([.textDelta("replayed progress", blockId: "t1:p1"),
+                                 .proseCommit(id: "t1:p1", kind: "progress", revision: 1, text: "replayed progress"),
+                                 .toolStart(id: "tool", name: "x", inputPretty: nil)])
+        XCTAssertEqual(visible(vm).map { $0[2] }, ["replayed progress"])
+        // And a v1 snapshot keeps the legacy reducer.
+        let legacy = AssistantVM()
+        legacy.debugApplyTurnEvents([.turnSnapshot(turnId: "t2", conversationId: "c1", status: "running",
+                                                   lastSeq: 3, agentProseProtocol: 1)])
+        legacy.debugApplyTurnEvents([.textDelta("narration"), .toolStart(id: "tool", name: "x", inputPretty: nil)])
+        XCTAssertEqual(legacy.messages.last?.text, "")
+    }
+
+    func testWireDecodeOfV2EventsIsTypedNeverUnknown() throws {
+        let samples = [
+            #"{"type":"turn_protocol","agentProseProtocol":2}"#,
+            #"{"type":"prose_start","blockId":"t:p1","kind":"draft","revision":1}"#,
+            #"{"type":"text_delta","delta":"x","blockId":"t:p1","revision":1}"#,
+            #"{"type":"prose_commit","blockId":"t:p1","kind":"progress","revision":1,"text":"x","checksum":"00"}"#,
+            #"{"type":"prose_supersede","blockId":"t:p1","replacementBlockId":"t:p2","reason":"completion_claim"}"#,
+            #"{"type":"turn_snapshot","turnId":"t","status":"running","lastSeq":1,"agentProseProtocol":2}"#,
+        ]
+        for json in samples {
+            let dto = try JSONDecoder().decode(AgentSSEEvent.self, from: Data(json.utf8))
+            if case .unknown(let type) = AgentTurnEvent(dto: dto) { XCTFail("decoded as unknown: \(type)") }
+        }
+        if case .textDelta(let delta, let blockId) = AgentTurnEvent(dto: try JSONDecoder().decode(
+            AgentSSEEvent.self, from: Data(samples[2].utf8))) {
+            XCTAssertEqual(delta, "x")
+            XCTAssertEqual(blockId, "t:p1")
+        } else {
+            XCTFail("text_delta must keep its block id")
+        }
+    }
+
+    func testEventBufferNeverMergesDeltasAcrossBlocks() async {
+        let collected = Batches()
+        let buffer = AgentEventBuffer { evs in collected.append(evs) }
+        await buffer.push(.textDelta("আ", blockId: "t:p1"))
+        await buffer.push(.textDelta("জ", blockId: "t:p1"))
+        await buffer.push(.textDelta("কাল", blockId: "t:p2"))
+        await buffer.push(.toolStart(id: "tool", name: "x", inputPretty: nil))   // control → flush everything
+        await buffer.finish()
+        let flat = collected.all.flatMap { $0 }
+        guard flat.count >= 3 else { return XCTFail("expected the prose + tool batch, got \(flat)") }
+        guard case .textDelta(let first, let firstBlock) = flat[0],
+              case .textDelta(let second, let secondBlock) = flat[1],
+              case .toolStart = flat[2] else {
+            return XCTFail("unexpected batch shape: \(flat)")
+        }
+        XCTAssertEqual([first, firstBlock ?? "-"], ["আজ", "t:p1"])
+        XCTAssertEqual([second, secondBlock ?? "-"], ["কাল", "t:p2"])
+    }
+
+    @MainActor
+    private final class Batches {
+        var all: [[AgentTurnEvent]] = []
+        func append(_ batch: [AgentTurnEvent]) { all.append(batch) }
+    }
+}

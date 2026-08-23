@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { getLatestTurn } from '@/agent/lib/turn-status'
+import { proseProtocolFromVersions } from '@/agent/lib/presentation/prose-lifecycle'
 
 export const runtime = 'nodejs'
 
@@ -38,5 +39,8 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     // that the turn ended continuation-eligible. claimContinuationTurn keeps the
     // actual claim exactly-once regardless of how many clients read this.
     continuationNeeded: turn.continuationNeeded === true,
+    // Prose lifecycle v2: which family this turn streamed (reducer selection
+    // on recovery must come from the server, never from event shapes).
+    agentProseProtocol: proseProtocolFromVersions(turn.versions),
   })
 }

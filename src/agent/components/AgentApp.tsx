@@ -22,6 +22,23 @@ import { cn } from '@/lib/utils'
 import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { type PlanDrivePanelData, type PlanDriveAction } from '@/agent/components/monitor/PlanDriveTimeline'
 import { selectSettledProse } from '@/agent/lib/presentation/build-presentation'
+import type { AgentPresentationV2 } from '@/agent/lib/presentation/build-presentation-v2'
+import {
+  applyProseEvent,
+  createLiveProseState,
+  visibleProseText,
+  type LiveProseState,
+} from '@/agent/lib/presentation/live-prose-reducer'
+import {
+  proseBlocksFromPresentationV2,
+  proseTextFromPresentationV2,
+  reconcileProseTimeline,
+  timelineFromPresentationV2,
+  withClientErrorBlock,
+} from '@/agent/lib/presentation/prose-timeline'
+
+/** Prose lifecycle v2 capability this client advertises (prose-lifecycle.ts). */
+const AGENT_PROSE_PROTOCOL = 2 as const
 import { isHardVerificationReplacement, supersedeVerificationTimeline } from '@/agent/lib/verification-retry-view'
 import { reduceHeldVoiceReply, settleHeldVoiceReply } from '@/agent/lib/voice-reply-holdback'
 import { removeStoppedAssistantDraft } from '@/agent/lib/stopped-turn-view'
@@ -108,6 +125,8 @@ type MessageRow = {
   apiRounds?: number
   /** Per-round billed cost (USD) when the provider reported actuals. */
   roundCostsUsd?: number[]
+  /** Prose lifecycle v2 — the settled typed projection (when the turn tracked one). */
+  presentationV2?: AgentPresentationV2
   /** Persisted reasoning trace — restores the "Thought for Ns" block after reload. */
   thinking?: string
   /** Reasoning wall-clock (ms) — restores the "Thought for Ns" duration after reload. */
@@ -142,9 +161,15 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
   return dropDuplicateAskAnswers(rows.map((r, rowIdx) => {
     const textBlocks = r.content.filter((b) => b.type === 'text')
     const storedText = textBlocks.map((b) => b.text ?? '').join('')
-    const settledText = r.role === 'assistant'
-      ? selectSettledProse(r.content, r.timeline)
-      : storedText
+    // Prose lifecycle v2: the server's typed projection is the authority —
+    // every committed lead/progress/final block, in chronology, by stable id.
+    // Legacy rows keep the single-settled-answer rule.
+    const v2 = r.role === 'assistant' && r.presentationV2?.version === 2 ? r.presentationV2 : null
+    const settledText = v2
+      ? proseTextFromPresentationV2(v2.blocks)
+      : r.role === 'assistant'
+        ? selectSettledProse(r.content, r.timeline)
+        : storedText
     const fileBlocks = r.content.filter((b) => b.type === 'file_ref')
     // A single turn can create several pending actions (e.g. an expense AND a
     // post) — collect ALL of them so the approval card matches the agent's text
@@ -175,7 +200,10 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       createdAt: r.createdAt,
       thinking: r.thinking,
       thinkingMs: r.thinkingMs,
-      timeline: Array.isArray(r.timeline) && r.timeline.length > 0 ? r.timeline : undefined,
+      timeline: v2
+        ? (timelineFromPresentationV2(v2.blocks) as TimelineEntry[])
+        : Array.isArray(r.timeline) && r.timeline.length > 0 ? r.timeline : undefined,
+      ...(v2 ? { proseProtocol: 2 as const, prose: proseBlocksFromPresentationV2(v2.blocks) } : {}),
       toolActivity: toolActivity.length > 0 ? toolActivity : undefined,
       files: fileBlocks.map((b) => ({
         // Persisted file_ref blocks carry no local blob — the thumbnail resolves a
@@ -1097,7 +1125,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     let firstByteTimer: ReturnType<typeof setTimeout> | undefined
 
     try {
-      const body: Record<string, unknown> = {}
+      const body: Record<string, unknown> = { agentProseProtocol: AGENT_PROSE_PROTOCOL }
       if (autoContinueFromTurnId) {
         body.conversationId = finalConvId
         body.autoContinueFromTurnId = autoContinueFromTurnId
@@ -1172,6 +1200,39 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         ))
       }
 
+      // Prose lifecycle v2 — selected ONLY from the server's turn_protocol /
+      // turn_snapshot fact. Deltas apply to the pure reducer at once; the React
+      // write is coalesced per animation frame like the v1 buffer, and every
+      // control event (commit/supersede/done) writes immediately.
+      // Boxed so closures observe the latest negotiated value (TS narrows a bare `let`).
+      const proseProtocolBox = { current: 1 as 1 | 2 }
+      let proseState: LiveProseState = createLiveProseState()
+      let proseFlushScheduled = false
+      const flushProse = () => {
+        proseFlushScheduled = false
+        const state = proseState
+        setMessages((prev) => prev.map((m) =>
+          m.id === assistantMsgId
+            ? {
+                ...m,
+                proseProtocol: 2,
+                prose: state.blocks,
+                text: visibleProseText(state),
+                timeline: reconcileProseTimeline(m.timeline, state),
+              }
+            : m,
+        ))
+      }
+      const applyProse = (evt: Record<string, unknown>, immediate: boolean) => {
+        proseState = applyProseEvent(proseState, evt as { type: string; [k: string]: unknown })
+        if (immediate) {
+          flushProse()
+        } else if (!proseFlushScheduled) {
+          proseFlushScheduled = true
+          requestAnimationFrame(flushProse)
+        }
+      }
+
       const applySseEvent = (evt: Record<string, unknown>) => {
         if (!gotAnyEvent) {
           gotAnyEvent = true
@@ -1182,6 +1243,28 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           setActiveConvId(finalConvId)
         } else if (evt.type === 'turn_id') {
           activeTurnIdRef.current = evt.id as string
+        } else if (evt.type === 'turn_protocol' || evt.type === 'turn_snapshot') {
+          // Reducer selection comes from this server fact alone — never from
+          // the shape of individual events (mixed-version safety).
+          if (typeof evt.agentProseProtocol === 'number') proseProtocolBox.current = evt.agentProseProtocol === 2 ? 2 : 1
+        } else if (evt.type === 'prose_start' || evt.type === 'prose_commit' || evt.type === 'prose_supersede') {
+          if (proseProtocolBox.current === 2) {
+            const rewrite = evt.type === 'prose_supersede'
+              && typeof evt.replacementBlockId === 'string'
+              && evt.reason !== 'empty' && evt.reason !== 'prospective_plan'
+            applyProse(evt, true)
+            if (rewrite) {
+              // Mirror the v1 live verification row so live and cold show the
+              // same activity (the settled projection carries a `verify` entry).
+              setStreamMode('searching')
+              setStreamStatus('🔁 নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…')
+              setMessages((prev) => prev.map((m) =>
+                m.id === assistantMsgId
+                  ? { ...m, selfCorrected: true, timeline: [...(m.timeline ?? []), { t: 'verify', attempt: 1, max: 1 }] }
+                  : m,
+              ))
+            }
+          }
         } else if (evt.type === 'personal_mode') {
           setActivePersonalMode(evt.active === true)
         } else if (evt.type === 'steering_delivered') {
@@ -1284,6 +1367,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             setStreamMode('writing')
             setStreamStatus('✍️ উত্তর লিখছি…')
           }
+          if (proseProtocolBox.current === 2 && typeof evt.blockId === 'string') {
+            applyProse(evt, false)
+            return
+          }
           if (!streamBufferRef.current || streamBufferRef.current.msgId !== assistantMsgId) {
             streamBufferRef.current = { msgId: assistantMsgId, pending: '', flushScheduled: false }
           }
@@ -1309,12 +1396,15 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             const timeline = pushOrUpdateTool(m.timeline, evt.id as string, evt.name as string, evt.input)
             const existing = m.toolActivity ?? []
             const idx = existing.findIndex((t) => t.id === evt.id)
+            // Prose lifecycle v2: a tool start may append/update ONLY the tool
+            // row. Committed prose is addressed by id and never cleared here.
+            const text = proseProtocolBox.current === 2 ? m.text : ''
             if (idx >= 0) {
               const next = existing.slice()
               next[idx] = { ...next[idx], input: evt.input ?? next[idx].input }
-              return { ...m, text: '', toolActivity: next, timeline }
+              return { ...m, text, toolActivity: next, timeline }
             }
-            return { ...m, text: '', toolActivity: [...existing, { id: evt.id as string, name: evt.name as string, done: false, input: evt.input }], timeline }
+            return { ...m, text, toolActivity: [...existing, { id: evt.id as string, name: evt.name as string, done: false, input: evt.input }], timeline }
           }))
         } else if (evt.type === 'tool_end') {
           toolInFlight = false
@@ -1442,6 +1532,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               : m,
           ))
         } else if (evt.type === 'verification_retry') {
+          if (proseProtocolBox.current === 2) {
+            // A v2 turn never sends this; if a mixed stream does, prose is only
+            // ever changed by an event naming a block id.
+            setStreamMode('searching')
+            setStreamStatus('🔁 নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…')
+            return
+          }
           const verificationCategories = Array.isArray(evt.categories) ? evt.categories : []
           // The honesty guard caught a draft that must be rewritten. Keep it in
           // the raw audit timeline as superseded, but remove it from the visible
@@ -1481,6 +1578,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           setStreamMode('writing')
           flushThinkingBuffer()
           flushStreamBuffer()
+          if (proseProtocolBox.current === 2) applyProse(evt, true)
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
               ? {
@@ -1529,6 +1627,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           compactAfterStream = null
           serverCompacted = true
           setCompacting(true)
+        } else if (evt.type === 'error' && typeof evt.messageId === 'string' && evt.messageId) {
+          // The runner salvaged partial work into a persisted row whose prose —
+          // warning included — already streamed as committed blocks. A second,
+          // client-only warning would sit under it until the next reload
+          // (Codex P1 #834 r6): reconcile to the persisted row instead, exactly
+          // like `done` does.
+          gotStreamDone = true
+          flushThinkingBuffer()
+          flushStreamBuffer()
+          const salvagedId = evt.messageId as string
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, id: salvagedId, streaming: false } : m
+          ))
         } else if (evt.type === 'error') {
           gotStreamDone = true
           flushThinkingBuffer()
@@ -1546,7 +1657,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           }
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
-              ? { ...m, streaming: false, text: `⚠️ ${banglaMsg}` }
+              // A v2 message renders only block-addressed prose, so the warning
+              // must be a block too (Codex P1 #834) — v1 keeps the plain text.
+              ? { ...m, streaming: false, ...withClientErrorBlock(m, `⚠️ ${banglaMsg}`) }
               : m
           ))
         }
@@ -1586,6 +1699,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             message: text,
             files: fileRefs.length > 0 ? fileRefs : undefined,
             clientRequestId: clientRequestId ?? undefined,
+            agentProseProtocol: AGENT_PROSE_PROTOCOL,
           }),
         })
         if (!enqRes.ok) return false
@@ -1616,7 +1730,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         }
         const streamCtrl = new AbortController()
         abortRef.current = streamCtrl
-        const sres = await fetch(`/api/assistant/turn/${workerTurnId}/stream`, { signal: streamCtrl.signal })
+        const sres = await fetch(`/api/assistant/turn/${workerTurnId}/stream?proto=${AGENT_PROSE_PROTOCOL}`, { signal: streamCtrl.signal })
         if (!sres.ok || !sres.body) return false
         await consumeSseReader(sres.body.getReader())
         return true
@@ -1653,6 +1767,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       // Final flush in case stream ended without 'done' event
       flushThinkingBuffer()
       flushStreamBuffer()
+      if (proseProtocolBox.current === 2 && proseFlushScheduled) flushProse()
       streamBufferRef.current = null
       thinkingBufferRef.current = null
 
@@ -1716,7 +1831,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       } else {
         const msg = err instanceof Error ? err.message : String(err)
         setMessages((prev) => prev.map((m) =>
-          m.id === assistantMsgId ? { ...m, streaming: false, text: `⚠️ ${msg}` } : m
+          m.id === assistantMsgId ? { ...m, streaming: false, ...withClientErrorBlock(m, `⚠️ ${msg}`) } : m
         ))
       }
     } finally {

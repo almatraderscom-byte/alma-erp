@@ -554,6 +554,49 @@ struct AgentTimelineEntryWire: Decodable {
     let shot: String?   // t=="tool": browser screenshot URL (web parity)
 }
 
+/// Prose lifecycle v2 capability this build advertises on every turn request
+/// (src/agent/lib/presentation/prose-lifecycle.ts). The server answers with a
+/// `turn_protocol` envelope; the reducer is selected from that fact alone.
+let almaProseProtocolCapability = 2
+
+/// Prose lifecycle v2 — the settled typed projection (GET `presentationV2`).
+/// Present only when the turn tracked a block lifecycle; wins over the v1
+/// projection because it keeps EVERY committed lead/progress/final block.
+struct AgentMessagePresentationV2Wire: Decodable {
+    let version: Int?
+    let messageId: String?
+    let proseProtocol: Int?
+    let blocks: [AgentPresentationBlockV2Wire]?
+    let fingerprint: String?
+    let usage: AgentPresentationUsageWire?
+    let selfCorrected: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case version, messageId, blocks, fingerprint, usage, selfCorrected
+        case proseProtocol = "protocol"
+    }
+}
+
+struct AgentPresentationBlockV2Wire: Decodable {
+    let id: String
+    let type: String
+    let kind: String?        // prose: lead|progress|final — file: document kind
+    let state: String?       // prose: committed
+    let revision: Int?
+    let text: String?
+    let activityType: String?
+    let label: String?
+    let detail: String?
+    let status: String?
+    let toolName: String?
+    let result: String?
+    let screenshot: String?
+    let artifactId: String?
+    let title: String?
+    let pendingActionId: String?
+    let askCardId: String?
+}
+
 struct AgentMessageWire: Decodable {
     let id: String
     let clientMessageId: String?
@@ -572,6 +615,8 @@ struct AgentMessageWire: Decodable {
     let costUsd: AgentJSONValue?
     let createdAt: String?
     let presentation: AgentMessagePresentationWire?
+    /// Prose lifecycle v2 — typed projection; see AgentMessagePresentationV2Wire.
+    let presentationV2: AgentMessagePresentationV2Wire?
     /// Build 103 Issue 3 — durable work-step tracker snapshot(s) anchored to
     /// this assistant message (cold history equals the settled live tracker).
     let workSteps: [AgentWorkStepsSnapshotColdWire]?
@@ -1798,6 +1843,162 @@ struct AgentChatMessage: Identifiable, Equatable {
     /// explicit `preamble` marker — never guessed from position.
     var leadProseId: String? = nil
 
+    // ── Prose lifecycle v2 (src/agent/lib/presentation/live-prose-reducer.ts) ──
+    // Every owner prose segment is a server-addressed block. Committed lead /
+    // progress / final blocks stay on screen across tool starts, verifier
+    // retries, polls and reloads; only an event naming a block's id changes it.
+
+    /// One server-addressed prose block (mirror of the web reducer's block).
+    struct ProseBlock: Equatable {
+        var id: String
+        var kind: String                // lead | progress | draft | final
+        var state: String               // streaming | committed | superseded
+        var revision: Int
+        var text: String
+        /// Replacement still streaming — not rendered until its commit.
+        var hidden: Bool
+        /// Superseded, but its replacement has not committed yet — still rendered.
+        var awaitingReplacement: Bool
+        var replaces: String?
+        var isVisible: Bool {
+            !hidden
+                && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && (state != "superseded" || awaitingReplacement)
+        }
+    }
+    /// 1 = legacy single-answer contract (`text`/`blocks` wiped on tool_start);
+    /// 2 = typed block lifecycle. Set ONLY from the server's turn_protocol /
+    /// turn_snapshot / presentationV2 facts.
+    var proseProtocol: Int = 1
+    var proseBlocks: [ProseBlock] = []
+    /// replacementBlockId → superseded target id (promised, not yet committed).
+    var pendingProseReplacements: [String: String] = [:]
+    var visibleProseBlocks: [ProseBlock] { proseBlocks.filter(\.isVisible) }
+
+    /// The block a new replacement stands in for ON SCREEN: a hidden
+    /// intermediate (a rewrite that was itself rewritten before showing) is
+    /// skipped so the final replacement lands where the last visible block was.
+    private func proseReplacementRoot(_ targetId: String?) -> String? {
+        var id = targetId
+        var seen = Set<String>()
+        while let cur = id, !seen.contains(cur) {
+            seen.insert(cur)
+            guard let b = proseBlocks.first(where: { $0.id == cur }) else { return cur }
+            if !b.hidden { return cur }
+            id = b.replaces
+        }
+        return id
+    }
+
+    private mutating func retireProseChain(_ targetId: String?) {
+        var id = targetId
+        while let cur = id, let idx = proseBlocks.firstIndex(where: { $0.id == cur }) {
+            let next = proseBlocks[idx].replaces
+            proseBlocks.remove(at: idx)
+            id = next
+        }
+    }
+
+    mutating func applyProseStart(id: String, kind: String, revision: Int) {
+        guard !proseBlocks.contains(where: { $0.id == id }) else { return }
+        let target = pendingProseReplacements[id]
+        proseBlocks.append(.init(id: id, kind: kind, state: "streaming", revision: revision, text: "",
+                                 hidden: target != nil, awaitingReplacement: false,
+                                 replaces: proseReplacementRoot(target)))
+    }
+
+    mutating func applyProseDelta(id: String, delta: String, revision: Int?) {
+        guard !delta.isEmpty else { return }
+        if let idx = proseBlocks.firstIndex(where: { $0.id == id }) {
+            proseBlocks[idx].text += delta
+            return
+        }
+        let target = pendingProseReplacements[id]
+        proseBlocks.append(.init(id: id, kind: "draft", state: "streaming", revision: revision ?? 1, text: delta,
+                                 hidden: target != nil, awaitingReplacement: false,
+                                 replaces: proseReplacementRoot(target)))
+    }
+
+    mutating func applyProseCommit(id: String, kind: String, revision: Int, text: String?) {
+        if !proseBlocks.contains(where: { $0.id == id }) {
+            let target = pendingProseReplacements[id]
+            proseBlocks.append(.init(id: id, kind: "draft", state: "streaming", revision: 1, text: "",
+                                     hidden: false, awaitingReplacement: false,
+                                     replaces: proseReplacementRoot(target)))
+        }
+        guard let idx = proseBlocks.firstIndex(where: { $0.id == id }) else { return }
+        // Self-heal: the commit carries the full committed text, so a delta lost
+        // on the wire cannot leave a truncated block on screen.
+        if let text, text != proseBlocks[idx].text { proseBlocks[idx].text = text }
+        proseBlocks[idx].state = "committed"
+        proseBlocks[idx].kind = kind
+        proseBlocks[idx].revision = revision
+        proseBlocks[idx].hidden = false
+        let replaces = proseBlocks[idx].replaces
+        let pendingTarget = pendingProseReplacements.removeValue(forKey: id)
+        if let pendingTarget { retireProseChain(pendingTarget) }
+        if let replaces { retireProseChain(replaces) }
+        if let j = proseBlocks.firstIndex(where: { $0.id == id }),
+           proseBlocks[j].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            proseBlocks.remove(at: j)
+        }
+    }
+
+    mutating func applyProseSupersede(id: String, replacementId: String?) {
+        guard let idx = proseBlocks.firstIndex(where: { $0.id == id }) else { return }
+        if let replacementId {
+            proseBlocks[idx].state = "superseded"
+            proseBlocks[idx].awaitingReplacement = true
+            pendingProseReplacements[replacementId] = id
+            return
+        }
+        for (key, value) in pendingProseReplacements where value == id {
+            pendingProseReplacements.removeValue(forKey: key)
+        }
+        retireProseChain(id)
+    }
+
+    /// Terminal settlement — the server commits before `done`, but a lost commit
+    /// must not leave a hidden replacement or a dangling promise on screen.
+    mutating func settleProse() {
+        for i in proseBlocks.indices where proseBlocks[i].state == "streaming" && !proseBlocks[i].hidden {
+            proseBlocks[i].state = "committed"
+        }
+        proseBlocks.removeAll { ($0.hidden && $0.state == "streaming") || ($0.state == "superseded" && $0.awaitingReplacement) }
+        pendingProseReplacements = [:]
+    }
+
+    /// Rebuild the prose TurnBlocks + `text` from the v2 block list. Every
+    /// visible block owns exactly one `.prose` TurnBlock, appended where it
+    /// first became visible (its true place in the chronology); retired blocks
+    /// disappear; activity/card/file blocks never move.
+    mutating func syncProseBlocks() {
+        let visible = visibleProseBlocks
+        let visibleIds = Set(visible.map(\.id))
+        var next = blocks
+        for b in visible {
+            if let idx = next.firstIndex(where: { block in
+                if case .prose(let pid, _) = block { return pid == b.id }
+                return false
+            }) {
+                next[idx] = .prose(id: b.id, text: b.text)
+            } else {
+                next.append(.prose(id: b.id, text: b.text))
+            }
+        }
+        next.removeAll { block in
+            if case .prose(let pid, _) = block { return !visibleIds.contains(pid) }
+            return false
+        }
+        blocks = next
+        text = visible
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+        leadProseId = visible.first(where: { $0.kind == "lead" })?.id
+        supersededBlockIds = []
+    }
+
     /// The heartbeat's self-wake seed renders as a divider, never as an owner bubble
     /// (web: isHeartbeatWakeText / HEARTBEAT_WAKE_SENTINEL).
     var isHeartbeatWake: Bool {
@@ -1911,7 +2112,94 @@ struct AgentChatMessage: Identifiable, Equatable {
            presentation.blocks?.isEmpty == false {
             Self.applyCanonicalPresentation(presentation, to: &m)
         }
+        // Prose lifecycle v2: the typed projection keeps every committed block
+        // by its live id — it wins over the one-settled-answer projection.
+        if let v2 = wire.presentationV2,
+           v2.version == 2,
+           v2.messageId == nil || v2.messageId == wire.id,
+           v2.blocks?.isEmpty == false {
+            Self.applyCanonicalPresentationV2(v2, to: &m)
+        }
         return m
+    }
+
+    static func applyCanonicalPresentationV2(_ presentation: AgentMessagePresentationV2Wire,
+                                             to message: inout AgentChatMessage) {
+        var projected: [TurnBlock] = []
+        var projectedTools: [Tool] = []
+        var prose: [ProseBlock] = []
+        for block in presentation.blocks ?? [] {
+            switch block.type {
+            case "prose":
+                // Only committed blocks are ever projected; a superseded draft is
+                // audit data in the stored document, never an owner-visible reply.
+                guard block.state == nil || block.state == "committed" else { continue }
+                let text = block.text ?? ""
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                prose.append(.init(id: block.id, kind: block.kind ?? "final", state: "committed",
+                                   revision: block.revision ?? 1, text: text,
+                                   hidden: false, awaitingReplacement: false, replaces: nil))
+                projected.append(.prose(id: block.id, text: text))
+            case "activity":
+                let isTool = block.activityType == "tool"
+                let kind: ActivityBlock.Kind = isTool ? .tool
+                    : block.activityType == "progress" ? .progress : .thinking
+                let toolId = isTool ? block.id : nil
+                let ok = block.status == "failed" ? false : true
+                projected.append(.activity(.init(
+                    id: block.id,
+                    kind: kind,
+                    label: block.label ?? (isTool ? "টুল" : "যাচাই"),
+                    thinkFull: block.detail ?? "",
+                    toolId: toolId,
+                    ok: ok,
+                    live: false,
+                    screenshot: block.screenshot)))
+                if isTool {
+                    projectedTools.append(.init(
+                        id: block.id, name: block.toolName ?? block.label ?? "টুল", ok: ok,
+                        preview: block.result.map { String($0.prefix(160)) }, live: false,
+                        inputPretty: nil, resultFull: block.result, screenshot: block.screenshot))
+                }
+            case "file":
+                if let artifactId = block.artifactId {
+                    projected.append(.file(
+                        id: block.id, artifactId: artifactId,
+                        name: block.title ?? "ডকুমেন্ট"))
+                }
+            case "confirm_card":
+                if let id = block.pendingActionId {
+                    projected.append(.confirmCard(id: block.id, pendingActionId: id))
+                }
+            case "ask_card":
+                if let id = block.askCardId {
+                    projected.append(.askCard(id: block.id, askCardId: id))
+                }
+            default:
+                continue
+            }
+        }
+        message.proseProtocol = 2
+        message.proseBlocks = prose
+        message.pendingProseReplacements = [:]
+        message.blocks = projected
+        message.supersededBlockIds = []
+        message.leadProseId = prose.first(where: { $0.kind == "lead" })?.id
+        message.text = prose
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+        if !projectedTools.isEmpty { message.tools = projectedTools }
+        message.selfCorrected = message.selfCorrected || presentation.selfCorrected == true
+        if let usage = presentation.usage {
+            message.tokensIn = usage.tokensIn ?? message.tokensIn
+            message.tokensOut = usage.tokensOut ?? message.tokensOut
+            message.cacheCreation = usage.cacheCreation ?? message.cacheCreation
+            message.cacheRead = usage.cacheRead ?? message.cacheRead
+            message.apiRounds = usage.apiRounds ?? message.apiRounds
+            message.roundCostsUsd = usage.roundCostsUsd ?? message.roundCostsUsd
+            if let cost = usage.costUsd { message.costUsd = String(format: "%.4f", cost) }
+        }
     }
 
     static func applyCanonicalPresentation(_ presentation: AgentMessagePresentationWire,
@@ -7322,6 +7610,9 @@ final class AssistantVM {
         let message: String
         let files: [AgentFileRef]
         let modelId: String?
+        /// Prose lifecycle v2 capability — the server negotiates ONE protocol
+        /// per turn from this and answers with `turn_protocol`.
+        var agentProseProtocol: Int? = almaProseProtocolCapability
         var projectId: String? = nil
         var voice: Bool? = nil    // voice console turns: TTS-friendly replies
         /// Roadmap PR 5 — idempotency key: one key = at most one stored message and
@@ -8091,13 +8382,16 @@ final class AssistantVM {
             /// carry the thinking level too — otherwise a first message that trips
             /// the 15s watchdog lands as Auto no matter what Boss picked (Codex P2).
             let effortLevel: String?
+            /// Prose lifecycle v2 capability, persisted on the worker turn row.
+            let agentProseProtocol: Int
         }
         let enq: TurnEnqueueResponse = try await AlmaAPI.shared.send(
             "POST", "/api/assistant/turn",
             body: TurnBody(conversationId: body.conversationId, message: body.message,
                            files: body.files, clientMessageId: body.clientMessageId,
                            askCardId: body.askCardId,
-                           effortLevel: body.conversationId == nil ? body.effortLevel : nil))
+                           effortLevel: body.conversationId == nil ? body.effortLevel : nil,
+                           agentProseProtocol: almaProseProtocolCapability))
         currentTurnId = enq.turnId
         if conversationId == nil, let enqueuedConversationId = enq.conversationId {
             adoptNewConversationId(enqueuedConversationId)
@@ -8128,7 +8422,11 @@ final class AssistantVM {
         defer { pendingReplayReset = false }
         var comps = URLComponents(url: AssistantNet.base.appendingPathComponent("/api/assistant/turn/\(turnId)/stream"),
                                   resolvingAgainstBaseURL: false)!
-        if afterSeq >= 0 { comps.queryItems = [URLQueryItem(name: "afterSeq", value: String(afterSeq))] }
+        // `proto`: which prose family this build can reduce (mixed-version safety —
+        // the server serves a v1 projection of a v2 turn to a client without it).
+        var query = [URLQueryItem(name: "proto", value: String(almaProseProtocolCapability))]
+        if afterSeq >= 0 { query.append(URLQueryItem(name: "afterSeq", value: String(afterSeq))) }
+        comps.queryItems = query
         var req = URLRequest(url: comps.url!)
         req.httpMethod = "GET"
         let box = seqBox
@@ -8151,6 +8449,8 @@ final class AssistantVM {
         messages[i].delegations = []
         messages[i].suppressedRawToolEnvelope = nil
         messages[i].verificationReplacementText = nil
+        messages[i].proseBlocks = []
+        messages[i].pendingProseReplacements = [:]
     }
 
     /// Phase 2 reducer — applies ONE buffered batch per MainActor hop (roadmap 2.3).
@@ -8250,11 +8550,23 @@ final class AssistantVM {
                         messages[i].blocks, label: label, messageId: messages[i].id)
                     if messages[i].blocks.count != previousCount { touchedStream = true }
                 }
-            case .textDelta(let chunk):
+            case .textDelta(let chunk, let blockId):
                 guard !chunk.isEmpty else { break }
                 if reconnecting { reconnecting = false }   // live content flows again
                 requestLiveMode("writing")
                 ensureStreamingTail()
+                if let blockId, let i = messages.lastIndex(where: { $0.isStreaming }),
+                   messages[i].proseProtocol == 2 {
+                    // Prose lifecycle v2: the delta names its block; nothing here
+                    // may touch any other prose. The legacy wipes below are v1-only.
+                    if messages[i].text.isEmpty, let start = messages[i].streamStartedAt {
+                        messages[i].thinkingMs = max(1, Int(Date().timeIntervalSince(start) * 1000))
+                    }
+                    messages[i].applyProseDelta(id: blockId, delta: chunk, revision: nil)
+                    messages[i].syncProseBlocks()
+                    touchedStream = true
+                    break
+                }
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     if let replacement = messages[i].verificationReplacementText {
                         let delta = AgentChatMessage.incrementalStreamSuffix(
@@ -8306,7 +8618,9 @@ final class AssistantVM {
                 }
             case .prospectivePlanStart:
                 ensureStreamingTail()
-                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                // Prose lifecycle v2: the server retires the pre-plan blocks with
+                // explicit prose_supersede events; no global wipe here.
+                if let i = messages.lastIndex(where: { $0.isStreaming }), messages[i].proseProtocol != 2 {
                     // Mixed-version/replayed streams may already contain a
                     // complete-looking pre-plan answer. Only the server's
                     // explicit forced-plan signal may discard that stale prose;
@@ -8334,19 +8648,25 @@ final class AssistantVM {
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     messages[i].suppressedRawToolEnvelope = nil
-                    // Pre-tool prose is progress narration. Keep the activity/tool
-                    // evidence, but let the post-tool settled answer replace the
-                    // visible prose instead of stacking as a second reply.
-                    // EXCEPT the spoken first line (owner rule 2026-07-25): Boss
-                    // read "বস, … বুঝেছি — … দেখছি" three seconds ago; clearing it
-                    // the moment work starts is what made the app feel silent.
-                    let lead = messages[i].leadProseId
-                    messages[i].text = lead == nil ? "" : messages[i].leadProseText
-                    messages[i].blocks.removeAll { block in
-                        if case .prose(let pid, _) = block { return pid != lead }
-                        return false
+                    // Prose lifecycle v2 (incident 2026-08-22, handoff F-01): a tool
+                    // start may append/update ONLY the tool row. Committed prose is
+                    // addressed by id and is never cleared by a tool boundary.
+                    if messages[i].proseProtocol != 2 {
+                        // Legacy v1 contract — pre-tool prose is progress narration.
+                        // Keep the activity/tool evidence, but let the post-tool
+                        // settled answer replace the visible prose instead of
+                        // stacking as a second reply. EXCEPT the spoken first line
+                        // (owner rule 2026-07-25): Boss read "বস, … বুঝেছি — … দেখছি"
+                        // three seconds ago; clearing it the moment work starts is
+                        // what made the app feel silent.
+                        let lead = messages[i].leadProseId
+                        messages[i].text = lead == nil ? "" : messages[i].leadProseText
+                        messages[i].blocks.removeAll { block in
+                            if case .prose(let pid, _) = block { return pid != lead }
+                            return false
+                        }
+                        messages[i].supersededBlockIds = []
                     }
-                    messages[i].supersededBlockIds = []
                     messages[i].timeline = AgentChatMessage.pushOrUpdateTool(
                         messages[i].timeline, id: tid, name: name, inputPretty: inputPretty)
                     messages[i].blocks = AgentChatMessage.appendToolBlock(
@@ -8466,8 +8786,9 @@ final class AssistantVM {
                 }
             case .preamble:
                 // The line already streamed in as text_delta; pin whichever prose
-                // block it landed in so the wipes below can spare it.
-                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                // block it landed in so the wipes below can spare it. (v2 turns
+                // learn the lead from the block's committed `kind` instead.)
+                if let i = messages.lastIndex(where: { $0.isStreaming }), messages[i].proseProtocol != 2 {
                     if let lastProse = messages[i].blocks.last(where: {
                         if case .prose = $0 { return true }; return false
                     }), case .prose(let pid, _) = lastProse {
@@ -8484,18 +8805,22 @@ final class AssistantVM {
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     messages[i].suppressedRawToolEnvelope = nil
-                    if messages[i].verificationReplacementText == nil {
-                        let lead = messages[i].leadProseId
-                        if let lastProse = messages[i].blocks.last(where: {
-                            if case .prose(let pid, _) = $0 { return pid != lead }; return false
-                        }), case .prose(let pid, let draft) = lastProse {
-                            messages[i].supersededBlockIds.insert(pid)
-                            messages[i].timeline.append(.text(draft, superseded: true))
+                    // Prose lifecycle v2 never sends this event; if a mixed stream
+                    // does, prose is only ever changed by an event naming a block.
+                    if messages[i].proseProtocol != 2 {
+                        if messages[i].verificationReplacementText == nil {
+                            let lead = messages[i].leadProseId
+                            if let lastProse = messages[i].blocks.last(where: {
+                                if case .prose(let pid, _) = $0 { return pid != lead }; return false
+                            }), case .prose(let pid, let draft) = lastProse {
+                                messages[i].supersededBlockIds.insert(pid)
+                                messages[i].timeline.append(.text(draft, superseded: true))
+                            }
                         }
+                        // A later retry supersedes the hidden candidate, not the
+                        // still-visible stable answer.
+                        messages[i].verificationReplacementText = ""
                     }
-                    // A later retry supersedes the hidden candidate, not the
-                    // still-visible stable answer.
-                    messages[i].verificationReplacementText = ""
                     messages[i].selfCorrected = true
                     let label = AgentChatMessage.verifyLabel(attempt: attempt, max: maxAttempts)
                     messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: label)
@@ -8553,7 +8878,12 @@ final class AssistantVM {
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     Self.commitVerifiedReplacement(on: &messages[i])
                     messages[i].suppressedRawToolEnvelope = nil
-                    Self.commitVerifiedReplacement(on: &messages[i])
+                    if messages[i].proseProtocol == 2 {
+                        messages[i].settleProse()
+                        messages[i].syncProseBlocks()
+                    } else {
+                        Self.commitVerifiedReplacement(on: &messages[i])
+                    }
                     if let tokensIn { messages[i].tokensIn = tokensIn }
                     if let tokensOut { messages[i].tokensOut = tokensOut }
                     if let cacheCreation { messages[i].cacheCreation = cacheCreation }
@@ -8591,7 +8921,7 @@ final class AssistantVM {
                 thinkingLive = false
                 settleLiveMode()
                 errorToast = message
-            case .turnSnapshot(let turnId, let convId, _, _):
+            case .turnSnapshot(let turnId, let convId, _, _, let snapshotProtocol):
                 // Durable-stream hello (PR 5) — reconcile ids on (re)connect, and
                 // NOW (stream provably attached) wipe the frozen partial so the
                 // authoritative replay rebuilds the tail without doubling.
@@ -8603,6 +8933,55 @@ final class AssistantVM {
                 if pendingReplayReset {
                     pendingReplayReset = false
                     resetStreamingTailForReplay()
+                }
+                // The family the replay/tail is served in for THIS client — the
+                // reducer is selected from this, never from the event shapes.
+                if let snapshotProtocol {
+                    ensureStreamingTail()
+                    if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                        messages[i].proseProtocol = snapshotProtocol == 2 ? 2 : 1
+                    }
+                }
+            case .turnProtocol(let protocolVersion):
+                // Route envelope, sent before any prose. Per-message so a later
+                // turn on this screen starts clean.
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    messages[i].proseProtocol = protocolVersion == 2 ? 2 : 1
+                }
+            case .proseStart(let id, let kind, let revision, _):
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }), messages[i].proseProtocol == 2 {
+                    messages[i].applyProseStart(id: id, kind: kind, revision: revision)
+                    messages[i].syncProseBlocks()
+                    touchedStream = true
+                }
+            case .proseCommit(let id, let kind, let revision, let text):
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }), messages[i].proseProtocol == 2 {
+                    messages[i].applyProseCommit(id: id, kind: kind, revision: revision, text: text)
+                    messages[i].syncProseBlocks()
+                    touchedStream = true
+                }
+            case .proseSupersede(let id, let replacementId, let reason):
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }), messages[i].proseProtocol == 2 {
+                    let wasVisible = messages[i].visibleProseBlocks.contains { $0.id == id }
+                    messages[i].applyProseSupersede(id: id, replacementId: replacementId)
+                    messages[i].syncProseBlocks()
+                    // A verifier/contract rewrite of a visible block is the
+                    // "নিজে যাচাই করে ঠিক করেছে" signal; housekeeping retirements are not.
+                    // Mirror the v1 live row so live and cold show the same
+                    // verification activity (the cold projection has a `verify` entry).
+                    if replacementId != nil, wasVisible, reason != "empty", reason != "prospective_plan" {
+                        requestLiveMode("thinking")
+                        messages[i].selfCorrected = true
+                        let label = AgentChatMessage.verifyLabel(attempt: 1, max: 1)
+                        messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: label)
+                        messages[i].blocks = AgentChatMessage.appendThinkBlock(
+                            messages[i].blocks, chunk: label, messageId: messages[i].id)
+                    }
+                    touchedStream = true
                 }
             case .replayContinue(let afterSeq):
                 // Page-capped replay: continue from the cursor (no tail reset).
@@ -8950,6 +9329,84 @@ final class AssistantVM {
     /// understanding → clustered business tools → interim reply → sales research
     /// → polished answer → downloadable action-plan card. The optional
     /// `claudeInteractive` URLProtocol then lets the same real UI accept new turns.
+    #if DEBUG
+    /// Prose lifecycle v2 golden transcript — the SAME wire events the shared
+    /// fixture (src/agent/protocol/fixtures/prose-lifecycle-v2/…json) expects
+    /// from the server. Replayed through the LIVE reducer (never a hand-built
+    /// block list), so the simulator screenshot proves the reducer itself:
+    /// progress lines survive later tool starts and the verifier swap. A unit
+    /// test keeps this literal equal to the bundled fixture.
+    static let proseLifecycleFixtureEvents: [String] = [
+        #"{"type":"thinking_delta","delta":"অর্ডার আর স্টক দুটোই লাগবে"}"#,
+        #"{"type":"prose_start","blockId":"turn-fx-1:p1","kind":"draft","revision":1}"#,
+        #"{"type":"text_delta","delta":"বস, অর্ডার আর স্টক দেখে নিচ্ছি।","blockId":"turn-fx-1:p1","revision":1}"#,
+        #"{"type":"prose_commit","blockId":"turn-fx-1:p1","kind":"lead","revision":1,"text":"বস, অর্ডার আর স্টক দেখে নিচ্ছি।"}"#,
+        #"{"type":"preamble","text":"বস, অর্ডার আর স্টক দেখে নিচ্ছি।"}"#,
+        #"{"type":"progress_update","label":"ধাপ ১ · পরের পদক্ষেপ প্রস্তুত হচ্ছে","stage":"round"}"#,
+        #"{"type":"progress_update","label":"ধাপ ১ · ফল যাচাই করে উত্তর প্রস্তুত হচ্ছে","stage":"response"}"#,
+        #"{"type":"prose_start","blockId":"turn-fx-1:p2","kind":"draft","revision":1}"#,
+        #"{"type":"text_delta","delta":"আগে স্টক দেখছি…","blockId":"turn-fx-1:p2","revision":1}"#,
+        #"{"type":"progress_update","label":"ধাপ ১ · স্টক","stage":"tool"}"#,
+        #"{"type":"prose_commit","blockId":"turn-fx-1:p2","kind":"progress","revision":1,"text":"আগে স্টক দেখছি…"}"#,
+        #"{"type":"tool_start","id":"tA","name":"get_inventory_status"}"#,
+        #"{"type":"thinking_delta","delta":"স্টক আগে"}"#,
+        #"{"type":"text_delta","delta":" (২ গুদাম)","blockId":"turn-fx-1:p2","revision":1}"#,
+        #"{"type":"prose_commit","blockId":"turn-fx-1:p2","kind":"progress","revision":2,"text":"আগে স্টক দেখছি… (২ গুদাম)"}"#,
+        #"{"type":"tool_start","id":"tA","name":"get_inventory_status","input":{"warehouse":"all"}}"#,
+        #"{"type":"tool_end","id":"tA","name":"get_inventory_status","success":true,"resultPreview":"2 warehouses"}"#,
+        #"{"type":"progress_update","label":"ধাপ ২ · পরের পদক্ষেপ প্রস্তুত হচ্ছে","stage":"round"}"#,
+        #"{"type":"tool_start","id":"tB","name":"analyze_pricing"}"#,
+        #"{"type":"tool_start","id":"tB","name":"analyze_pricing","input":{}}"#,
+        #"{"type":"tool_end","id":"tB","name":"analyze_pricing","success":true,"resultPreview":"ok"}"#,
+        #"{"type":"progress_update","label":"ধাপ ৩ · পরের পদক্ষেপ প্রস্তুত হচ্ছে","stage":"round"}"#,
+        #"{"type":"prose_start","blockId":"turn-fx-1:p3","kind":"draft","revision":1}"#,
+        #"{"type":"text_delta","delta":"এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।","blockId":"turn-fx-1:p3","revision":1}"#,
+        #"{"type":"prose_commit","blockId":"turn-fx-1:p3","kind":"progress","revision":1,"text":"এ পর্যন্ত ২টা ধাপ সফল — স্টক ঠিক আছে, এবার দাম মিলিয়ে দেখছি।"}"#,
+        #"{"type":"progress_update","label":"ধাপ ৪ · পরের পদক্ষেপ প্রস্তুত হচ্ছে","stage":"round"}"#,
+        #"{"type":"prose_start","blockId":"turn-fx-1:p4","kind":"draft","revision":1}"#,
+        #"{"type":"text_delta","delta":"কাজ শেষ, সব ঠিক আছে Boss!","blockId":"turn-fx-1:p4","revision":1}"#,
+        #"{"type":"prose_supersede","blockId":"turn-fx-1:p4","replacementBlockId":"turn-fx-1:p5","reason":"completion_claim"}"#,
+        #"{"type":"progress_update","label":"ধাপ ৫ · পরের পদক্ষেপ প্রস্তুত হচ্ছে","stage":"round"}"#,
+        #"{"type":"prose_start","blockId":"turn-fx-1:p5","kind":"draft","revision":1,"replaces":"turn-fx-1:p4"}"#,
+        #"{"type":"text_delta","delta":"Boss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।","blockId":"turn-fx-1:p5","revision":1}"#,
+        #"{"type":"prose_commit","blockId":"turn-fx-1:p5","kind":"final","revision":1,"text":"Boss, স্টক ঠিক আছে আর দাম মিলেছে — রিপোর্ট রেডি।"}"#,
+        #"{"type":"done","messageId":"msg-fx-1","tokensIn":10,"tokensOut":5}"#,
+    ]
+
+    /// ALMA_PROSE_V2_FIXTURE=1 — replay the golden v2 transcript and settle.
+    func loadProseLifecycleFixture() {
+        queuedOwnerMessages = []
+        pendingFiles = []
+        dictationFailure = nil
+        recoverableTurn = nil
+        currentClientMessageId = nil
+        errorToast = nil
+        composerDraft = ""
+        permissionMode = .standard
+        conversationId = "fixture-prose-v2"
+        selectedSessionIdentity = "fixture:prose-v2"
+        conversationTitle = "Prose lifecycle v2"
+        var owner = AgentChatMessage(
+            id: "prose-v2-owner", role: .user,
+            text: "অর্ডার আর স্টক চেক করে ছোট রিপোর্ট দাও।")
+        owner.createdAt = "2026-08-23T09:30:00.000Z"
+        messages = [owner]
+        isStreaming = true
+        apply([.turnProtocol(2)])
+        let decoder = JSONDecoder()
+        let events = Self.proseLifecycleFixtureEvents.compactMap { json -> AgentTurnEvent? in
+            guard let data = json.data(using: .utf8),
+                  let dto = try? decoder.decode(AgentSSEEvent.self, from: data) else { return nil }
+            return AgentTurnEvent(dto: dto)
+        }
+        apply(events)
+        if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
+        isStreaming = false
+        thinkingLive = false
+        settleLiveMode()
+    }
+    #endif
+
     func loadClaudeChatFixture() {
         queuedOwnerMessages = []
         pendingFiles = []
@@ -10156,7 +10613,7 @@ final class AssistantVM {
         if case .done(let mid, let tin, _, let cost, let cont, _, _, _, _)? = decode(#"{"type":"done","messageId":"m1","tokensIn":5,"costUsd":0.1,"needContinue":true}"#) {
             check("done fields", mid == "m1" && tin == 5 && cost == 0.1 && cont)
         } else { check("done fields", false) }
-        if case .turnSnapshot(let tid, _, let st, let seq)? = decode(#"{"type":"turn_snapshot","turnId":"t9","status":"running","lastSeq":7}"#) {
+        if case .turnSnapshot(let tid, _, let st, let seq, _)? = decode(#"{"type":"turn_snapshot","turnId":"t9","status":"running","lastSeq":7}"#) {
             check("turn_snapshot", tid == "t9" && st == "running" && seq == 7)
         } else { check("turn_snapshot", false) }
         if case .progressUpdate(let label)? = decode(#"{"type":"progress_update","label":"স্টক যাচাই করছি"}"#) {
@@ -10275,7 +10732,7 @@ final class AssistantVM {
             await buf.finish()
             let flat = applied.flatMap { $0 }
             var ok = flat.count == 2
-            if ok, case .textDelta(let joined) = flat[0] { ok = joined == "আজ" } else { ok = false }
+            if ok, case .textDelta(let joined, _) = flat[0] { ok = joined == "আজ" } else { ok = false }
             if ok, case .toolStart = flat[1] {} else { ok = false }
             guard let self else { return }
             var final = results
@@ -25144,6 +25601,12 @@ struct AssistantScreen: View {
             if argFlag("ALMA_ASSISTANT_STREAM_EOF") {
                 vm.runUnexpectedStreamEOFFixture()
                 AlmaTurnLog.event("assistant.contentReady", "fixture=stream-eof")
+                return
+            }
+            // Prose lifecycle v2 — golden transcript through the live reducer.
+            if argFlag("ALMA_PROSE_V2_FIXTURE") {
+                vm.loadProseLifecycleFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=prose-v2 count=\(vm.messages.count)")
                 return
             }
             #endif

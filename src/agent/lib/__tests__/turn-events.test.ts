@@ -39,7 +39,14 @@ describe('A2 — enqueue payload (buildTurnJobData)', () => {
       clientRequestId: 'request_123',
       askCardId: null,
       internalControl: false,
+      agentProseProtocol: 1,
     })
+  })
+
+  it('carries the advertised prose protocol to the worker (prose lifecycle v2)', () => {
+    expect(buildTurnJobData('turn_1', 'conv_1', { message: 'hi', agentProseProtocol: 2 })?.agentProseProtocol).toBe(2)
+    expect(buildTurnJobData('turn_1', 'conv_1', { message: 'hi', agentProseProtocol: '2' })?.agentProseProtocol).toBe(2)
+    expect(buildTurnJobData('turn_1', 'conv_1', { message: 'hi', agentProseProtocol: 7 })?.agentProseProtocol).toBe(1)
   })
 
   it('carries a well-formed askCardId and drops a malformed one (AGENT-IOS-001)', () => {

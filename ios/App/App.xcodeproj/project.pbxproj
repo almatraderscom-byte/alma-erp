@@ -70,6 +70,7 @@
 		F6A600000000000000000002 /* LiveVoiceAccessibilityLayoutPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6A600000000000000000004 /* LiveVoiceAccessibilityLayoutPolicyTests.swift */; };
 		B4D400000000000000000001 /* LiveVoiceActivityPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D400000000000000000002 /* LiveVoiceActivityPolicyTests.swift */; };
 		A9F000000000000000000003 /* AssistantParityV2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F000000000000000000002 /* AssistantParityV2Tests.swift */; };
+		A9F0000000000000000000F2 /* prose-lifecycle-v2-golden.json in Resources */ = {isa = PBXBuildFile; fileRef = A9F0000000000000000000F1 /* prose-lifecycle-v2-golden.json */; };
 		A9F10000000000000000B001 /* GlobalOfficeRobotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */; };
 		A9F10000000000000000B002 /* GlobalOfficeRobotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */; };
 		A9F10000000000000000C003 /* GlobalOfficeRobotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000C002 /* GlobalOfficeRobotTests.swift */; };
@@ -297,6 +298,7 @@
 		F6A600000000000000000004 /* LiveVoiceAccessibilityLayoutPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceAccessibilityLayoutPolicyTests.swift; sourceTree = "<group>"; };
 		B4D400000000000000000002 /* LiveVoiceActivityPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceActivityPolicyTests.swift; sourceTree = "<group>"; };
 		A9F000000000000000000002 /* AssistantParityV2Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantParityV2Tests.swift; sourceTree = "<group>"; };
+		A9F0000000000000000000F1 /* prose-lifecycle-v2-golden.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; name = "prose-lifecycle-v2-golden.json"; path = "Fixtures/prose-lifecycle-v2-golden.json"; sourceTree = "<group>"; };
 		A9F000000000000000000008 /* AppParityV2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppParityV2Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotView.swift; sourceTree = "<group>"; };
 		A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotStore.swift; sourceTree = "<group>"; };
@@ -656,6 +658,7 @@
 			isa = PBXGroup;
 			children = (
 				A9F000000000000000000002 /* AssistantParityV2Tests.swift */,
+				A9F0000000000000000000F1 /* prose-lifecycle-v2-golden.json */,
 				A7C100000000000000000008 /* LiveVoicePreviewTests.swift */,
 				B8C1B0000000000000000004 /* LiveVoicePhase1BTests.swift */,
 				C2A2A0000000000000000004 /* LiveVoiceInputTurnReducerTests.swift */,
@@ -902,6 +905,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A9F0000000000000000000F2 /* prose-lifecycle-v2-golden.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

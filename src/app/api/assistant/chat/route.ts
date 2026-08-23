@@ -5,6 +5,7 @@ import { requireAgentEnabled, requireAnthropicApiKey, requireModelProviderKey } 
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
+import type { AgentEvent } from '@/agent/lib/core'
 import { assertModelOverrideNotAllowed } from '@/agent/lib/models/guard'
 import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId, isKnownModelId } from '@/agent/lib/models/registry'
 import { parseEffortSetting, type EffortLevel } from '@/agent/lib/models/effort'
@@ -25,6 +26,7 @@ import {
   finalizeTurnIfRunning,
   isRunningTurnForConversation,
   findOrCreateTurnByClientMessageId,
+  getTurnProseProtocol,
   findTurnByClientMessageId,
   getTurnSnapshot,
   linkTurnUserMessage,
@@ -33,6 +35,12 @@ import {
 } from '@/agent/lib/turn-status'
 import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
 import { createTurnEventPublisher } from '@/agent/lib/turn-events'
+import {
+  ProseLifecycleTracker,
+  negotiateProseProtocol,
+  withProseLifecycle,
+  type ProseProtocol,
+} from '@/agent/lib/presentation/prose-lifecycle'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
@@ -119,6 +127,11 @@ interface ChatBody {
   /** Set by the voice session — the reply is read aloud (TTS), so the head should
    *  answer TTS-friendly and hand money/irreversible confirmations off to a tap. */
   voice?: boolean
+  /**
+   * Prose lifecycle v2 capability (prose-lifecycle.ts). `2` = the client can
+   * reduce the typed prose family; absent/anything else = legacy protocol 1.
+   */
+  agentProseProtocol?: number | string
   /** Owner's head-model choice for a NEW web conversation: a real model id or 'auto'. */
   modelId?: string
   /**
@@ -255,6 +268,15 @@ export async function POST(req: NextRequest) {
     && typeof body.autoContinueFromTurnId === 'string'
       ? body.autoContinueFromTurnId.trim()
       : ''
+  // Prose lifecycle v2 (handoff F-01…F-04): ONE protocol per turn, negotiated
+  // BEFORE the turn row exists so it is stamped at creation — a durable observer
+  // (15 s worker fallback, a reconnecting client) that attaches the moment the
+  // row becomes visible must already read the right family (Codex P1 #834).
+  // Internal worker mirrors read the stamp the enqueue route persisted instead.
+  const requestedProseProtocol = isInternalCall
+    ? 1
+    : negotiateProseProtocol({ requested: body.agentProseProtocol, voiceTurn: body.voice === true })
+
   const clientRequestId =
     typeof body.clientRequestId === 'string' && /^[A-Za-z0-9_-]{8,100}$/.test(body.clientRequestId.trim())
       ? body.clientRequestId.trim()
@@ -531,7 +553,7 @@ export async function POST(req: NextRequest) {
     // If the 15s VPS fallback already won this request id, this direct path exits
     // without creating another user row or running the task a second time.
     if (!isInternalCall && !resume && !autoContinueFromTurnId && clientRequestId) {
-      const claim = await claimTurnForRequest(conversationId, clientRequestId)
+      const claim = await claimTurnForRequest(conversationId, clientRequestId, 'inline', requestedProseProtocol)
       if (!claim.claimed) {
         return Response.json(
           { error: 'request_already_claimed', turnId: claim.turnId, status: claim.status, conversationId },
@@ -699,7 +721,7 @@ export async function POST(req: NextRequest) {
   if (isInternalCall && typeof body.turnId === 'string' && body.turnId) {
     turnId = body.turnId
   } else if (autoContinueFromTurnId) {
-    const claim = await claimContinuationTurn(conversationId!, autoContinueFromTurnId)
+    const claim = await claimContinuationTurn(conversationId!, autoContinueFromTurnId, requestedProseProtocol)
     if (!claim.claimed || !claim.turnId) {
       clearTimeout(turnCapTimer)
       return Response.json(
@@ -711,7 +733,7 @@ export async function POST(req: NextRequest) {
   } else if (claimedRequestTurnId) {
     turnId = claimedRequestTurnId
   } else if (clientMessageId) {
-    const r = await findOrCreateTurnByClientMessageId(conversationId!, clientMessageId, 'inline')
+    const r = await findOrCreateTurnByClientMessageId(conversationId!, clientMessageId, 'inline', requestedProseProtocol)
     if (r && !r.created) {
       clearTimeout(turnCapTimer)
       return Response.json({
@@ -726,9 +748,22 @@ export async function POST(req: NextRequest) {
     }
     turnId = r?.turn.id ?? null
   } else {
-    turnId = await createTurn(conversationId!, { executionMode: 'inline' })
+    turnId = await createTurn(conversationId!, { executionMode: 'inline', proseProtocol: requestedProseProtocol })
   }
   if (savedUserMessageId) await linkTurnUserMessage(turnId, savedUserMessageId)
+
+  // The protocol the turn ROW carries is the one every observer will read —
+  // the row was created with the negotiated value above. Re-read it so a
+  // creation path that could not stamp (fail-open createTurn → null id, a
+  // claimed pre-existing row) serves the legacy wire instead of a v2 stream
+  // nobody announced (Codex P1 #834, both rounds).
+  const proseProtocol: ProseProtocol = turnId
+    ? await getTurnProseProtocol(turnId)
+    : 1
+  if (requestedProseProtocol === 2 && proseProtocol !== 2) {
+    console.warn('[assistant/chat] prose protocol v2 requested but the turn row is not stamped — serving v1', { turnId })
+  }
+  const proseLifecycle = new ProseLifecycleTracker({ protocol: proseProtocol, turnId })
 
   // P0-2: for a continuation this stamp lands in a DIFFERENT process from the
   // approve route's stamps, which is exactly the point — the gap between
@@ -831,9 +866,10 @@ export async function POST(req: NextRequest) {
     chatMode,
     permissionMode,
     elevationGrant,
+    proseLifecycle,
   }
 
-  async function* runTurn() {
+  async function* runTurn(): AsyncGenerator<AgentEvent> {
     // ALL turns — owner web AND internal (Telegram / VPS-worker continuation) — go
     // through runOwnerTurn so the head-router's safeties always apply. Internal
     // calls used to invoke runAgentTurn (the native Claude path) directly with
@@ -844,7 +880,10 @@ export async function POST(req: NextRequest) {
     // up, delegates to the same runAgentTurn with the same options (behavior
     // preserved); when ANTHROPIC_HEAD_DOWN it transparently redirects to the heavy
     // head (Gemini 3.1 Pro) and applies the owner's model-enabled fallback.
-    yield* runOwnerTurn(conversationId!, turnOptions)
+    // The lifecycle interceptor sees every event exactly once, in order, before
+    // the runner resumes — so the runner's terminal write already holds the
+    // complete block document. On a v1 turn it is a byte-identical pass-through.
+    yield* withProseLifecycle(runOwnerTurn(conversationId!, turnOptions), proseLifecycle) as AsyncGenerator<AgentEvent>
   }
 
   const streamMode = req.nextUrl.searchParams.get('stream') !== 'false'
@@ -950,6 +989,9 @@ export async function POST(req: NextRequest) {
     // (review bot, #692).
     await traceTurnStage(turnId, 'turn_done', errorMsg ? 'error' : 'done').catch(() => {})
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
+    // v2 deltas are block-addressed (no paragraph separators on the wire): the
+    // tracker's committed blocks are the truthful reply text, not the raw join.
+    if (proseLifecycle.protocol === 2) finalText = proseLifecycle.ownerVisibleText() || finalText
     if (turnId && conversationId && convSource === 'web' && !continuationNeeded) {
       try {
         const deliveryId = await enqueueTurnCompletionNotification({
@@ -1014,6 +1056,7 @@ export async function POST(req: NextRequest) {
   let doneTurnMs = -1
   // Short preview of the reply, for the away-push (ntfy) when the app is closed.
   let replyPreview = ''
+  let lastPreviewBlockId: string | undefined
   /** P0-2: first_token is stamped once per turn — the stream can emit thousands. */
   let streamFirstTokenStamped = false
   /** P0-2: the terminal stamp is written once — by done, by error, or by the finally net. */
@@ -1065,6 +1108,9 @@ export async function POST(req: NextRequest) {
       // Give the client the durable turn id so its Stop button can issue a real
       // server-side cancel, and so it can poll this turn's status after re-open.
       if (turnId) emit({ type: 'turn_id', id: turnId })
+      // Sent before any prose: a client picks its v1/v2 reducer from THIS fact
+      // alone, never from the shape of individual events.
+      emit({ type: 'turn_protocol', agentProseProtocol: proseProtocol })
       try {
         for await (const event of runTurn()) {
           emit(event)
@@ -1077,7 +1123,10 @@ export async function POST(req: NextRequest) {
             void traceTurnStage(turnId, 'first_token').catch(() => {})
           }
           if (event.type === 'text_delta' && replyPreview.length < 140) {
-            replyPreview += (event as { delta?: string }).delta ?? ''
+            // v2 deltas carry no paragraph separators; keep the preview readable.
+            const sep = proseProtocol === 2 && replyPreview && (event as { blockId?: string }).blockId !== lastPreviewBlockId ? ' ' : ''
+            lastPreviewBlockId = (event as { blockId?: string }).blockId ?? lastPreviewBlockId
+            replyPreview += sep + ((event as { delta?: string }).delta ?? '')
           } else if (event.type === 'confirm_card' && convSource === 'web') {
             const summary = (event as { summary?: string }).summary
             await notifyOwnerIfAway({
@@ -1179,6 +1228,10 @@ export async function POST(req: NextRequest) {
           // Also log to stdout so the cause is visible in Vercel runtime logs, not only Sentry.
           console.error('[assistant/chat] stream turn failed:', err instanceof Error ? err.stack ?? err.message : String(err))
           void captureAgentError(err, 'agent.chat.stream_error', { conversationId: conversationId ?? undefined })
+          // Prose the error salvage committed (settle + the warning block) must
+          // reach the live reducers BEFORE the terminal error — otherwise the
+          // live transcript and the reloaded one differ (Codex P1 #834 r4).
+          for (const evt of proseLifecycle.drainQueued()) emit(evt as AgentEvent)
           emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
         }
       } finally {

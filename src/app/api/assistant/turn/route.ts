@@ -14,6 +14,8 @@ import {
   type TurnSnapshot,
 } from '@/agent/lib/turn-status'
 import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
+import { negotiateProseProtocol } from '@/agent/lib/presentation/prose-lifecycle'
+import { turnVersionsFor } from '@/agent/lib/turn-status'
 
 export const runtime = 'nodejs'
 
@@ -70,6 +72,9 @@ export async function POST(req: NextRequest) {
       : null
 
   let conversationId = typeof body.conversationId === 'string' ? body.conversationId : null
+  // Prose lifecycle v2: the protocol this client advertises is persisted on the
+  // turn row here, so the worker's internal chat call serves the same family.
+  const proseProtocol = negotiateProseProtocol({ requested: body.agentProseProtocol, voiceTurn: body.voice === true })
 
   const turnSummary = (t: TurnSnapshot, extra?: Record<string, unknown>) =>
     Response.json({
@@ -109,6 +114,7 @@ export async function POST(req: NextRequest) {
             clientMessageId,
             executionMode: 'worker',
             userMessageId: existing.userMessageId,
+            versions: turnVersionsFor(proseProtocol),
           },
         })
       }).catch((err: unknown) => {
@@ -169,7 +175,7 @@ export async function POST(req: NextRequest) {
   if (clientRequestId) {
     // Direct Vercel and VPS fallback race on one durable request id. If direct
     // already owns it, observe that turn instead of canceling/re-running the work.
-    const claim = await claimTurnForRequest(conversationId, clientRequestId, 'worker')
+    const claim = await claimTurnForRequest(conversationId, clientRequestId, 'worker', proseProtocol)
     if (!claim.claimed) {
       return Response.json({
         turnId: claim.turnId,
@@ -181,7 +187,7 @@ export async function POST(req: NextRequest) {
     }
     turnId = claim.turnId
   } else if (clientMessageId) {
-    const r = await findOrCreateTurnByClientMessageId(conversationId, clientMessageId, 'worker')
+    const r = await findOrCreateTurnByClientMessageId(conversationId, clientMessageId, 'worker', proseProtocol)
     if (r && !r.created) return turnSummary(r.turn, { duplicate: true })
     turnId = r?.turn.id ?? null
   } else {
@@ -191,7 +197,7 @@ export async function POST(req: NextRequest) {
     if (superseded > 0) {
       console.warn(`[assistant/turn] superseded ${superseded} running turn(s) on conversation ${conversationId}`)
     }
-    turnId = await createTurn(conversationId, { executionMode: 'worker' })
+    turnId = await createTurn(conversationId, { executionMode: 'worker', proseProtocol })
   }
   const jobData = buildTurnJobData(turnId, conversationId, body as Parameters<typeof buildTurnJobData>[2])
   if (!jobData) {

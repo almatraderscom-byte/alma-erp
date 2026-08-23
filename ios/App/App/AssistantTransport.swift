@@ -74,6 +74,8 @@ struct TurnStatusResponse: Decodable {
     /// Terminal turn ended continuation-eligible — the ONLY signal left when both
     /// the direct SSE and the durable tail are gone and polling finds the terminal.
     let continuationNeeded: Bool?
+    /// Prose lifecycle v2: the prose family this turn streamed (1 or 2).
+    let agentProseProtocol: Int?
 }
 
 /// Server-authored image-render estimate pinned to one model selection. These
@@ -826,6 +828,15 @@ struct AgentSSEEvent: Decodable {
     let sourceId: String?       // work_steps_snapshot
     let blockedBy: AgentWorkStepsBlockerWire? // work_steps_snapshot
     let updatedAt: String?      // work_steps_snapshot
+    // Prose lifecycle v2 (protocol-2 turns; src/agent/lib/presentation/prose-lifecycle.ts):
+    // block-addressed text_delta + prose_start / prose_commit / prose_supersede,
+    // and the route's turn_protocol envelope (also echoed on turn_snapshot).
+    let blockId: String?            // text_delta / prose_* — the prose block this names
+    let kind: String?               // prose_start / prose_commit — lead|progress|draft|final
+    let replacementBlockId: String? // prose_supersede — stay visible until this commits
+    let replaces: String?           // prose_start — the block this one will stand in for
+    let checksum: String?           // prose_commit — fnv1a of the committed text
+    let agentProseProtocol: Int?    // turn_protocol + turn_snapshot
 }
 
 /// Roadmap 2.1 — the typed native event contract. Mirrors `src/agent/lib/core.ts`
@@ -842,7 +853,9 @@ enum AgentTurnEvent: Sendable {
     /// never presented as private model reasoning; it is an explicit progress
     /// update emitted by the turn runner for every provider.
     case progressUpdate(String)
-    case textDelta(String)
+    /// `blockId` is set only on protocol-2 turns (prose lifecycle v2): the
+    /// server block this delta extends. Legacy deltas carry nil.
+    case textDelta(String, blockId: String? = nil)
     case toolStart(id: String, name: String, inputPretty: String?)
     case toolEnd(id: String, ok: Bool, resultPreview: String?, screenshot: String?)
     case subagentStart(id: String, role: String, roleLabel: String, task: String?)
@@ -869,6 +882,18 @@ enum AgentTurnEvent: Sendable {
     /// Forced prospective planning starts before any business work. This is an
     /// explicit reset signal; an ordinary `make_plan` toolStart is not one.
     case prospectivePlanStart
+    /// Prose lifecycle v2 (protocol-2 turns only). A prose block opened;
+    /// `replaces` names the superseded block it will stand in for on commit.
+    case proseStart(id: String, kind: String, revision: Int, replaces: String?)
+    /// The block settled as lead / progress / final. `text` is the full
+    /// committed text, so a delta lost on the wire self-heals.
+    case proseCommit(id: String, kind: String, revision: Int, text: String?)
+    /// Retire exactly one block: with a promised replacement it stays visible
+    /// until that commits; without one it is removed at once.
+    case proseSupersede(id: String, replacementId: String?, reason: String)
+    /// Route envelope sent before any prose: the negotiated prose protocol.
+    /// Reducer selection comes from THIS fact alone, never from event shapes.
+    case turnProtocol(Int)
     /// SK-3 — which skill is running this job, announced BEFORE any work starts
     /// so the owner sees it up front and can change it.
     case skillPinned(skill: String, source: String, reason: String, isolated: Bool)
@@ -884,7 +909,8 @@ enum AgentTurnEvent: Sendable {
               roundCostsUsd: [Double]?)
     case turnError(message: String)
     /// Durable-stream hello (roadmap 3.5/PR 5): current turn state on (re)connect.
-    case turnSnapshot(turnId: String?, conversationId: String?, status: String?, lastSeq: Int?)
+    case turnSnapshot(turnId: String?, conversationId: String?, status: String?, lastSeq: Int?,
+                      agentProseProtocol: Int? = nil)
     /// Page-capped replay ended early — reconnect from this cursor.
     case replayContinue(afterSeq: Int)
     case unknown(type: String)
@@ -916,7 +942,21 @@ enum AgentTurnEvent: Sendable {
         case "progress_update":
             self = .progressUpdate(ev.label ?? "")
         case "text_delta":
-            self = .textDelta(ev.delta ?? "")
+            self = .textDelta(ev.delta ?? "", blockId: ev.blockId)
+        case "prose_start":
+            self = ev.blockId.map { .proseStart(id: $0, kind: ev.kind ?? "draft", revision: ev.revision ?? 1,
+                                                  replaces: ev.replaces) }
+                ?? .unknown(type: "prose_start/noid")
+        case "prose_commit":
+            self = ev.blockId.map { .proseCommit(id: $0, kind: ev.kind ?? "final", revision: ev.revision ?? 1,
+                                                   text: ev.text) }
+                ?? .unknown(type: "prose_commit/noid")
+        case "prose_supersede":
+            self = ev.blockId.map { .proseSupersede(id: $0, replacementId: ev.replacementBlockId,
+                                                      reason: ev.reason ?? "rewrite") }
+                ?? .unknown(type: "prose_supersede/noid")
+        case "turn_protocol":
+            self = .turnProtocol(ev.agentProseProtocol ?? 1)
         case "tool_start":
             self = .toolStart(id: ev.id ?? UUID().uuidString, name: ev.name ?? "টুল",
                               inputPretty: ev.input?.pretty())
@@ -992,7 +1032,8 @@ enum AgentTurnEvent: Sendable {
             self = .turnError(message: ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন")
         case "turn_snapshot":
             self = .turnSnapshot(turnId: ev.turnId, conversationId: ev.conversationId,
-                                 status: ev.status, lastSeq: ev.lastSeq)
+                                 status: ev.status, lastSeq: ev.lastSeq,
+                                 agentProseProtocol: ev.agentProseProtocol)
         case "replay_continue":
             self = .replayContinue(afterSeq: ev.afterSeq ?? -1)
         default:
@@ -1058,7 +1099,11 @@ actor AgentEventBuffer {
     /// control event (tool rows, cards, done) flushes everything instantly —
     /// pacing may only ever delay pure prose against wall-clock, never against
     /// another event.
-    private var proseBacklog = ""
+    /// Prose lifecycle v2: deltas of DIFFERENT blocks never merge — each
+    /// backlog chunk carries the block it belongs to (nil on legacy turns).
+    private struct ProseChunk { var blockId: String?; var text: String }
+    private var proseBacklog: [ProseChunk] = []
+    private var proseBacklogCount: Int { proseBacklog.reduce(0) { $0 + $1.text.count } }
     private var flushScheduled = false
     /// Bumped by every flush; a scheduled tick that lost the race to a control
     /// flush sees a newer generation and dies instead of double-ticking the
@@ -1091,8 +1136,12 @@ actor AgentEventBuffer {
             return
         }
         switch ev {
-        case .textDelta(let d):
-            proseBacklog += d
+        case .textDelta(let d, let blockId):
+            if !proseBacklog.isEmpty, proseBacklog[proseBacklog.count - 1].blockId == blockId {
+                proseBacklog[proseBacklog.count - 1].text += d
+            } else {
+                proseBacklog.append(ProseChunk(blockId: blockId, text: d))
+            }
         case .thinkingDelta(let d):
             drainProseIntoBatch()                  // keep prose→thinking order exact
             if case .thinkingDelta(let prev)? = batch.last {
@@ -1111,25 +1160,31 @@ actor AgentEventBuffer {
     /// used before any non-text event and on terminal flushes).
     private func drainProseIntoBatch() {
         guard !proseBacklog.isEmpty else { return }
-        if case .textDelta(let prev)? = batch.last {
-            batch[batch.count - 1] = .textDelta(prev + proseBacklog)
+        for chunk in proseBacklog { appendProseToBatch(chunk) }
+        proseBacklog = []
+    }
+
+    /// Merge into the trailing text delta ONLY when it addresses the same block.
+    private func appendProseToBatch(_ chunk: ProseChunk) {
+        if case .textDelta(let prev, let prevBlock)? = batch.last, prevBlock == chunk.blockId {
+            batch[batch.count - 1] = .textDelta(prev + chunk.text, blockId: chunk.blockId)
         } else {
-            batch.append(.textDelta(proseBacklog))
+            batch.append(.textDelta(chunk.text, blockId: chunk.blockId))
         }
-        proseBacklog = ""
     }
 
     /// One paced slice of the backlog per tick. Small when the model is keeping
     /// pace (the smooth typewriter), growing with the backlog so a fast model
     /// can never fall minutes behind the wire.
-    private func nextProseSlice() -> String? {
-        guard !proseBacklog.isEmpty else { return nil }
-        let target = max(Self.minProseSlice, proseBacklog.count / Self.proseCatchUpDivisor)
-        let idx = proseBacklog.index(proseBacklog.startIndex,
-                                     offsetBy: min(target, proseBacklog.count))
-        let slice = String(proseBacklog[..<idx])
-        proseBacklog = String(proseBacklog[idx...])
-        return slice
+    private func nextProseSlice() -> ProseChunk? {
+        guard var head = proseBacklog.first else { return nil }
+        let target = max(Self.minProseSlice, proseBacklogCount / Self.proseCatchUpDivisor)
+        let idx = head.text.index(head.text.startIndex,
+                                  offsetBy: min(target, head.text.count))
+        let slice = String(head.text[..<idx])
+        head.text = String(head.text[idx...])
+        if head.text.isEmpty { proseBacklog.removeFirst() } else { proseBacklog[0] = head }
+        return ProseChunk(blockId: head.blockId, text: slice)
     }
 
     private func scheduleFlush() {
@@ -1157,13 +1212,7 @@ actor AgentEventBuffer {
         flushScheduled = false
         flushGeneration += 1
         if paced {
-            if let slice = nextProseSlice() {
-                if case .textDelta(let prev)? = batch.last {
-                    batch[batch.count - 1] = .textDelta(prev + slice)
-                } else {
-                    batch.append(.textDelta(slice))
-                }
-            }
+            if let slice = nextProseSlice() { appendProseToBatch(slice) }
         } else {
             drainProseIntoBatch()
         }

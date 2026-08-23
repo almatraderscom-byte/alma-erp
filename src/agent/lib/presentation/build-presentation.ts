@@ -97,7 +97,7 @@ export function verificationLabel(attempt: number, max: number): string {
 const THINK_HEADLINE_MAX = 140
 
 /** First non-empty line of a reasoning block, capped — the row headline. */
-function thinkHeadline(text: string): string {
+export function thinkHeadline(text: string): string {
   const firstLine = text
     .split('\n')
     .map((l) => l.trim())
