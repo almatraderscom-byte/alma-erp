@@ -42,6 +42,7 @@ const AGENT_PROSE_PROTOCOL = 2 as const
 import { isHardVerificationReplacement, supersedeVerificationTimeline } from '@/agent/lib/verification-retry-view'
 import { reduceHeldVoiceReply, settleHeldVoiceReply } from '@/agent/lib/voice-reply-holdback'
 import { removeStoppedAssistantDraft } from '@/agent/lib/stopped-turn-view'
+import type { AgentReferenceV1 } from '@/agent/lib/references/types'
 import {
   addEntry as outboxAdd,
   defaultOutboxStorage,
@@ -133,6 +134,7 @@ type MessageRow = {
   thinkingMs?: number
   /** Ordered reasoning↔tool timeline — drives the unified stream after reload. */
   timeline?: TimelineEntry[]
+  references?: AgentReferenceV1[]
   createdAt?: string
 }
 
@@ -220,6 +222,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       durationMs: r.durationMs ?? undefined,
       apiRounds: r.apiRounds ?? undefined,
       roundCostsUsd: r.roundCostsUsd ?? undefined,
+      references: r.references,
       pendingActions: confirmBlocks.length
         ? confirmBlocks.map((cb) => ({
             id: cb.pendingActionId as string,
@@ -1567,6 +1570,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             })
             return { ...m, text: '', toolActivity: [], selfCorrected: true, timeline }
           }))
+        } else if (evt.type === 'references') {
+          const incoming = Array.isArray(evt.references) ? evt.references as AgentReferenceV1[] : []
+          setMessages((prev) => prev.map((m) => {
+            if (m.id !== assistantMsgId) return m
+            // Server projections are authoritative, including [] after a
+            // rollout kill-switch. Merging would retain stale ON-era links.
+            return { ...m, references: incoming }
+          }))
         } else if (evt.type === 'done') {
           gotStreamDone = true
           // Serverless deadline cut the task mid-flight → queue a structured,
@@ -1597,6 +1608,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   durationMs: evt.durationMs as number | undefined,
                   apiRounds: (evt.apiRounds as number | undefined) ?? undefined,
                   roundCostsUsd: (evt.roundCostsUsd as number[] | undefined) ?? undefined,
+                  references: Array.isArray(evt.references)
+                    ? evt.references as AgentReferenceV1[]
+                    : m.references,
                 }
               : m
           ))

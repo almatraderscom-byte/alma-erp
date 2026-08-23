@@ -21,6 +21,11 @@
 import { StateGraph, Annotation, START, END, Send } from '@langchain/langgraph'
 import type { SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import { getAlmaMemoryStore } from '@/agent/lib/graph/memory-store'
+import type { AlmaRole } from '@/lib/roles'
+import type { BusinessId } from '@/lib/businesses'
+import type { AgentReferenceContext, AgentReferenceV1 } from '@/agent/lib/references/types'
+import { filterAgentReferencesForContext, mergeAgentReferences } from '@/agent/lib/references/validator'
+import { agentReferenceRollout, shouldCollectAgentReferences } from '@/agent/lib/references/flags'
 
 export const SPECIALIST_FANOUT_MAX_BRANCHES = 4
 export const SPECIALIST_CACHE_NS = 'specialist_cache'
@@ -35,6 +40,8 @@ export interface SpecialistBrief {
   cacheable?: boolean
   cacheKey?: string
   cacheVersion?: string
+  /** Owner/auth roles allowed to consume branch references. Defaults to owner. */
+  referenceRoles?: AlmaRole[]
 }
 
 export interface SpecialistFinding {
@@ -50,6 +57,7 @@ export interface SpecialistFinding {
   costUsd: number
   fromCache: boolean
   error: string | null
+  references: AgentReferenceV1[]
 }
 
 export interface ReconciledFindings {
@@ -60,6 +68,7 @@ export interface ReconciledFindings {
   conflicts: Array<{ roles: [string, string]; note: string }>
   /** Compact structured block the head reads to write ONE grounded reply. */
   headBrief: string
+  references: AgentReferenceV1[]
 }
 
 /** The injected executor — production wires runSubAgent; tests wire fakes. */
@@ -69,6 +78,7 @@ export type SpecialistRunner = (brief: SpecialistBrief & { readOnly: true }) => 
   toolsUsed: string[]
   costUsd: number
   error?: string
+  references?: AgentReferenceV1[]
 }>
 
 // ── Reconciliation (pure) ────────────────────────────────────────────────────
@@ -108,6 +118,7 @@ export function reconcileFindings(findings: SpecialistFinding[]): ReconciledFind
     failed: findings.length - ok.length,
     conflicts,
     headBrief: `[SPECIALIST FAN-OUT ফলাফল — head একমাত্র উত্তরদাতা]\n${lines.join('\n')}`,
+    references: mergeAgentReferences(...findings.map((finding) => finding.references ?? [])),
   }
 }
 
@@ -121,14 +132,61 @@ const S = Annotation.Root({
   reconciled: Annotation<ReconciledFindings | null>({ reducer: (_a, b) => b, default: () => null }),
 })
 
+const ALMA_BUSINESSES = new Set<BusinessId>([
+  'ALMA_LIFESTYLE',
+  'CREATIVE_DIGITAL_IT',
+  'ALMA_TRADING',
+])
+const ALMA_ROLES = new Set<AlmaRole>(['SUPER_ADMIN', 'ADMIN', 'HR', 'STAFF', 'VIEWER'])
+
+function specialistReferenceContext(brief: SpecialistBrief): AgentReferenceContext | null {
+  if (!ALMA_BUSINESSES.has(brief.businessId as BusinessId)) return null
+  const roles = brief.referenceRoles === undefined
+    ? ['SUPER_ADMIN'] as AlmaRole[]
+    : brief.referenceRoles.filter((role): role is AlmaRole => ALMA_ROLES.has(role))
+  if (roles.length === 0 || (brief.referenceRoles && roles.length !== brief.referenceRoles.length)) return null
+  return { businessId: brief.businessId as BusinessId, roles: [...new Set(roles)] }
+}
+
+function specialistReferencesForBrief(
+  values: ReadonlyArray<unknown>,
+  brief: SpecialistBrief,
+): AgentReferenceV1[] {
+  if (!shouldCollectAgentReferences()) return []
+  const context = specialistReferenceContext(brief)
+  return context ? filterAgentReferencesForContext(values, context) : []
+}
+
+function specialistCacheNamespace(brief: SpecialistBrief): string[] | null {
+  const context = specialistReferenceContext(brief)
+  if (!context?.businessId || !context.roles?.length) return null
+  // Keep ON-generated linked prose/metadata out of SHADOW/OFF cache reads, and
+  // never share a result across businesses or auth audiences using the same
+  // caller-defined cache key.
+  return [
+    SPECIALIST_CACHE_NS,
+    context.businessId,
+    context.roles.slice().sort().join('+'),
+    agentReferenceRollout(),
+    brief.role,
+  ]
+}
+
 async function cacheGet(brief: SpecialistBrief): Promise<SpecialistFinding | null> {
   if (!brief.cacheable || !brief.cacheKey || !brief.cacheVersion) return null
   try {
     const store = getAlmaMemoryStore()
-    if (!store) return null
-    const item = await store.get([SPECIALIST_CACHE_NS, brief.role], `${brief.cacheKey}@${brief.cacheVersion}`)
+    const namespace = specialistCacheNamespace(brief)
+    if (!store || !namespace) return null
+    const item = await store.get(namespace, `${brief.cacheKey}@${brief.cacheVersion}`)
     const v = item?.value as { finding?: SpecialistFinding } | undefined
-    return v?.finding ? { ...v.finding, fromCache: true } : null
+    return v?.finding
+      ? {
+          ...v.finding,
+          fromCache: true,
+          references: specialistReferencesForBrief(v.finding.references ?? [], brief),
+        }
+      : null
   } catch { return null }
 }
 
@@ -136,8 +194,14 @@ async function cachePut(brief: SpecialistBrief, finding: SpecialistFinding): Pro
   if (!brief.cacheable || !brief.cacheKey || !brief.cacheVersion || !finding.success) return
   try {
     const store = getAlmaMemoryStore()
-    if (!store) return
-    await store.put([SPECIALIST_CACHE_NS, brief.role], `${brief.cacheKey}@${brief.cacheVersion}`, { finding })
+    const namespace = specialistCacheNamespace(brief)
+    if (!store || !namespace) return
+    await store.put(namespace, `${brief.cacheKey}@${brief.cacheVersion}`, {
+      finding: {
+        ...finding,
+        references: specialistReferencesForBrief(finding.references ?? [], brief),
+      },
+    })
   } catch { /* cache is an upgrade, never a dependency */ }
 }
 
@@ -169,6 +233,7 @@ export function buildSpecialistFanoutGraph(runner: SpecialistRunner) {
           costUsd: r.costUsd,
           fromCache: false,
           error: r.success ? null : (r.error ?? 'unknown'),
+          references: specialistReferencesForBrief(r.references ?? [], brief),
         }
         await cachePut(brief, finding)
         return { findings: [finding] }
@@ -179,7 +244,7 @@ export function buildSpecialistFanoutGraph(runner: SpecialistRunner) {
           findings: [{
             role: brief.role, success: false, findings: '', evidence: [], uncertainty: 'শাখা ব্যর্থ',
             artifacts: [], proposedNextStep: null, toolsUsed: [], costUsd: 0, fromCache: false,
-            error: err instanceof Error ? err.message : String(err),
+            error: err instanceof Error ? err.message : String(err), references: [],
           } satisfies SpecialistFinding],
         }
       }
@@ -216,7 +281,14 @@ export async function runSpecialistFanout(
         conversationId: brief.conversationId ?? undefined,
         readOnly: true,
       })
-      return { success: r.success, summary: r.summary, toolsUsed: r.toolsUsed, costUsd: r.costUsd, error: r.error }
+      return {
+        success: r.success,
+        summary: r.summary,
+        toolsUsed: r.toolsUsed,
+        costUsd: r.costUsd,
+        error: r.error,
+        references: r.references,
+      }
     })
   const graph = buildSpecialistFanoutGraph(runner)
   const out = await graph.invoke({ briefs }, { recursionLimit: 24 })

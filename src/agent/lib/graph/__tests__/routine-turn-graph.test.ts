@@ -6,7 +6,7 @@
  * handled=false so the normal head loop stays in charge. prisma-free: registry
  * executeTool and the provider adapter are both mocked.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterAll, describe, it, expect, vi, beforeEach } from 'vitest'
 
 const executeToolMock = vi.fn()
 vi.mock('@/agent/tools/registry', () => ({
@@ -15,10 +15,11 @@ vi.mock('@/agent/tools/registry', () => ({
 
 // Fake adapter: streams a fixed Bangla reply + usage, like a real provider.
 let fakeReply = 'Boss, আজকের বিক্রি ৳১২,৫০০ — ৮টা অর্ডার।'
+let formatterRequests: Array<Record<string, unknown>> = []
 vi.mock('@/agent/lib/models/adapters', () => ({
   adapterFor: () => ({
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    streamTurn: async function* (_args: unknown) {
+    streamTurn: async function* (args: Record<string, unknown>) {
+      formatterRequests.push(args)
       yield { type: 'text_delta', text: fakeReply }
       yield { type: 'usage', inputTokens: 120, outputTokens: 40, cacheRead: 0 }
       yield { type: 'done' }
@@ -35,6 +36,9 @@ import {
   ROUTINE_INTENT_TOOL,
 } from '../routine-turn-graph'
 import type { ModelEntry } from '@/agent/lib/models/registry'
+import { buildInternalEntityReference } from '@/agent/lib/references/internal-registry'
+
+const originalReferenceRollout = process.env.AGENT_REFERENCES_ROLLOUT
 
 const MODEL = {
   id: 'or-deepseek-v4-flash',
@@ -103,6 +107,12 @@ describe('runRoutineTurnGraph', () => {
   beforeEach(() => {
     executeToolMock.mockReset()
     fakeReply = 'Boss, আজকের বিক্রি ৳১২,৫০০ — ৮টা অর্ডার।'
+    formatterRequests = []
+  })
+
+  afterAll(() => {
+    if (originalReferenceRollout == null) delete process.env.AGENT_REFERENCES_ROLLOUT
+    else process.env.AGENT_REFERENCES_ROLLOUT = originalReferenceRollout
   })
 
   it('happy path: code runs the mapped tool, model only words the Bangla answer', async () => {
@@ -193,6 +203,34 @@ describe('runRoutineTurnGraph', () => {
     const r = await runRoutineTurnGraph('order 1234 er status ki', DEPS)
     expect(r.handled).toBe(false)
     expect(r.missReason).toBe('intent_miss')
+  })
+
+  it.each([
+    ['shadow', false],
+    ['on', true],
+  ] as const)('retains routine references for final compilation in %s but formatter visibility is %s', async (mode, formatterVisible) => {
+    process.env.AGENT_REFERENCES_ROLLOUT = mode
+    const reference = buildInternalEntityReference({
+      namespace: 'order',
+      id: `routine-${mode}`,
+      sourceTool: 'get_orders',
+      outputPath: 'data.orders[0].id',
+      context: { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] },
+    })!
+    executeToolMock.mockResolvedValue({
+      success: true,
+      data: { orders: [{ id: `routine-${mode}`, orderNumber: '1234', status: 'shipped' }] },
+      references: [reference],
+    })
+
+    const result = await runRoutineTurnGraph('order 1234 er status ki', DEPS)
+    const formatterPayload = JSON.stringify(formatterRequests[0])
+
+    expect(result.handled).toBe(true)
+    expect(result.toolRecord?.output).toMatchObject({ references: [reference] })
+    expect(formatterPayload.includes(reference.refId)).toBe(formatterVisible)
+    if (reference.destination.type !== 'internal_entity') throw new Error('expected internal order reference')
+    expect(formatterPayload.includes(reference.destination.webPath)).toBe(formatterVisible)
   })
 })
 

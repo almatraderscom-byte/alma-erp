@@ -222,6 +222,14 @@ import {
   linkifyAgentEntityText,
 } from '@/agent/lib/entity-links'
 import {
+  extractAgentReferences,
+  extractAgentReferencesFromRecords,
+} from '@/agent/lib/references/extractors'
+import { extractUserProvidedReferences } from '@/agent/lib/references/external-url'
+import { compileAgentReferenceText } from '@/agent/lib/references/compiler'
+import { mergeAgentReferences } from '@/agent/lib/references/validator'
+import { exposedAgentReferences, toolResultForReferenceRollout } from '@/agent/lib/references/flags'
+import {
   buildSavedSalvageEventSequence,
 } from '@/agent/lib/models/salvage-contract'
 import { isActionGraphEnabled, stageExpenseActionGraph, type StageExpenseResult } from '@/agent/lib/graph/action-turn-graph'
@@ -2185,6 +2193,14 @@ async function* runAlternateProviderTurn(
   }
   const toolRecords: ToolRecord[] = []
   const verifiedEntityLinks = () => extractAgentEntityLinksFromRecords(toolRecords, { businessId })
+  const userProvidedReferences = extractUserProvidedReferences(lastUserText, {
+    businessId,
+    roles: ['SUPER_ADMIN'],
+  })
+  const verifiedReferences = () => mergeAgentReferences(
+    userProvidedReferences,
+    extractAgentReferencesFromRecords(toolRecords, { businessId, roles: ['SUPER_ADMIN'] }),
+  )
   // Dead-path guard state (2026-07-16): consecutive-failure streaks per tool
   // and per exact tool+args signature within THIS turn; a success clears the
   // tool's streak. One nudge per tool per turn — the point is a change of
@@ -4183,12 +4199,20 @@ async function* runAlternateProviderTurn(
         }
 
         const resultEntityLinks = extractAgentEntityLinks(call.name, { data: result.data }, { businessId })
+        const resultReferences = mergeAgentReferences(
+          'references' in result && Array.isArray(result.references) ? result.references : [],
+          extractAgentReferences(call.name, { data: result.data }, { businessId, roles: ['SUPER_ADMIN'] }),
+        )
         const toolRecord: ToolRecord = {
           id: call.id,
           toolName: call.name,
           input: call.input,
-          output: result.data !== undefined
-            ? { data: result.data, ...(resultEntityLinks.length ? { entityLinks: resultEntityLinks } : {}) }
+          output: result.data !== undefined || resultEntityLinks.length > 0 || resultReferences.length > 0
+            ? {
+                ...(result.data !== undefined ? { data: result.data } : {}),
+                ...(resultEntityLinks.length ? { entityLinks: resultEntityLinks } : {}),
+                ...(resultReferences.length ? { references: resultReferences } : {}),
+              }
             : null,
           status: result.success ? 'success' : 'error',
           durationMs,
@@ -4405,7 +4429,7 @@ async function* runAlternateProviderTurn(
         } else {
           deadPathStreaks.delete(call.name)
         }
-        const annotated = annotateEmptyResult(result)
+        const annotated = annotateEmptyResult(toolResultForReferenceRollout(result))
         toolResults.push({
           id: call.id,
           name: call.name,
@@ -5242,16 +5266,25 @@ async function* runAlternateProviderTurn(
     // delegation, deadline salvage). Normal and routine replies are already
     // linked before their emit; this keeps every other path live + durable too.
     const entityLinks = verifiedEntityLinks()
-    const linkedFinalText = linkifyAgentEntityText(finalText, entityLinks, {
+    const references = verifiedReferences()
+    const visibleReferences = exposedAgentReferences(references)
+    const legacyLinkedText = linkifyAgentEntityText(finalText, entityLinks, {
       appendUnmentioned: true,
       // At this late point iOS preserves the lead prose when applying a
       // replacement event. An inline rewrite of the whole message would repeat
       // that lead, so this guard is intentionally append-only.
       linkMentions: false,
     })
+    const linkedFinalText = compileAgentReferenceText(legacyLinkedText, references, {
+      appendUnmentioned: true,
+      linkMentions: false,
+    })
     if (linkedFinalText !== finalText) {
       yield { type: 'text_delta', delta: linkedFinalText.slice(finalText.length) }
       finalText = linkedFinalText
+    }
+    if (visibleReferences.length > 0) {
+      yield { type: 'references', references: visibleReferences }
     }
 
     // Prefer OpenRouter's actual billed cost; fall back to the local estimate only
@@ -5322,7 +5355,7 @@ async function* runAlternateProviderTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload. The GET messages route surfaces
         // it as `thinking`/`thinkingMs`; history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider, entityLinks: entityLinks.length > 0 ? entityLinks : undefined,
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined,
           // P1-9: WHY this head ran, not just which one. Until now `via` lived
           // only in code and cost logs, so a surprising model choice had no
           // answer Boss could be shown ("routine_kw" / "task_pin" / "deny_kw").
@@ -5664,7 +5697,7 @@ async function* runAlternateProviderTurn(
       dedupKey: `chat:msg:${savedMsg.id}`,
     })
 
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: visibleReferences.length > 0 ? visibleReferences : undefined }
   } catch (err) {
     if (signal?.aborted) {
       // The 280s cap aborted mid-round (the adapter stream throws). Salvage what
@@ -5729,9 +5762,17 @@ async function* runAlternateProviderTurn(
               needContinue = false
             }
           }
-          // Verified entity links + actual cost ride the persisted salvage too.
+          // Verified entity links + verified references + actual cost ride the
+          // persisted salvage too. The reference compiler runs LAST so it sees
+          // the final gate/lane-settled text, never a superseded draft.
           const entityLinks = verifiedEntityLinks()
-          salvageText = linkifyAgentEntityText(salvageText, entityLinks, {
+          const references = verifiedReferences()
+          const visibleReferences = exposedAgentReferences(references)
+          const legacySalvageText = linkifyAgentEntityText(salvageText, entityLinks, {
+            appendUnmentioned: true,
+            linkMentions: false,
+          })
+          salvageText = compileAgentReferenceText(legacySalvageText, references, {
             appendUnmentioned: true,
             linkMentions: false,
           })
@@ -5773,13 +5814,16 @@ async function* runAlternateProviderTurn(
               content: [{ type: 'text', text: salvageText }, ...emittedAskCards],
               tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
               costUsd: salvageCostUsd,
-              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
+              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
             },
           })
           // The provider may have thrown after an arbitrary chunk. Reset every
           // live draft/buffer only AFTER the canonical row exists, then `done`
           // atomically commits exactly that persisted salvage on web and native.
-          const doneEvent: AgentEvent = { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvageCostUsd, needContinue, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode }
+          const doneEvent: AgentEvent = { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvageCostUsd, needContinue, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: visibleReferences.length > 0 ? visibleReferences : undefined }
+          if (visibleReferences.length > 0) {
+            yield { type: 'references', references: visibleReferences }
+          }
           if (proseLifecycle?.protocol === 2) {
             // v2: the exact persisted blocks already reached the live reducers
             // above (salvage + drainQueued); a v1-style draft reset here would
@@ -5805,6 +5849,7 @@ async function* runAlternateProviderTurn(
       messageId: string
       persistedText: string
       costUsd: number
+      references: ReturnType<typeof verifiedReferences>
     } | null> => {
       if (canceled || (!finalText.trim() && toolRecords.length === 0)) return null
       let savedMsg: { id: string }
@@ -5863,7 +5908,12 @@ async function* runAlternateProviderTurn(
           }
         }
         const entityLinks = verifiedEntityLinks()
-        text = linkifyAgentEntityText(text, entityLinks, {
+        const references = verifiedReferences()
+        const legacyText = linkifyAgentEntityText(text, entityLinks, {
+          appendUnmentioned: true,
+          linkMentions: false,
+        })
+        text = compileAgentReferenceText(legacyText, references, {
           appendUnmentioned: true,
           linkMentions: false,
         })
@@ -5884,7 +5934,7 @@ async function* runAlternateProviderTurn(
             content: [{ type: 'text', text }, ...emittedAskCards],
             tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
             costUsd: salvageCostUsd,
-            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
+            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
           },
         })
       } catch {
@@ -5916,6 +5966,7 @@ async function* runAlternateProviderTurn(
         messageId: String(savedMsg.id),
         persistedText: text,
         costUsd: salvageCostUsd,
+        references: verifiedReferences(),
       }
     }
     // Phase 3 — PINNED-head identity guard (roadmap: "Grok identity never changes
@@ -5957,7 +6008,11 @@ async function* runAlternateProviderTurn(
       }
       const salvage = await salvagePartialWorkOnError()
       if (salvage) {
-        const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode }
+        const visibleReferences = exposedAgentReferences(salvage.references)
+        const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: visibleReferences.length ? visibleReferences : undefined }
+        if (visibleReferences.length) {
+          yield { type: 'references', references: visibleReferences }
+        }
         if (proseLifecycle?.protocol === 2) {
           // v2: the salvage committed the exact persisted blocks (settle + the
           // warning block) — deliver them to the live reducers, then `done`
@@ -6041,7 +6096,11 @@ async function* runAlternateProviderTurn(
     }
     const salvage = await salvagePartialWorkOnError()
     if (salvage) {
-      const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode }
+      const visibleReferences = exposedAgentReferences(salvage.references)
+      const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: visibleReferences.length ? visibleReferences : undefined }
+      if (visibleReferences.length) {
+        yield { type: 'references', references: visibleReferences }
+      }
       if (proseLifecycle?.protocol === 2) {
         // v2: the salvage committed the exact persisted blocks (settle + the
         // warning block) — deliver them to the live reducers, then `done`

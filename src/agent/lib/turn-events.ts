@@ -12,6 +12,10 @@
  * guarantee the endpoint depends on and are unit-tested without Redis.
  */
 import { prisma } from '@/lib/prisma'
+import {
+  shouldRenderAgentReferences,
+  type AgentReferenceEnv,
+} from '@/agent/lib/references/flags'
 
 export interface TurnEvent {
   seq: number
@@ -49,6 +53,41 @@ export function createSeqDeduper(initialLastSeq = -1) {
 /** SSE wire frame for one event payload. */
 export function sseFrame(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\n\n`
+}
+
+/**
+ * Durable turn rows may have been written while reference rendering was ON and
+ * replayed later after the rollout was moved to SHADOW/OFF. Sanitize at the
+ * single delivery boundary (rather than trusting write-time flags) so replay,
+ * Redis tail and database polling all obey the current kill switch.
+ *
+ * `references`/`done` events intentionally carry an authoritative empty array:
+ * clients use it to clear an older projection. Nested reference projections are
+ * removed as well, including presentation/tool envelopes embedded in an event.
+ */
+export function sanitizeTurnEventPayloadForReferenceRollout(
+  payload: unknown,
+  env: AgentReferenceEnv = process.env,
+): unknown {
+  if (shouldRenderAgentReferences(env)) return payload
+
+  const strip = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(strip)
+    if (!value || typeof value !== 'object') return value
+    const clean: Record<string, unknown> = {}
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (key === 'references') continue
+      clean[key] = strip(nested)
+    }
+    return clean
+  }
+
+  const clean = strip(payload)
+  if (!clean || typeof clean !== 'object' || Array.isArray(clean)) return clean
+  const event = clean as Record<string, unknown>
+  return event.type === 'references' || event.type === 'done'
+    ? { ...event, references: [] }
+    : event
 }
 
 /** Replay the durable event log for a turn, oldest first.

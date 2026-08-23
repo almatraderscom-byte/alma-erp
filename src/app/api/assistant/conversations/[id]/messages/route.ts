@@ -10,6 +10,8 @@ import { buildAgentPresentationV1 } from '@/agent/lib/presentation/build-present
 import { buildAgentPresentationV2, presentationV1FromV2 } from '@/agent/lib/presentation/build-presentation-v2'
 import { readPresentationV2Document } from '@/agent/lib/presentation/prose-lifecycle'
 import { mergeAgentEntityLinks, type AgentEntityLink } from '@/agent/lib/entity-links'
+import { filterAgentReferencesForContext } from '@/agent/lib/references/validator'
+import { exposedAgentReferences } from '@/agent/lib/references/flags'
 import {
   IMAGE_WORKER_CAPABILITY_KV_KEY,
   imageModelAvailability,
@@ -39,7 +41,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
 
   const conversation = await prisma.agentConversation.findUnique({
     where: { id },
-    select: { id: true },
+    select: { id: true, businessId: true },
   })
   if (!conversation) {
     return Response.json({ error: 'not_found' }, { status: 404 })
@@ -416,8 +418,23 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     const entityLinks = Array.isArray(u.entityLinks)
       ? mergeAgentEntityLinks(u.entityLinks as AgentEntityLink[])
       : undefined
+    const referenceBusinessId = conversation.businessId === 'ALMA_LIFESTYLE'
+      || conversation.businessId === 'CREATIVE_DIGITAL_IT'
+      || conversation.businessId === 'ALMA_TRADING'
+      ? conversation.businessId
+      : undefined
+    const references = Array.isArray(u.references)
+      ? filterAgentReferencesForContext(u.references, { businessId: referenceBusinessId, roles: ['SUPER_ADMIN'] })
+      : undefined
+    const visibleReferences = exposedAgentReferences(references ?? [])
     return {
-      ...m,
+      id: m.id,
+      clientRequestId: m.clientRequestId,
+      role: m.role,
+      tokensIn: m.tokensIn,
+      tokensOut: m.tokensOut,
+      costUsd: m.costUsd,
+      createdAt: m.createdAt,
       clientMessageId: m.clientRequestId ?? undefined,
       content,
       toolCalls,
@@ -459,6 +476,9 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       // can route the relative href natively; the Markdown text remains the
       // backwards-compatible rendering contract.
       entityLinks: entityLinks?.length ? entityLinks : undefined,
+      // An explicit empty list is authoritative. Omitting this field in hidden
+      // mode made native cold reload preserve references cached during ON.
+      references: visibleReferences,
       // Build 103 Issue 3 — durable work-step tracker snapshot(s) anchored to
       // this assistant message; cold history equals the settled live tracker.
       // Plan trackers come from agent_plans; unplanned runtime trackers ride
@@ -494,12 +514,21 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
               costUsd: m.costUsd != null ? Number(m.costUsd) : null,
               apiRounds: apiRounds ?? null,
               roundCostsUsd: roundCostsUsd ?? null,
+              // Verified destinations ride the canonical projection too, so a
+              // cold reload of a v1 OR a v2 message keeps exactly the links the
+              // server authorized for it.
+              references: visibleReferences.length ? visibleReferences : null,
             }
             const document = readPresentationV2Document(u)
             if (!document) return { presentation: buildAgentPresentationV1(presentationInput) }
             const presentationV2 = buildAgentPresentationV2({ ...presentationInput, document })
             return {
-              presentation: { version: 1 as const, messageId: m.id, ...presentationV1FromV2(presentationV2) },
+              presentation: {
+                version: 1 as const,
+                messageId: m.id,
+                ...presentationV1FromV2(presentationV2),
+                ...(visibleReferences.length ? { references: visibleReferences } : {}),
+              },
               presentationV2,
             }
           })()

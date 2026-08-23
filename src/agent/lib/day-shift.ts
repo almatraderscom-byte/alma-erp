@@ -27,6 +27,9 @@ import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { queryConversationCostBetween } from '@/agent/lib/cost-db'
 import { formatDutyCostLineBangla } from '@/agent/lib/format-cost'
 import { getOrComposeOpsSummary } from '@/agent/lib/intelligence/ops-shift-summary'
+import type { AgentReferenceV1 } from '@/agent/lib/references/types'
+import { filterAgentReferencesForContext, mergeAgentReferences } from '@/agent/lib/references/validator'
+import { shouldCollectAgentReferences } from '@/agent/lib/references/flags'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -62,6 +65,7 @@ type DutyWorkResult = {
   opinion: string
   /** Sub-agent returns — cross-check against cost_events window. */
   subagentCostUsd: number
+  references: AgentReferenceV1[]
 }
 
 const OPS_DUTIES = new Set([
@@ -132,7 +136,7 @@ export async function getOrCreateDayShiftConversation(date = todayYmdDhaka()): P
 export async function appendShiftNarrative(
   conversationId: string,
   text: string,
-  opts?: { costUsd?: number },
+  opts?: { costUsd?: number; references?: AgentReferenceV1[] },
 ): Promise<void> {
   const trimmed = text.trim()
   if (!trimmed) return
@@ -140,6 +144,16 @@ export async function appendShiftNarrative(
     opts?.costUsd != null && Number.isFinite(opts.costUsd) && opts.costUsd >= 0
       ? Math.round(opts.costUsd * 1_000_000) / 1_000_000
       : 0
+  // This exported helper is a final persistence boundary, not just a formatter.
+  // Re-check the live rollout and rebuild caller metadata for the fixed owner/day-
+  // shift scope so a direct caller, stale worker or tampered reference cannot write
+  // OFF-era/cross-business navigation metadata into message usage.
+  const references = shouldCollectAgentReferences() && opts?.references?.length
+    ? filterAgentReferencesForContext(opts.references, {
+        businessId: BUSINESS_ID,
+        roles: ['SUPER_ADMIN'],
+      })
+    : []
   await db.agentMessage.create({
     data: {
       conversationId,
@@ -148,6 +162,7 @@ export async function appendShiftNarrative(
       tokensIn: 0,
       tokensOut: 0,
       costUsd: cost,
+      ...(references.length ? { usage: { references } } : {}),
     },
   })
   await touchConversationActivity(conversationId)
@@ -307,6 +322,7 @@ async function runDutyWork(
   const log = await getDutyLogRow(dutyKey, date)
   const parts: string[] = []
   let subagentCostUsd = 0
+  let references: AgentReferenceV1[] = []
 
   if (log?.status === 'done' || log?.status === 'skipped') {
     parts.push(log.detail?.trim() || `✓ ${label} — scheduler থেকে সম্পন্ন।`)
@@ -360,6 +376,7 @@ async function runDutyWork(
       if (spec) {
         parts.push(spec.text)
         subagentCostUsd += spec.costUsd
+        references = mergeAgentReferences(references, spec.references)
       }
     }
   }
@@ -374,14 +391,14 @@ async function runDutyWork(
         ? 'Scheduler catch-up বা manual follow-up দরকার হতে পারে।'
         : 'আজকের জন্য ঠিক আছে।'
 
-  return { narrative, result, opinion, subagentCostUsd }
+  return { narrative, result, opinion, subagentCostUsd, references }
 }
 
 async function maybeRunSpecialistByRole(
   role: SpecialistRole,
   brief: string,
   conversationId: string,
-): Promise<{ text: string; costUsd: number } | null> {
+): Promise<{ text: string; costUsd: number; references: AgentReferenceV1[] } | null> {
   const label = specialistLabel(role)
   const conv = await prisma.agentConversation.findUnique({
     where: { id: conversationId },
@@ -413,13 +430,18 @@ async function maybeRunSpecialistByRole(
     void sendOwnerText(
       `⚠️ Day Shift: ${label} specialist ব্যর্থ — ${result.error ?? 'unknown'}. কাজ চালিয়ে যাচ্ছি।`,
     ).catch(() => {})
-    return { text: `✗ ${label} (${result.modelLabel}) ব্যর্থ: ${result.error ?? 'unknown'}`, costUsd: result.costUsd }
+    return {
+      text: `✗ ${label} (${result.modelLabel}) ব্যর্থ: ${result.error ?? 'unknown'}`,
+      costUsd: result.costUsd,
+      references: [],
+    }
   }
 
   const toolsLine = result.toolsUsed.length ? `\nটুল: ${result.toolsUsed.join(', ')}` : ''
   return {
     text: `✓ **${label} · ${result.modelLabel}:**\n${result.summary}${toolsLine}`,
     costUsd: result.costUsd,
+    references: result.references,
   }
 }
 
@@ -780,7 +802,7 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
   // STEP 2 — visible step-by-step work
   const work = await runDutyWork(duty.duty, duty.label, date, briefing, conversationId)
   if (work.narrative.trim()) {
-    await appendShiftNarrative(conversationId, work.narrative)
+    await appendShiftNarrative(conversationId, work.narrative, { references: work.references })
   }
 
   const { costUsd: dutyCostUsd, approximate: dutyCostApprox } = await measureDutyCostUsd(

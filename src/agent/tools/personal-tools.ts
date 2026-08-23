@@ -597,7 +597,7 @@ export const cancel_scheduled_call: AgentTool = {
       if (!row) return { success: false, error: 'ঐ শিডিউল কলটা পাওয়া যায়নি।' }
       if (row.status !== 'scheduled') return { success: false, error: `কলটা ইতিমধ্যে ${row.status} — বাতিল করা যাবে না।` }
       await db.scheduledCall.update({ where: { id }, data: { status: 'cancelled' } })
-      return { success: true, data: { message: `${row.recipientName ?? row.toNumber} কে কলের শিডিউল বাতিল করা হয়েছে।` } }
+      return { success: true, data: { id, message: `${row.recipientName ?? row.toNumber} কে কলের শিডিউল বাতিল করা হয়েছে।` } }
     } catch (err) {
       return { success: false, error: String(err) }
     }
@@ -619,20 +619,21 @@ export const get_call_history: AgentTool = {
         db.agentVoiceCall.findMany({
           orderBy: { createdAt: 'desc' },
           take: limit,
-          select: { recipientName: true, toNumber: true, purpose: true, status: true, durationSecs: true, costCredits: true, summary: true, createdAt: true },
+          select: { id: true, recipientName: true, toNumber: true, purpose: true, status: true, durationSecs: true, costCredits: true, summary: true, createdAt: true },
         }),
         db.scheduledCall.findMany({
           where: { status: 'scheduled' },
           orderBy: { dueAt: 'asc' },
           take: 15,
-          select: { recipientName: true, toNumber: true, purpose: true, dueAt: true, callType: true },
+          select: { id: true, recipientName: true, toNumber: true, purpose: true, dueAt: true, callType: true },
         }),
       ])
       const fmt = (d: Date) => new Date(d).toLocaleString('en-US', { timeZone: 'Asia/Dhaka', dateStyle: 'medium', timeStyle: 'short' })
       return {
         success: true,
         data: {
-          recent: calls.map((c: { recipientName: string | null; toNumber: string; purpose: string | null; status: string; durationSecs: number | null; costCredits: number | null; summary: string | null; createdAt: Date }) => ({
+          recent: calls.map((c: { id: string; recipientName: string | null; toNumber: string; purpose: string | null; status: string; durationSecs: number | null; costCredits: number | null; summary: string | null; createdAt: Date }) => ({
+            id: c.id,
             who: c.recipientName ?? c.toNumber,
             direction: c.purpose === 'inbound_call' ? 'incoming' : 'outgoing',
             status: c.status,
@@ -641,7 +642,8 @@ export const get_call_history: AgentTool = {
             summary: c.summary,
             at: fmt(c.createdAt),
           })),
-          upcoming: scheduled.map((s: { recipientName: string | null; toNumber: string; purpose: string; dueAt: Date; callType: string }) => ({
+          upcoming: scheduled.map((s: { id: string; recipientName: string | null; toNumber: string; purpose: string; dueAt: Date; callType: string }) => ({
+            id: s.id,
             who: s.recipientName ?? s.toNumber,
             purpose: s.purpose,
             when: fmt(s.dueAt),

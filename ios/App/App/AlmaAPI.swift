@@ -1128,6 +1128,33 @@ final class AlmaAPI: NSObject {
         try await perform(request: makeRequest(method: "GET", path: path, query: [:], bodyData: nil))
     }
 
+    /// Raw bytes from an already-canonical percent-encoded path. Assigning a
+    /// server-stamped path such as `artifact%3Aone` to `URLComponents.path`
+    /// would request `artifact%253Aone`; this variant preserves the exact path
+    /// while retaining the normal authenticated cookie/retry pipeline.
+    func getRaw(percentEncodedPath path: String) async throws -> Data {
+        guard let url = Self.endpointURL(percentEncodedPath: path) else {
+            throw AlmaAPIError.transport(URLError(.badURL))
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        return try await perform(request: request)
+    }
+
+    /// Internal so focused tests can prove canonical path preservation without
+    /// opening a network connection.
+    static func endpointURL(percentEncodedPath path: String) -> URL? {
+        guard path.hasPrefix("/"), !path.hasPrefix("//"),
+              let relative = URLComponents(string: path),
+              relative.scheme == nil, relative.host == nil,
+              relative.percentEncodedPath == path,
+              relative.percentEncodedQuery == nil,
+              relative.fragment == nil else { return nil }
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.percentEncodedPath = path
+        return components?.url
+    }
+
     // MARK: Core pipeline
 
     private func makeRequest(method: String, path: String, query: [String: String?], bodyData: Data?) -> URLRequest {

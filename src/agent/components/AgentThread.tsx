@@ -125,6 +125,8 @@ export interface ChatMessage {
    */
   proseProtocol?: 1 | 2
   prose?: LiveProseBlock[]
+  /** Server-minted destinations authorized for this exact message. */
+  references?: import('@/agent/lib/references/types').AgentReferenceV1[]
   files?: Array<{ previewUrl: string; mediaType: string; path?: string }>
   /**
    * Only set on a message Boss typed WHILE a turn was running.
@@ -945,10 +947,10 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
           >
             {!msg.streaming && seg.text.length > GIANT_ASSISTANT_REPLY_CHARACTERS ? (
               <CollapsibleMessage collapsedMaxPx={360}>
-                <AgentMarkdown content={seg.text} />
+                <AgentMarkdown content={seg.text} references={msg.references} onArtifactOpen={onOpenFile} />
               </CollapsibleMessage>
             ) : (
-              <AgentMarkdown content={seg.text} />
+              <AgentMarkdown content={seg.text} references={msg.references} onArtifactOpen={onOpenFile} />
             )}
             {msg.streaming && i === lastIdx && (
               <motion.span
@@ -1784,7 +1786,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     <div className="text-[15px] leading-[1.7] text-cream select-text break-words [overflow-wrap:anywhere]">
                       {msg.streaming && msg.text ? (
                         <div className="relative alma-stream-reveal">
-                          <AgentMarkdown content={msg.text} />
+                          <AgentMarkdown content={msg.text} references={msg.references} onArtifactOpen={(id) => onArtifactOpen(id)} />
                           <motion.span
                             className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] rounded-full bg-[#E07A5F]/60"
                             animate={{ opacity: [1, 0, 1] }}
@@ -1794,10 +1796,10 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         </div>
                       ) : msg.text.length > GIANT_ASSISTANT_REPLY_CHARACTERS ? (
                         <CollapsibleMessage collapsedMaxPx={360}>
-                          <AgentMarkdown content={msg.text} />
+                          <AgentMarkdown content={msg.text} references={msg.references} onArtifactOpen={(id) => onArtifactOpen(id)} />
                         </CollapsibleMessage>
                       ) : (
-                        <AgentMarkdown content={msg.text} />
+                        <AgentMarkdown content={msg.text} references={msg.references} onArtifactOpen={(id) => onArtifactOpen(id)} />
                       )}
                     </div>
                   )}

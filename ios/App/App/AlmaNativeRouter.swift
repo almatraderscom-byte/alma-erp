@@ -196,6 +196,17 @@ enum AlmaNativeRouter {
                 }
                 return host(TradingAccountsScreen(openWeb: openWebForced, focusAccountId: accountId), "Trading account")
             }
+            if let reference = referenceParams(clean, after: "/agent/references/") {
+                let businessId = queryValue(path, name: "business_id")
+                if let businessId,
+                   !["ALMA_LIFESTYLE", "CREATIVE_DIGITAL_IT", "ALMA_TRADING"].contains(businessId) {
+                    return nil
+                }
+                return host(AgentReferenceFocusScreen(
+                    namespace: reference.namespace,
+                    entityId: reference.id,
+                    businessId: businessId), "Reference")
+            }
             return nil
         }
     }
@@ -224,5 +235,199 @@ enum AlmaNativeRouter {
         let rest = String(path.dropFirst(prefix.count))
         guard !rest.isEmpty, !rest.contains("/") else { return nil }
         return rest.removingPercentEncoding ?? rest
+    }
+
+    /// Closed two-segment parser for the provider-neutral reference focus route.
+    /// Both values use the same identifier alphabet as the server registry; a
+    /// crafted URL cannot smuggle a slash/query into the authenticated API path.
+    private static func referenceParams(
+        _ path: String, after prefix: String
+    ) -> (namespace: String, id: String)? {
+        guard path.hasPrefix(prefix) else { return nil }
+        let parts = path.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return nil }
+        let namespace = String(parts[0]).removingPercentEncoding ?? String(parts[0])
+        let id = String(parts[1]).removingPercentEncoding ?? String(parts[1])
+        let safe = "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+        guard namespace.range(of: safe, options: .regularExpression) != nil,
+              id.range(of: safe, options: .regularExpression) != nil else { return nil }
+        return (namespace, id)
+    }
+}
+
+// MARK: - Exact, read-only provider-neutral reference focus
+
+private struct AgentReferenceFocusPayload: Decodable {
+    let state: String
+    let entity: AgentReferenceFocusEntity?
+}
+
+private struct AgentReferenceFocusEntity: Decodable {
+    let id: String
+    let title: String
+    let label: String
+    let status: String
+    let fallbackPath: String
+    let fields: [String: AgentJSONValue]
+}
+
+@available(iOS 17.0, *)
+private struct AgentReferenceFocusScreen: View {
+    let namespace: String
+    let entityId: String
+    let businessId: String?
+
+    private enum LoadState {
+        case loading
+        case found(AgentReferenceFocusEntity)
+        case deleted
+        case forbidden
+        case notFound
+        case failed
+    }
+
+    @Environment(\.colorScheme) private var scheme
+    @State private var loadState: LoadState = .loading
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        Group {
+            switch loadState {
+            case .loading:
+                ProgressView("নির্দিষ্ট রেকর্ড যাচাই করা হচ্ছে…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .found(let entity):
+                found(entity, pal: pal)
+            case .deleted:
+                stateView(
+                    title: "রেকর্ডটি মুছে/আর্কাইভ করা হয়েছে",
+                    detail: "পুরোনো reference রাখা হয়েছে; কোনো পরিবর্তন করা হয়নি।",
+                    icon: "archivebox")
+            case .forbidden:
+                stateView(
+                    title: "এই রেকর্ড দেখার অনুমতি নেই",
+                    detail: "বর্তমান role বা business scope এই reference খুলতে দেয় না।",
+                    icon: "lock.shield")
+            case .notFound:
+                stateView(
+                    title: "রেকর্ড পাওয়া যায়নি",
+                    detail: "ID বা source record আর বর্তমান store-এ নেই।",
+                    icon: "questionmark.folder")
+            case .failed:
+                stateView(
+                    title: "রেকর্ড লোড করা যায়নি",
+                    detail: "সাময়িক সমস্যা হয়েছে—পরে আবার চেষ্টা করুন।",
+                    icon: "exclamationmark.triangle",
+                    retry: true)
+            }
+        }
+        .background(pal.bg0.ignoresSafeArea())
+        .task(id: "\(namespace):\(entityId):\(businessId ?? "personal")") { await load() }
+        .accessibilityIdentifier("agent.reference.focus")
+    }
+
+    private func found(_ entity: AgentReferenceFocusEntity, pal: AgentPalette) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(entity.label.uppercased())
+                        .font(.system(size: 11, weight: .bold))
+                        .tracking(1.2)
+                        .foregroundStyle(AgentPalette.coral)
+                    Text(entity.title)
+                        .font(.system(.title2, design: .rounded, weight: .semibold))
+                        .foregroundStyle(pal.ink)
+                    Text(entity.id)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(pal.muted)
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 10)], spacing: 10) {
+                    ForEach(entity.fields.keys.filter { $0 != "id" }.sorted(), id: \.self) { key in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(key.uppercased())
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .tracking(0.6)
+                                .foregroundStyle(pal.muted)
+                            Text(entity.fields[key]?.pretty() ?? "—")
+                                .font(.system(size: 13))
+                                .foregroundStyle(pal.ink)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(12)
+                        .background(pal.card, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(pal.borderSubtle))
+                    }
+                }
+                if Self.safeFallbackPath(entity.fallbackPath) {
+                    Button {
+                        NotificationCenter.default.post(
+                            name: .almaOpenPath, object: nil,
+                            userInfo: ["path": entity.fallbackPath])
+                    } label: {
+                        Label("তালিকা/সেকশনে ফিরে যান", systemImage: "arrow.backward")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(AgentPalette.coral)
+                            .frame(minHeight: 44)
+                    }
+                }
+            }
+            .padding(20)
+        }
+        .accessibilityIdentifier("agent.reference.found")
+    }
+
+    @ViewBuilder
+    private func stateView(
+        title: String, detail: String, icon: String, retry: Bool = false
+    ) -> some View {
+        ContentUnavailableView {
+            Label(title, systemImage: icon)
+        } description: {
+            Text(detail)
+        } actions: {
+            if retry {
+                Button("আবার চেষ্টা করুন") {
+                    loadState = .loading
+                    Task { await load() }
+                }
+            }
+        }
+        .accessibilityIdentifier("agent.reference.state")
+    }
+
+    @MainActor
+    private func load() async {
+        loadState = .loading
+        do {
+            let payload: AgentReferenceFocusPayload = try await AlmaAPI.shared.getQuietAuth(
+                "/api/assistant/references/\(namespace)/\(entityId)",
+                query: ["business_id": businessId])
+            switch payload.state {
+            case "found":
+                loadState = payload.entity.map(LoadState.found) ?? .failed
+            case "deleted": loadState = .deleted
+            case "forbidden", "unauthorized": loadState = .forbidden
+            case "not_found": loadState = .notFound
+            default: loadState = .failed
+            }
+        } catch let error as AlmaAPIError {
+            switch error {
+            case .notAuthenticated: loadState = .forbidden
+            case .http(let status, _):
+                if status == 404 { loadState = .notFound }
+                else if status == 410 { loadState = .deleted }
+                else if status == 401 || status == 403 { loadState = .forbidden }
+                else { loadState = .failed }
+            default: loadState = .failed
+            }
+        } catch {
+            loadState = .failed
+        }
+    }
+
+    private static func safeFallbackPath(_ value: String) -> Bool {
+        value.hasPrefix("/") && !value.hasPrefix("//") && !value.contains("\\")
+            && !value.contains("\n") && !value.contains("\r") && !value.contains("\0")
     }
 }

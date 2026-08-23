@@ -3,6 +3,7 @@ import {
   createSeqDeduper,
   isTerminalEventType,
   sseFrame,
+  sanitizeTurnEventPayloadForReferenceRollout,
   turnEventChannel,
 } from '@/agent/lib/turn-events'
 import { buildTurnJobData } from '@/agent/lib/turn-queue'
@@ -99,5 +100,31 @@ describe('A2 — replay + live tail ordering', () => {
     expect(sseFrame({ type: 'text_delta', delta: 'x' })).toBe(
       'data: {"type":"text_delta","delta":"x"}\n\n',
     )
+  })
+
+  it('re-applies the current reference rollout to durable replay payloads', () => {
+    const persisted = {
+      type: 'done',
+      references: [{ refId: 'ref-secret' }],
+      presentation: { references: [{ refId: 'nested-secret' }], text: 'ok' },
+    }
+    expect(sanitizeTurnEventPayloadForReferenceRollout(persisted, {
+      AGENT_REFERENCES_ROLLOUT: 'shadow',
+    })).toEqual({
+      type: 'done',
+      references: [],
+      presentation: { text: 'ok' },
+    })
+    expect(sanitizeTurnEventPayloadForReferenceRollout(persisted, {
+      AGENT_REFERENCES_ROLLOUT: 'on',
+    })).toBe(persisted)
+  })
+
+  it.each(['off', 'shadow'] as const)('emits an authoritative clear for %s reference events', (mode) => {
+    expect(sanitizeTurnEventPayloadForReferenceRollout({
+      type: 'references', references: [{ refId: 'old' }], other: ['kept'],
+    }, { AGENT_REFERENCES_ROLLOUT: mode })).toEqual({
+      type: 'references', references: [], other: ['kept'],
+    })
   })
 })

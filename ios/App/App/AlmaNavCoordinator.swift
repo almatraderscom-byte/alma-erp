@@ -70,7 +70,7 @@ enum AlmaNavCoordinator {
         "/agent/phone-console/settings/hold",
         "/agent/phone-console/settings/hours",
         "/agent/phone-console/settings/limits",
-        "/agent/phone-console/settings/provider",
+        "/agent/phone-console/settings/provider"
     ]
 
     /// NP-4 (AU-02): typed QUERY routes — these native screens accept their query
@@ -184,12 +184,19 @@ enum AlmaNavCoordinator {
         return hasOnePathParam(bare, after: "/orders/")
             || hasOnePathParam(bare, after: "/employees/")
             || hasOnePathParam(bare, after: "/trading/accounts/")
+            || hasTwoPathParams(bare, after: "/agent/references/")
     }
 
     private static func hasOnePathParam(_ path: String, after prefix: String) -> Bool {
         guard path.hasPrefix(prefix) else { return false }
         let remainder = path.dropFirst(prefix.count)
         return !remainder.isEmpty && !remainder.contains("/")
+    }
+
+    private static func hasTwoPathParams(_ path: String, after prefix: String) -> Bool {
+        guard path.hasPrefix(prefix) else { return false }
+        let parts = path.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: false)
+        return parts.count == 2 && parts.allSatisfy { !$0.isEmpty }
     }
 
     private static func queryValue(_ path: String, name: String) -> String? {

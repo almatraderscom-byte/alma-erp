@@ -6,6 +6,7 @@ import { getTurnSnapshot } from '@/agent/lib/turn-status'
 import {
   getReplayEvents,
   pollTurnEvents,
+  sanitizeTurnEventPayloadForReferenceRollout,
   subscribeTurnEvents,
 } from '@/agent/lib/turn-events'
 import { runTurnTail } from '@/agent/lib/turn-stream-tailer'
@@ -82,7 +83,11 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
           ? projectEventForProtocol(payload as WireEvent, clientProtocol)
           : payload
         if (projected == null) return
-        safeEnqueue(`id: ${seq}\ndata: ${JSON.stringify(projected)}\n\n`)
+        // Reference projections obey the CURRENT kill switch at the single
+        // delivery boundary, after protocol projection (rows may have been
+        // written while rendering was ON).
+        const exposed = sanitizeTurnEventPayloadForReferenceRollout(projected)
+        safeEnqueue(`id: ${seq}\ndata: ${JSON.stringify(exposed)}\n\n`)
       }
 
       // 0) Connection snapshot — lets the client reconcile turn state instantly
