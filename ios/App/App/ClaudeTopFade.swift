@@ -129,6 +129,39 @@ private struct TopFadeBlur: UIViewRepresentable {
     func updateUIView(_ uiView: TopFadeBlurUIView, context: Context) {}
 }
 
+// MARK: - Standalone overlay (ZStack-sibling form)
+
+/// The same masked-blur + colour-dissolve band as `claudeTopFade(useNativeEdgeEffect:
+/// false)`, but as a standalone view to place as a ZStack SIBLING above scrolling
+/// content. Needed by Creative Studio: with the fade applied as a modifier in the
+/// ancestor chain of its switch-driven tab content, SwiftUI stopped applying tab
+/// swaps entirely (sim-bisected 2026-08-24) — as a sibling the fade is out of that
+/// chain and the swap works. Visuals are identical to the modifier path.
+@available(iOS 17.0, *)
+struct ClaudeTopFadeOverlay: View {
+    @Environment(\.colorScheme) private var colorScheme
+    var height: CGFloat = ClaudeTopFadeTheme.fadeHeight
+
+    var body: some View {
+        let scrim = ClaudeTopFadeTheme.scrim(for: colorScheme)
+        ZStack(alignment: .top) {
+            TopFadeBlur()
+            LinearGradient(
+                stops: [
+                    .init(color: scrim.opacity(0.45), location: 0.0),
+                    .init(color: scrim.opacity(0.22), location: 0.55),
+                    .init(color: scrim.opacity(0.0), location: 1.0),
+                ],
+                startPoint: .top, endPoint: .bottom
+            )
+        }
+        .frame(height: height)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .allowsHitTesting(false)
+        .ignoresSafeArea(edges: .top)
+    }
+}
+
 // MARK: - The modifier
 
 struct ClaudeTopFadeModifier: ViewModifier {

@@ -164,6 +164,7 @@
 		ACCE5500000000000000B003 /* AlmaShellCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACCE5500000000000000A003 /* AlmaShellCatalog.swift */; };
 		ACCE5500000000000000B004 /* RoleDeskSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACCE5500000000000000A004 /* RoleDeskSwiftUI.swift */; };
 		ACCE5500000000000000B005 /* AccessContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACCE5500000000000000A005 /* AccessContractTests.swift */; };
+		BA4BA200000000000000B001 /* NavigationBarRuleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA4BA200000000000000A001 /* NavigationBarRuleTests.swift */; };
 		F2AA7700000000000000B064 /* StaffMonitorSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */; };
 		F2AA7700000000000000B080 /* DashboardSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A080 /* DashboardSwiftUI.swift */; };
 		F2AA7700000000000000B099 /* PersonalLedgerSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A099 /* PersonalLedgerSwiftUI.swift */; };
@@ -399,6 +400,7 @@
 		ACCE5500000000000000A003 /* AlmaShellCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaShellCatalog.swift; sourceTree = "<group>"; };
 		ACCE5500000000000000A004 /* RoleDeskSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoleDeskSwiftUI.swift; sourceTree = "<group>"; };
 		ACCE5500000000000000A005 /* AccessContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessContractTests.swift; sourceTree = "<group>"; };
+		BA4BA200000000000000A001 /* NavigationBarRuleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationBarRuleTests.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaffMonitorSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A080 /* DashboardSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A099 /* PersonalLedgerSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalLedgerSwiftUI.swift; sourceTree = "<group>"; };
@@ -667,6 +669,7 @@
 				C2A2A0000000000000000040 /* LiveVoiceDroppedRequestRecoveryTests.swift */,
 				C2A2A0000000000000000024 /* AgentSessionSurfaceTests.swift */,
 				ACCE5500000000000000A005 /* AccessContractTests.swift */,
+				BA4BA200000000000000A001 /* NavigationBarRuleTests.swift */,
 				D3C300000000000000000004 /* LiveVoiceLifecycleReducerTests.swift */,
 				E5D500000000000000000004 /* LiveVoiceOutputPCMEnvelopeTests.swift */,
 				F6A600000000000000000004 /* LiveVoiceAccessibilityLayoutPolicyTests.swift */,
@@ -1198,6 +1201,7 @@
 				C2A2A000000000000000003E /* LiveVoiceDroppedRequestRecoveryTests.swift in Sources */,
 				C2A2A0000000000000000022 /* AgentSessionSurfaceTests.swift in Sources */,
 				ACCE5500000000000000B005 /* AccessContractTests.swift in Sources */,
+				BA4BA200000000000000B001 /* NavigationBarRuleTests.swift in Sources */,
 				D3C300000000000000000002 /* LiveVoiceLifecycleReducerTests.swift in Sources */,
 				E5D500000000000000000002 /* LiveVoiceOutputPCMEnvelopeTests.swift in Sources */,
 				F6A600000000000000000002 /* LiveVoiceAccessibilityLayoutPolicyTests.swift in Sources */,

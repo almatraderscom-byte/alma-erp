@@ -400,3 +400,70 @@ describe('live streaming holds split named-tool markup', () => {
     expect(out).toContain('ভালো')
   })
 })
+
+describe('the SIXTH shape — Gemini 3.7 Flash speak-first, his screen 2026-08-23', () => {
+  // Exactly as it came off the wire: fullwidth-pipe ｜DSML｜ sentinel tags glued
+  // to the end of the Bangla opening line.
+  const wire =
+    'বস, কোন প্রোডাক্টের স্টক সবচেয়ে কম তা ERP ইনভেন্টরি থেকে লাইভ দেখে নিচ্ছি।'
+    + '<｜DSML｜tool_calls> <｜DSML｜invoke name="get_inventory_status">\n\n</｜DSML｜invoke> </｜DSML｜tool_calls>'
+
+  it('strips the whole sentinel block from the preamble line', () => {
+    const out = stripToolCallMarkup(wire)
+    expect(out).toBe('বস, কোন প্রোডাক্টের স্টক সবচেয়ে কম তা ERP ইনভেন্টরি থেকে লাইভ দেখে নিচ্ছি।')
+  })
+
+  it('strips the ASCII-pipe spelling and a parameter body too', () => {
+    const out = stripToolCallMarkup(
+      'দেখছি। <|DSML|tool_calls><|DSML|invoke name="get_orders"><|DSML|parameter name="limit">5</|DSML|parameter></|DSML|invoke></|DSML|tool_calls>',
+    )
+    expect(out).toBe('দেখছি।')
+    expect(out).not.toContain('5')
+  })
+
+  it('drops a block the stream cut before its closer', () => {
+    const out = stripToolCallMarkup('যাচাই করছি।<｜DSML｜tool_calls> <｜DSML｜invoke name="get_inventory_status">')
+    expect(out).toBe('যাচাই করছি।')
+  })
+
+  it('streaming: holds the split block and shows none of it', () => {
+    const f = createMarkupStreamFilter()
+    const deltas = ['বস, স্টক দেখে নিচ্ছি।', '<｜DSML', '｜tool_calls> <｜DSML｜invoke name="get_inv', 'entory_status">\n\n</｜DSML｜invoke> </｜DSML｜tool_calls>', ' এখন ফলাফল।']
+    const out = deltas.map((d) => f.push(d)).join('') + f.flush()
+    expect(out).not.toContain('DSML')
+    expect(out).not.toContain('get_inventory_status')
+    expect(out).toContain('বস, স্টক দেখে নিচ্ছি।')
+    expect(out).toContain('এখন ফলাফল')
+  })
+
+  it('streaming: a delta ending in a COMPLETE opener keeps the next delta\'s body held (Codex P1)', () => {
+    const f = createMarkupStreamFilter()
+    const deltas = [
+      'দেখছি। <｜DSML｜tool_calls><｜DSML｜invoke name="get_orders">',
+      '<｜DSML｜parameter name="limit">',
+      '{"limit": 5}',
+      '</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>',
+      ' ফলাফল এল।',
+    ]
+    const out = deltas.map((d) => f.push(d)).join('') + f.flush()
+    expect(out).not.toContain('limit')
+    expect(out).not.toContain('DSML')
+    expect(out).not.toContain('get_orders')
+    expect(out).toContain('দেখছি।')
+    expect(out).toContain('ফলাফল এল')
+  })
+
+  it('an unmatched CLOSING sentinel still reaches the sanitizer (Codex P2)', () => {
+    expect(stripToolCallMarkup('ফলাফল এল। </｜DSML｜invoke> </|DSML|tool_calls>')).toBe('ফলাফল এল।')
+    const f = createMarkupStreamFilter()
+    const out = f.push('ফলাফল এল। ') + f.push('</｜DSML｜tool_calls>') + f.flush()
+    expect(out).not.toContain('DSML')
+    expect(out).toContain('ফলাফল এল')
+  })
+
+  it('streaming: an opener the stream never closes is dropped at flush, not spilled', () => {
+    const f = createMarkupStreamFilter()
+    const out = f.push('যাচাই করছি। <｜DSML｜invoke name="get_orders">') + f.push('{"li') + f.flush()
+    expect(out.trim()).toBe('যাচাই করছি।')
+  })
+})

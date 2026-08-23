@@ -82,6 +82,37 @@ export function exactoSlug(apiModel: string, hasTools: boolean): string {
 }
 
 /**
+ * Gemini 3.7 (via OpenRouter → Google) rejects any request whose LAST message
+ * is an assistant turn: `400 "Requests ending with a model turn are not
+ * supported."` (live preview 2026-08-23). Our speak-first flow produces exactly
+ * that shape — the opening line is appended to the transcript as the
+ * assistant's own words and the next round continues from it. Every other host
+ * we run (DeepSeek, Qwen, Grok, Gemini 3.x direct) treats the trailing turn as
+ * a prefill and carries on, so the request is NOT reshaped up front. Only when
+ * a host says this exact thing do we append one internal-control user message
+ * and re-send the SAME rung; the ladder below then keeps it for every later
+ * rung. The continuation tells the model the line was its own, so it resumes
+ * instead of greeting Boss twice.
+ */
+export const MODEL_TURN_CONTINUATION =
+  '[INTERNAL CONTROL — this is NOT a message from Boss. Never quote it or answer it as one.] '
+  + 'উপরের শেষ লাইনটা তুমি নিজেই Boss-কে এইমাত্র বলেছ। ঠিক ওখান থেকেই চালিয়ে যাও — '
+  + 'দরকারি টুল কল করো বা উত্তরটা শেষ করো। Boss-কে আবার সম্ভাষণ কোরো না, লাইনটা আবার লিখো না।'
+
+export function isTrailingModelTurnRejection(detail: string): boolean {
+  return /ending with a model turn/i.test(detail)
+}
+
+export function withModelTurnContinuation<M extends { role: string }>(
+  messages: M[],
+  continuation: M,
+): M[] {
+  const last = messages[messages.length - 1]
+  if (!last || last.role !== 'assistant') return messages
+  return [...messages, continuation]
+}
+
+/**
  * Raw-OpenAI dialect compatibility (pure, unit-tested) — GPT-5.6 Luna head,
  * 2026-07-31, both 400s observed live on the preview:
  *   - "Unsupported parameter: 'max_tokens' is not supported with this model.
@@ -745,14 +776,32 @@ export class OpenAiAdapter implements ProviderAdapter {
     // wait-loop retries the identical request; an exhausted 429 SURFACES
     // (descending would re-send the same tokens into the same throttled
     // minute); only non-429 errors return to the caller for a ladder step.
-    const createWith429Wait = async (
+    // Trailing-model-turn rejection (see MODEL_TURN_CONTINUATION): once a host
+    // says it, every later rung of this call carries the continuation too.
+    let continuationNeeded = false
+    const continuationMsg = { role: 'user' as const, content: MODEL_TURN_CONTINUATION }
+    const applyContinuation = (
       params: ChatCompletionCreateParamsStreaming,
+    ): ChatCompletionCreateParamsStreaming => ({
+      ...params,
+      messages: withModelTurnContinuation(params.messages as Array<{ role: string }>, continuationMsg) as typeof params.messages,
+    })
+    const createWith429Wait = async (
+      inputParams: ChatCompletionCreateParamsStreaming,
     ): Promise<AsyncIterable<ChatCompletionChunk>> => {
+      let params = continuationNeeded ? applyContinuation(inputParams) : inputParams
       for (let attempt = 0; ; attempt++) {
         try {
           return await this.client.chat.completions.create(params, reqOptions) as AsyncIterable<ChatCompletionChunk>
         } catch (err) {
           if (args.signal?.aborted) throw err
+          if (!continuationNeeded && isTrailingModelTurnRejection(errDetail(err))) {
+            continuationNeeded = true
+            params = applyContinuation(params)
+            console.warn(`[openai-adapter] ${modelSlug} rejected the trailing assistant turn — re-sending with a continuation message`)
+            attempt-- // not a 429/transient attempt — the wait budget is untouched
+            continue
+          }
           // Transient network/5xx failures also deserve an IDENTICAL-request
           // retry (Codex P2: maxRetries 0 removed the SDK's, and a one-off
           // outage must not read as parameter incompatibility and descend).

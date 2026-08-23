@@ -89,7 +89,73 @@ final class AlmaHostingController<Content: View>: UIHostingController<Content> {
     // back as a glass circle on every pushed screen — sim-verified present on all
     // hosted pushes, so no custom item is added (a custom one produced a DOUBLE
     // back, sim-caught same day). Sheets carry their own close buttons instead.
+
+    /// Full-takeover screens (Creative Studio, native login) draw their own chrome
+    /// and want the UIKit nav bar GONE while they are on top. Declared here as a
+    /// property of the screen so `AlmaNavigationController` derives the bar state
+    /// from whichever controller is being shown — never from per-screen
+    /// hide/restore bookkeeping (owner report 2026-08-23: after leaving such a
+    /// screen the bar stayed hidden on the More tab, so the NEXT pushed page had
+    /// no back button — first visit fine, second visit stuck).
+    var almaHidesNavigationBar = false
 }
+
+/// The shell's navigation controller. Owns ONE rule: the nav bar is hidden exactly
+/// when the controller being shown asks for it (`almaHidesNavigationBar`), asserted
+/// on willShow AND didShow so a late SwiftUI preference flush during a pop
+/// transition cannot leave the bar hidden under the screen that comes back.
+final class AlmaNavigationController: UINavigationController, UINavigationControllerDelegate {
+    override init(rootViewController: UIViewController) {
+        super.init(rootViewController: rootViewController)
+        delegate = self
+    }
+    override init(nibName nibNameOrNil: String?, bundle nibBundleOrNil: Bundle?) {
+        super.init(nibName: nibNameOrNil, bundle: nibBundleOrNil)
+        delegate = self
+    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        // UIKit silently disables the edge-swipe back while the bar is hidden, so a
+        // takeover screen would be exit-able only via its own button. Keep the
+        // gesture alive whenever there is somewhere to pop to.
+        interactivePopGestureRecognizer?.delegate = self
+    }
+
+    static func wantsHiddenBar(_ vc: UIViewController) -> Bool {
+        (vc as? AlmaHostingControllerProtocol)?.almaHidesNavigationBar ?? false
+    }
+
+    private func applyBarRule(for vc: UIViewController, animated: Bool) {
+        let hide = Self.wantsHiddenBar(vc)
+        if isNavigationBarHidden != hide { setNavigationBarHidden(hide, animated: animated) }
+    }
+
+    func navigationController(_ navigationController: UINavigationController,
+                              willShow viewController: UIViewController, animated: Bool) {
+        applyBarRule(for: viewController, animated: animated)
+    }
+
+    func navigationController(_ navigationController: UINavigationController,
+                              didShow viewController: UIViewController, animated: Bool) {
+        applyBarRule(for: viewController, animated: false)
+    }
+}
+
+extension AlmaNavigationController: UIGestureRecognizerDelegate {
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === interactivePopGestureRecognizer else { return true }
+        return viewControllers.count > 1 && transitionCoordinator == nil
+    }
+}
+
+/// Type-erased access to the takeover flag (AlmaHostingController is generic).
+protocol AlmaHostingControllerProtocol: AnyObject {
+    var almaHidesNavigationBar: Bool { get }
+}
+extension AlmaHostingController: AlmaHostingControllerProtocol {}
 
 /// Late-bound weak reference — the SwiftUI screens' closures need the nav controller
 /// they end up hosted in, which doesn't exist yet when the rootView is built.

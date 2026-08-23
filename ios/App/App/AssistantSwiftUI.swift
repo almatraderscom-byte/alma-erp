@@ -1427,7 +1427,14 @@ struct AgentUsageSnapshot: Decodable, Equatable {
 /// single path so newly-added models cannot silently reintroduce a long header.
 enum AgentModelShortName {
     static func display(_ raw: String) -> String {
-        let cleaned = raw
+        // Drop the trailing "(OpenRouter)" / "(OpenRouter stealth)" plumbing note
+        // FIRST — the fallback branch below used to keep its brackets once the
+        // vendor word was blanked, so MiMo showed as "MiMo V2.5 ()" (sim, 2026-08-23).
+        // Same rule as the web's modelDisplayName: which vendor we buy a model
+        // through is our concern, not Boss's.
+        let withoutNote = raw.replacingOccurrences(
+            of: #"\s*\([^)]*\)\s*$"#, with: "", options: .regularExpression)
+        let cleaned = withoutNote
             .replacingOccurrences(of: "_", with: " ")
             .replacingOccurrences(of: "-", with: " ")
             .replacingOccurrences(of: "OpenRouter", with: "", options: .caseInsensitive)
