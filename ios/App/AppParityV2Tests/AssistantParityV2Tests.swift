@@ -6161,6 +6161,18 @@ final class AgentMessageTimeLabelTests: XCTestCase {
         XCTAssertNil(AgentMessageTimeLabel.parse(""))
     }
 
+    func testRecoveredOwnerRowKeepsItsOriginalSendTime() {
+        // Codex P1 #841 r3: a pre-ID send recovered across a relaunch carries the
+        // persisted descriptor's startedAt as its display-only sentAt.
+        let vm = AssistantVM()
+        let sent = Date(timeIntervalSince1970: 1_787_000_000)
+        vm.debugResumePreTurnDescriptor(clientMessageId: "client-r1", text: "রিপোর্ট", startedAt: sent)
+        let row = vm.messages.last { $0.role == .user }
+        XCTAssertEqual(row?.id, "local-recovered-client-r1")
+        XCTAssertEqual(AgentMessageTimeLabel.parse(row?.sentAt)?.timeIntervalSince1970 ?? 0, sent.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertNil(row?.createdAt)
+    }
+
     func testSendStampsSentAtNotCreatedAtSoTheReadWatermarkIsUntouched() {
         let vm = AssistantVM()
         vm.debugAppendLocalOwnerMessage(text: "হ্যালো")

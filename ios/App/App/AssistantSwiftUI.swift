@@ -4967,6 +4967,10 @@ final class AssistantVM {
                 id: "local-recovered-\(rt.clientMessageId)", role: .user,
                 clientMessageId: rt.clientMessageId, outgoingState: .checking, text: text)
             owner.fileRefs = files
+            // Display-only send time from the persisted descriptor, so a row
+            // recovered across a relaunch keeps its divider even while recovery
+            // is offline or stalled (Codex P1 #841); the read watermark is untouched.
+            owner.sentAt = AgentMessageTimeLabel.iso(rt.startedAt)
             messages.append(owner)
         }
         isStreaming = true
@@ -9116,6 +9120,11 @@ final class AssistantVM {
     func debugSetCurrentTurnId(_ id: String?) { currentTurnId = id }
     func debugIsTerminalForOurTurn(_ st: TurnStatusResponse, requireEvidence: Bool) -> Bool {
         isTerminalForOurTurn(st, requireEvidence: requireEvidence)
+    }
+    func debugResumePreTurnDescriptor(clientMessageId: String, text: String, startedAt: Date) {
+        resumePreTurnDescriptor(RecoverableTurn(conversationId: "c-recover", turnId: nil,
+                                                clientMessageId: clientMessageId, lastSeq: -1,
+                                                startedAt: startedAt, message: text))
     }
     func debugAppendLocalOwnerMessage(text: String) {
         upsertLocalOwnerIntent(clientMessageId: "debug-\(UUID().uuidString)", text: text,
@@ -15180,11 +15189,13 @@ enum AgentMessageTimeLabel {
     static let months = ["জানুয়ারি", "ফেব্রুয়ারি", "মার্চ", "এপ্রিল", "মে", "জুন",
                          "জুলাই", "আগস্ট", "সেপ্টেম্বর", "অক্টোবর", "নভেম্বর", "ডিসেম্বর"]
 
-    static func isoNow() -> String {
+    static func iso(_ date: Date) -> String {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f.string(from: Date())
+        return f.string(from: date)
     }
+
+    static func isoNow() -> String { iso(Date()) }
 
     static func parse(_ raw: String?) -> Date? {
         guard let raw, !raw.isEmpty else { return nil }
