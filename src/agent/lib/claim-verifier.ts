@@ -1379,7 +1379,10 @@ function isHtmlDominatedReport(text: string): boolean {
   return reportTags.length >= 8 && /<(?:style|div|table)\b/i.test(text)
 }
 
-function requiresCompleteReport(ownerInstructions: string): boolean {
+/** Did Boss ask for a COMPLETE report — by name, or by naming two of its
+ *  sections? Exported so the turn loop can hold the same bar when it runs out
+ *  of rounds: a "what I did so far" wrap-up is not that deliverable. */
+export function requiresCompleteReport(ownerInstructions: string): boolean {
   if (COMPLETE_REPORT_REQUEST.test(ownerInstructions)) return true
   const requestedSections = ownerInstructions.match(REQUESTED_REPORT_SECTION) ?? []
   return new Set(requestedSections.map((section) => section.toLowerCase().replace(/\s+/g, ' '))).size >= 2

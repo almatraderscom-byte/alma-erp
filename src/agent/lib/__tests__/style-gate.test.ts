@@ -191,3 +191,87 @@ describe('STYLE_EXEMPLARS (BP6 — few-shot bank)', () => {
     expect(text).not.toContain('নমুনা উত্তর')
   })
 })
+
+describe('round-budget wrap-up holds the complete-report contract', () => {
+  // Live failure 2026-08-24: an explicit "professional inventory health
+  // management report … bottom line, executive summary, KPI table, findings,
+  // risks, recommendations and next steps" settled as a progress list ending
+  // "Boss, \"continue\" বললে…". The turn had exhausted its ROUND budget, and
+  // that final round both (a) receives a "tell Boss what you did so far" nudge
+  // and (b) skips the verification block — there is no round left to retry
+  // into. So on that round the nudge is the only thing holding the contract.
+  async function loadRequiresCompleteReport() {
+    return (await import('../claim-verifier')).requiresCompleteReport
+  }
+
+  it('recognises the request the live turn failed on', async () => {
+    const requires = await loadRequiresCompleteReport()
+    expect(requires(
+      'FINAL-LIVE-PROOF-20260824-0236 - Create a professional inventory health management '
+      + 'report using live ERP data. Include bottom line, executive summary, KPI table, '
+      + 'findings, risks, recommendations and next steps.',
+    )).toBe(true)
+    // two named sections are enough, even without the word "professional"
+    expect(requires('give me the KPI table and the next steps')).toBe(true)
+    // ordinary work is untouched
+    expect(requires('আজকের অর্ডারগুলো দেখাও')).toBe(false)
+    expect(requires('stock koto ache?')).toBe(false)
+  })
+
+  it('the final-round nudge asks for the report itself, not a progress list', async () => {
+    const { readFileSync } = await import('node:fs')
+    const source = readFileSync(
+      new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
+    const start = source.indexOf('const lastBudgetRound =')
+    const nudge = source.slice(start, start + 2400)
+    expect(nudge).toContain('requiresCompleteReport(currentOwnerInstructions)')
+    expect(nudge).toContain('পূর্ণ report-টা লিখে দাও')
+    expect(nudge).toContain('progress list দিও না')
+    // the honest-gap rule must survive: no invented numbers for missing data
+    expect(nudge).toContain('সংখ্যা বানাবে না')
+    // and the ordinary wrap-up is still there for non-report turns
+    expect(nudge).toContain('এ পর্যন্ত কী কী করেছ, কী পেলে')
+  })
+})
+
+describe('one-shot report repair round', () => {
+  // Second layer behind the nudge: if the wrap-up round still comes back as a
+  // progress list, the turn spends exactly ONE extra tool-free round writing
+  // the report from data it already holds, rather than settling the wrong
+  // deliverable. Source assertions — the branch lives inside the streaming
+  // generator, which needs a provider and a database to drive.
+  async function source() {
+    const { readFileSync } = await import('node:fs')
+    return readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
+  }
+
+  it('is gated on an explicit complete-report request and a real violation', async () => {
+    const s = await source()
+    const start = s.indexOf('roundBudgetWrapSent\n          && !reportRepairUsed')
+    expect(start).toBeGreaterThan(0)
+    const block = s.slice(start, start + 2200)
+    expect(block).toContain('requiresCompleteReport(currentOwnerInstructions)')
+    expect(block).toContain('detectProfessionalReportStyleViolations(')
+    expect(block).toContain('!signal?.aborted')
+  })
+
+  it('spends exactly one extra round and never loops', async () => {
+    const s = await source()
+    // one flag, set once, declared once
+    expect(s.match(/reportRepairUsed/g)?.length).toBe(3)
+    expect(s).toContain('reportRepairUsed = true')
+    expect(s).toContain('maxIterations = iteration + 2')
+    // the retry counter stays inside the owner-visible budget
+    expect(s).toContain('verifyRetries = Math.min(verifyRetries + 1, MAX_VERIFY_RETRIES)')
+  })
+
+  it('the repair prompt forbids invented numbers', async () => {
+    const s = await source()
+    const anchor = s.indexOf('উপরের উত্তরটি progress list, report নয়')
+    expect(anchor).toBeGreaterThan(0)
+    const prompt = s.slice(anchor - 300, anchor + 700)
+    expect(prompt).toContain('যাচাই করা যায়নি')
+    expect(prompt).toContain('কোনো সংখ্যা বানাবে না')
+    expect(prompt).toContain('INTERNAL CONTROL')
+  })
+})

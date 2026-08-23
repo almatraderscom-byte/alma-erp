@@ -182,6 +182,8 @@ import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
   detectExplicitInstructionViolations,
+  detectProfessionalReportStyleViolations,
+  requiresCompleteReport,
   countStagedCards,
   detectMissingCardViolation,
   detectProseChoiceViolation,
@@ -2362,6 +2364,9 @@ async function* runAlternateProviderTurn(
   let cardStagedNudgeSent = false
   let deadlineNudgeSent = false
   let roundBudgetWrapSent = false
+  /** One extra text-only round, spent only to turn a structureless wrap-up into
+   *  the complete report Boss explicitly asked for. Never more than once. */
+  let reportRepairUsed = false
   // S0 — whose instruction this turn executes. An unattended Plan-Driver step
   // stamps 'owner_policy' on its turn row, so every tool call in this loop meets
   // the autonomy ladder + money cap instead of inheriting Boss's own authority.
@@ -2753,14 +2758,28 @@ async function* runAlternateProviderTurn(
       const lastBudgetRound = iteration >= maxIterations - 1 && toolRecords.length > 0
       if (lastBudgetRound && !roundBudgetWrapSent && !nearDeadline) {
         roundBudgetWrapSent = true
+        // When Boss explicitly asked for a COMPLETE report, a "what I did so
+        // far" wrap-up is the wrong deliverable — and this round is also the
+        // one where the style gate is skipped (no round left to retry into),
+        // so the nudge is the only thing holding the contract. The model has
+        // every tool result in context here; ask for the report itself, with
+        // the gaps named honestly rather than the whole thing deferred.
+        // (Live 2026-08-24: an inventory report settled as a progress list
+        //  ending "continue বললে…" — this branch is that failure's fix.)
         messages = [
           ...messages,
           {
             role: 'user',
-            content:
-              'এই টার্নের কাজের রাউন্ড-বাজেট শেষ — এখন আর টুল চালানো যাবে না। ' +
-              'এ পর্যন্ত কী কী করেছ, কী পেলে (সংখ্যা সহ) আর ঠিক কোথায় আছ তা বসকে বাংলায় গুছিয়ে জানাও; ' +
-              'কাজ অসমাপ্ত থাকলে শেষে লেখো: "Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।" — চুপচাপ থেমো না।',
+            content: requiresCompleteReport(currentOwnerInstructions)
+              ? 'এই টার্নের কাজের রাউন্ড-বাজেট শেষ — এখন আর টুল চালানো যাবে না। '
+                + 'Boss সম্পূর্ণ report চেয়েছেন, তাই "কী কী করেছি" ধরনের progress list দিও না — '
+                + 'এখন হাতে যা ডেটা আছে তা দিয়েই **পূর্ণ report-টা লিখে দাও**: প্রথমে bold bottom line, '
+                + 'তারপর `##` heading দিয়ে executive summary, KPI table, findings, risks, recommendations, next steps। '
+                + 'যে অংশের ডেটা পাওনি সেটি "যাচাই করা যায়নি" বলে report-এর ভেতরেই স্পষ্ট লেখো — সংখ্যা বানাবে না। '
+                + 'কাজ অসমাপ্ত থাকলে report-এর শেষে লেখো: "Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।"'
+              : 'এই টার্নের কাজের রাউন্ড-বাজেট শেষ — এখন আর টুল চালানো যাবে না। '
+                + 'এ পর্যন্ত কী কী করেছ, কী পেলে (সংখ্যা সহ) আর ঠিক কোথায় আছ তা বসকে বাংলায় গুছিয়ে জানাও; '
+                + 'কাজ অসমাপ্ত থাকলে শেষে লেখো: "Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।" — চুপচাপ থেমো না।',
           },
         ]
       }
@@ -3739,6 +3758,54 @@ async function* runAlternateProviderTurn(
             ]
             continue
           }
+        }
+
+        // The wrap-up round skips the verification block above — normally there
+        // is no round to retry into. But when Boss explicitly asked for a
+        // COMPLETE report, settling a progress list is the wrong deliverable and
+        // the model is already holding every tool result it needs. Grant exactly
+        // ONE extra text-only round (tools stay stripped: `lastBudgetRound`
+        // recomputes true) to write the report properly.
+        // Live 2026-08-24: an inventory-report turn ran out of rounds and
+        // shipped "…continue বললে ঠিক এখান থেকে কাজ চালিয়ে যাব" instead.
+        if (
+          roundBudgetWrapSent
+          && !reportRepairUsed
+          && !signal?.aborted
+          && iterationText.trim()
+          && requiresCompleteReport(currentOwnerInstructions)
+          && detectProfessionalReportStyleViolations(
+            iterationText.trim(), currentOwnerInstructions, { voiceTurn },
+          ).length > 0
+        ) {
+          reportRepairUsed = true
+          maxIterations = iteration + 2
+          verifyRetries = Math.min(verifyRetries + 1, MAX_VERIFY_RETRIES)
+          runtimeVerificationSeen = true
+          yield {
+            type: 'verification_retry',
+            attempt: verifyRetries,
+            maxAttempts: MAX_VERIFY_RETRIES,
+            categories: ['instruction_mismatch'],
+            snippets: ['(অনুরোধ ছিল সম্পূর্ণ report; উত্তরটি progress list হয়ে গিয়েছিল)'],
+          }
+          supersedeLastDraft()
+          timeline.push({ t: 'verify', attempt: verifyRetries, max: MAX_VERIFY_RETRIES })
+          finalText = preambleText
+          messages = [
+            ...messages,
+            { role: 'assistant', content: iterationText },
+            {
+              role: 'user',
+              content:
+                '[INTERNAL CONTROL — this is NOT a new Boss message and must never be shown as one] '
+                + 'উপরের উত্তরটি progress list, report নয় — Boss সম্পূর্ণ report চেয়েছেন। '
+                + 'এটাই শেষ রাউন্ড: হাতের ডেটা দিয়েই পূর্ণ report লেখো — bold bottom line, তারপর '
+                + '`##` heading-এ executive summary, KPI table, findings, risks, recommendations, next steps। '
+                + 'যে ডেটা পাওনি সেটি "যাচাই করা যায়নি" বলে লেখো; কোনো সংখ্যা বানাবে না।',
+            },
+          ]
+          continue
         }
 
         const preContractText = iterationText
