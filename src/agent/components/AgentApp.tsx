@@ -1616,6 +1616,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           compactAfterStream = null
           serverCompacted = true
           setCompacting(true)
+        } else if (evt.type === 'error' && typeof evt.messageId === 'string' && evt.messageId) {
+          // The runner salvaged partial work into a persisted row whose prose —
+          // warning included — already streamed as committed blocks. A second,
+          // client-only warning would sit under it until the next reload
+          // (Codex P1 #834 r6): reconcile to the persisted row instead, exactly
+          // like `done` does.
+          gotStreamDone = true
+          flushThinkingBuffer()
+          flushStreamBuffer()
+          const salvagedId = evt.messageId as string
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, id: salvagedId, streaming: false } : m
+          ))
         } else if (evt.type === 'error') {
           gotStreamDone = true
           flushThinkingBuffer()
