@@ -4880,6 +4880,11 @@ final class AssistantParityV2Tests: XCTestCase {
     }
 
     func testNewChatInvalidatesInFlightHistoryToken() async {
+        // A durable recoverable turn left in UserDefaults by an EARLIER test is
+        // restored by AssistantVM's initializer and legitimately blocks New Chat
+        // ("finish the running answer first"). Clear the slot so this test
+        // measures token invalidation, not test-order residue.
+        UserDefaults.standard.removeObject(forKey: "alma.assistant.recoverableTurn")
         let vm = AssistantVM()
         let token = vm.debugIssueSurfaceToken(loading: "chat-a")
         let opened = await vm.newChat()
