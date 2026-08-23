@@ -19206,6 +19206,10 @@ struct AgentTurnBlocksView: View {
                     if let owner = vm.messages.first(where: {
                         $0.role == .user && $0.clientMessageId == clientMessageId
                     }) {
+                        // A steering message sent mid-turn lives INSIDE the turn's
+                        // blocks (its top-level row is hidden) — it gets the same
+                        // time divider as every other owner message (Codex P2 #841).
+                        AgentMessageTimeDivider(message: owner, pal: pal)
                         AgentInlineOwnerMessage(message: owner, pal: pal, vm: vm)
                     }
                 case .confirmCard(_, let pid):
