@@ -2569,6 +2569,85 @@ struct AgentChatMessage: Identifiable, Equatable {
         // shallow object and cap the look-ahead so this remains cheap per delta.
         pattern: #"(?:\[\s*)?\{[^{}]{0,1024}?"type"\s*:\s*"#)
 
+    /// Owner-facing text while a provider turn is still live. Some models first
+    /// author a complete HTML artifact (often inside an `html` fence) and replace
+    /// it with native Markdown before `done`. The native chat must not flash that
+    /// implementation artifact as prose or as a code card in the meantime.
+    ///
+    /// This is intentionally display-only and streaming-only: the canonical text
+    /// remains untouched for reducer reconciliation, persistence, copying, and an
+    /// explicit source-code answer once the turn settles.
+    static func ownerVisibleProse(_ text: String, whileStreaming: Bool) -> String {
+        guard whileStreaming, !text.isEmpty else { return text }
+
+        var firstArtifactStart: String.Index?
+        func consider(_ index: String.Index) {
+            guard !isInsideMarkdownCode(text, before: index) else { return }
+            if let current = firstArtifactStart {
+                if index < current { firstArtifactStart = index }
+            } else {
+                firstArtifactStart = index
+            }
+        }
+
+        let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        for regex in [streamedArtifactFenceRegex, streamedArtifactMarkupRegex].compactMap({ $0 }) {
+            for match in regex.matches(in: text, range: fullRange) {
+                if let range = Range(match.range, in: text) {
+                    consider(range.lowerBound)
+                }
+            }
+        }
+
+        // Hold an opener split across provider deltas ("<tab" / "<!-") so it
+        // cannot flash for a frame. If later bytes prove it was ordinary prose,
+        // the next cumulative render releases the original text byte-for-byte.
+        if let angle = text.lastIndex(of: "<"),
+           !isInsideMarkdownCode(text, before: angle) {
+            var tail = String(text[angle...]).lowercased()
+            if tail.hasPrefix("</") { tail.remove(at: tail.index(after: tail.startIndex)) }
+            if streamedArtifactPartialOpeners.contains(where: { $0.hasPrefix(tail) }) {
+                consider(angle)
+            }
+        }
+
+        // The language identifier itself can also be split across deltas. Only
+        // inspect the unfinished last line; a closing fence is rejected by the
+        // Markdown-code guard in `consider`.
+        let lineStart = text.lastIndex(of: "\n").map { text.index(after: $0) }
+            ?? text.startIndex
+        let lastLine = text[lineStart...]
+        let leadingWhitespace = lastLine.prefix { $0 == " " || $0 == "\t" }
+        let fenceStart = text.index(lineStart, offsetBy: leadingWhitespace.count)
+        let fenceTail = String(text[fenceStart...]).lowercased()
+        if fenceTail.hasPrefix("```"),
+           streamedArtifactPartialFences.contains(where: { $0.hasPrefix(fenceTail) }) {
+            consider(fenceStart)
+        }
+
+        guard let firstArtifactStart else { return text }
+        return String(text[..<firstArtifactStart])
+    }
+
+    private static let streamedArtifactFenceRegex = try? NSRegularExpression(
+        pattern: #"(?im)^[ \t]*```[ \t]*(?:html?|svg)[ \t]*(?:\r?\n|$)"#)
+
+    private static let streamedArtifactMarkupRegex = try? NSRegularExpression(
+        pattern: #"(?i)<!--|<!doctype\b|</?(?:html|head|title|meta|link|style|script|noscript|body|main|section|article|header|footer|nav|aside|address|blockquote|div|p|hr|pre|figure|figcaption|table|caption|colgroup|col|thead|tbody|tfoot|tr|th|td|ul|ol|li|dl|dt|dd|details|summary|dialog|fieldset|legend|form|svg|canvas)\b"#)
+
+    private static let streamedArtifactPartialFences = ["```html", "```htm", "```svg"]
+
+    private static let streamedArtifactPartialOpeners = [
+        "<!--", "<!doctype", "<html", "<head", "<title", "<meta", "<link",
+        "<style", "<script", "<noscript", "<body", "<main", "<section",
+        "<article", "<header", "<footer", "<nav", "<aside", "<address",
+        "<blockquote", "<div", "<p", "<hr", "<pre", "<figure", "<figcaption",
+        "<table", "<caption", "<colgroup", "<col", "<thead", "<tbody", "<tfoot",
+        "<tr", "<th", "<td", "<ul", "<ol", "<li", "<dl", "<dt", "<dd",
+        "<details", "<summary", "<dialog", "<fieldset", "<legend", "<form",
+        "<svg", "<canvas",
+    ]
+
     private static func isInsideMarkdownCode(_ text: String, before index: String.Index) -> Bool {
         let prefix = text[..<index]
         var fenceCount = 0
@@ -15630,14 +15709,19 @@ struct AgentMessageRow: View {
                         if !message.text.isEmpty {
                             VStack(alignment: .leading, spacing: 4) {
                                 if message.isStreaming {
-                                    HStack(alignment: .bottom, spacing: 2) {
-                                        AgentMarkdownText(
-                                            text: message.text, pal: pal,
-                                            suppressRemoteImages: !message.fileRefs.filter {
-                                                $0.mediaType.hasPrefix("image/")
-                                            }.isEmpty)
-                                            .modifier(AgentShimmerModifier())
-                                        AgentTypingCursor()
+                                    let visibleText = AgentChatMessage.ownerVisibleProse(
+                                        message.text, whileStreaming: true)
+                                    if !visibleText.trimmingCharacters(
+                                        in: .whitespacesAndNewlines).isEmpty {
+                                        HStack(alignment: .bottom, spacing: 2) {
+                                            AgentMarkdownText(
+                                                text: visibleText, pal: pal,
+                                                suppressRemoteImages: !message.fileRefs.filter {
+                                                    $0.mediaType.hasPrefix("image/")
+                                                }.isEmpty)
+                                                .modifier(AgentShimmerModifier())
+                                            AgentTypingCursor()
+                                        }
                                     }
                                 } else {
                                     AgentProgressiveMarkdownText(
@@ -19329,11 +19413,13 @@ struct AgentTurnBlocksView: View {
     }
 
     @ViewBuilder private func proseBlock(_ text: String, isTail: Bool) -> some View {
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let visibleText = AgentChatMessage.ownerVisibleProse(
+            text, whileStreaming: message.isStreaming)
+        if !visibleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if isTail {
                 HStack(alignment: .bottom, spacing: 2) {
                     AgentMarkdownText(
-                        text: text, pal: pal,
+                        text: visibleText, pal: pal,
                         suppressRemoteImages: message.fileRefs.contains {
                             $0.mediaType.hasPrefix("image/")
                         })
@@ -19347,7 +19433,7 @@ struct AgentTurnBlocksView: View {
                 // native grabbers and the system Copy menu. No context menu here (it
                 // would swallow the long-press); whole-reply copy lives in the footer.
                 AgentProgressiveMarkdownText(
-                    text: text, pal: pal, selectable: true,
+                    text: visibleText, pal: pal, selectable: true,
                     suppressRemoteImages: message.fileRefs.contains {
                         $0.mediaType.hasPrefix("image/")
                     },

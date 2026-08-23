@@ -24,6 +24,19 @@ describe('COMMUNICATION_STYLE (BP5 — how it talks, model-agnostic)', () => {
     }
   })
 
+  it('delivers a normal management report in chat and reserves HTML for explicit requests', async () => {
+    const { buildSystemPrompt } = await import('../system-prompt')
+    const text = buildSystemPrompt().map((b) => b.text ?? '').join('\n')
+
+    expect(text).toContain('প্রথম final chat reply-তেই **সম্পূর্ণ structured Markdown report**')
+    expect(text).toContain('complete report এই প্রথম final reply-তেই দিন')
+    expect(text).toContain('Boss স্পষ্টভাবে HTML source/code চাইলে')
+    expect(text).toContain('আলাদা HTML artifact/file/live dashboard চাইলে')
+    expect(text).not.toContain('একটা পূর্ণ HTML ডকুমেন্ট লিখুন একটা html fenced code-block-এ')
+    expect(text).not.toContain('অ্যাপ এই html ব্লককে চ্যাটের ভেতরেই live render করবে')
+    expect(text).not.toContain('save_artifact\` type:"html" লাইভ ড্যাশবোর্ড + ডাউনলোড লিংক')
+  })
+
   it('advertises native rich-output grammar without allowing fabricated media', async () => {
     const { buildSystemPrompt } = await import('../system-prompt')
     const text = buildSystemPrompt().map((b) => b.text ?? '').join('\n')

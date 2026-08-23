@@ -1356,8 +1356,34 @@ const READY_COPY_BLOCK = /```(?:copy|caption|post|text)\s*\n[\s\S]*?\S[\s\S]*?\n
 const FENCED_BLOCK = /```[^\n]*\n[\s\S]*?\n```/g
 const COPY_POST_WORK_PROMPT = /(?:[?？]|(?:এখন\s+)?চাইলে|approve|approval|অনুমোদন|বললে|বলুন|বলবেন|জানান|লাগলে|edit|এডিট|tweak|টুইক|আপনার\s+নির্দেশ|paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|campaign)/i
 const EXPLICIT_REPORT_REQUEST = /(?:\b(?:report|audit|review|briefing|analysis)\b|রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|পর্যালোচনা|প্রতিবেদন)/i
+const COMPLETE_REPORT_REQUEST = /(?:\b(?:complete|full|detailed|professional|management)\b[^\n।.!?]{0,48}\b(?:report|audit|review|briefing|analysis)\b|(?:সম্পূর্ণ|পূর্ণ|পুরো|বিস্তারিত|প্রফেশনাল|পেশাদার|ম্যানেজমেন্ট)[^\n।.!?]{0,48}(?:রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|পর্যালোচনা|প্রতিবেদন))/i
+const SHORT_REPORT_OUTPUT_REQUEST = /(?:\b(?:one[- ]?line|single[- ]?line|short|concise|summary[- ]?only)\b|এক\s*লাইনে|একটি?\s*লাইনে|সংক্ষেপে|ছোট\s*করে|শুধু\s*সারাংশ)/i
+const REQUESTED_REPORT_SECTION = /(?:\bbottom\s+line\b|\bexecutive\s+summary\b|\bkpis?\b|\bfindings?\b|\brisks?\b|\brecommendations?\b|\bnext\s+steps?\b|বটম\s*লাইন|নির্বাহী\s+সারাংশ|মূল\s+পর্যবেক্ষণ|ঝুঁকি|সুপারিশ|পরবর্তী\s+পদক্ষেপ)/gi
+const EXPLICIT_HTML_OUTPUT_REQUEST = /(?:\bhtml\b[^\n।.!?]{0,60}(?:\b(?:source|code|document|file|artifact|dashboard)\b|সোর্স|কোড|ডকুমেন্ট|ফাইল|আর্টিফ্যাক্ট|ড্যাশবোর্ড)|(?:\b(?:source|code|document|file|artifact|dashboard)\b|সোর্স|কোড|ডকুমেন্ট|ফাইল|আর্টিফ্যাক্ট|ড্যাশবোর্ড)[^\n।.!?]{0,60}\bhtml\b|\bhtml\s*(?:-|–|—)?\s*(?:এ|তে)\s*(?:দাও|দিন|চাই|বানাও|করো|করুন))/i
+const HTML_FENCED_BLOCK = /```[ \t]*(?:html|htm)\b[^\n]*\n[\s\S]*?\n```/gi
+const FULL_HTML_DOCUMENT = /<!doctype\s+html\b|<html(?:\s|>)/i
+const HTML_REPORT_TAG = /<\/?(?:html|head|body|style|main|section|div|table|thead|tbody|tr|th|td)\b[^>]*>/gi
 const VOICE_OUTPUT_REQUEST = /(?:\bvoice(?:\s|-)?(?:reply|answer|response)\b|\bspoken\s+(?:reply|answer)\b|ভ[য়য়]েসে|কথা\s+বলে|🎙️)/i
 const REPORT_MIN_CHARACTERS = 700
+
+function isHtmlDominatedReport(text: string): boolean {
+  if (FULL_HTML_DOCUMENT.test(text)) return true
+
+  const htmlFences = text.match(HTML_FENCED_BLOCK) ?? []
+  const htmlFencedCharacters = htmlFences.reduce((sum, block) => sum + block.length, 0)
+  if (htmlFencedCharacters > text.length * 0.45) return true
+
+  // Also catch an unfenced full HTML fragment without rejecting a small HTML
+  // example embedded inside an otherwise legitimate Markdown report.
+  const reportTags = text.match(HTML_REPORT_TAG) ?? []
+  return reportTags.length >= 8 && /<(?:style|div|table)\b/i.test(text)
+}
+
+function requiresCompleteReport(ownerInstructions: string): boolean {
+  if (COMPLETE_REPORT_REQUEST.test(ownerInstructions)) return true
+  const requestedSections = ownerInstructions.match(REQUESTED_REPORT_SECTION) ?? []
+  return new Set(requestedSections.map((section) => section.toLowerCase().replace(/\s+/g, ' '))).size >= 2
+}
 
 /**
  * A long explicit report that arrives as one flat wall of prose is not the
@@ -1373,12 +1399,22 @@ export function detectProfessionalReportStyleViolations(
   if (!AGENT_STYLE_GATE) return []
   const text = replyText.trim()
   if (
-    text.length < REPORT_MIN_CHARACTERS
-    || !EXPLICIT_REPORT_REQUEST.test(ownerInstructions)
+    !EXPLICIT_REPORT_REQUEST.test(ownerInstructions)
+    || SHORT_REPORT_OUTPUT_REQUEST.test(ownerInstructions)
+    || (text.length < REPORT_MIN_CHARACTERS && !requiresCompleteReport(ownerInstructions))
     || context.voiceTurn === true
     || VOICE_OUTPUT_REQUEST.test(ownerInstructions)
     || isCopyOnlyOwnerRequest(ownerInstructions)
   ) return []
+
+  if (!EXPLICIT_HTML_OUTPUT_REQUEST.test(ownerInstructions) && isHtmlDominatedReport(text)) {
+    return [{
+      category: 'instruction_mismatch',
+      ruleId: 'professional_report_inline_html',
+      matchedSnippet: '(দীর্ঘ report-টি inline/fenced HTML; complete structured Markdown chat reply দরকার)',
+      requiredTools: [],
+    }]
+  }
 
   const fenced = text.match(FENCED_BLOCK) ?? []
   const fencedCharacters = fenced.reduce((sum, block) => sum + block.length, 0)

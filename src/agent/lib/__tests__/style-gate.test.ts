@@ -101,9 +101,42 @@ ${Array.from({ length: 7 }, () => 'যাচাই করা সাপ্তা�
 2. pending order প্রতিদিন review করুন।
 3. সপ্তাহ শেষে ফলাফল আবার মাপুন।`
 
+  const inlineHtmlReport = `\`\`\`html
+<!doctype html>
+<html lang="bn">
+<head>
+  <style>
+    .bar-container { display: grid; gap: 8px; }
+    .bar { width: 75%; background: green; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="kpi"><strong>মোট স্টক</strong><span>১১৪</span></div>
+    <div class="bar-container"><div class="bar">৭৫%</div></div>
+    <table>
+      <thead><tr><th>SKU</th><th>স্টক</th><th>অবস্থা</th></tr></thead>
+      <tbody>
+${Array.from({ length: 18 }, (_, index) => `        <tr><td>SKU-${index + 1}</td><td>${20 + index}</td><td>যাচাই করা হয়েছে</td></tr>`).join('\n')}
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>
+\`\`\``
+
   it('rejects an explicit long report delivered as flat prose', async () => {
     const detect = await loadReportDetector()
     expect(detect(flatReport, 'এই সপ্তাহের একটা বিস্তারিত business report দাও'))
+      .toEqual([expect.objectContaining({ ruleId: 'professional_report_structure' })])
+  })
+
+  it('rejects a terse stock answer when the owner requested a complete management report shape', async () => {
+    const detect = await loadReportDetector()
+    const ownerRequest =
+      'একটা professional management report দাও: bottom line, executive summary, KPI, findings, risks, recommendations এবং next steps সহ।'
+
+    expect(detect('স্টক এখন ১১৪টি। সবকিছু মোটামুটি ঠিক আছে।', ownerRequest))
       .toEqual([expect.objectContaining({ ruleId: 'professional_report_structure' })])
   })
 
@@ -112,9 +145,22 @@ ${Array.from({ length: 7 }, () => 'যাচাই করা সাপ্তা�
     expect(detect(structuredReport, 'এই সপ্তাহের একটা বিস্তারিত business report দাও')).toEqual([])
   })
 
+  it('rejects a full inline HTML document for a normal management report', async () => {
+    const detect = await loadReportDetector()
+    expect(detect(inlineHtmlReport, 'বর্তমান inventory নিয়ে একটা professional management report দাও'))
+      .toEqual([expect.objectContaining({ ruleId: 'professional_report_inline_html' })])
+  })
+
+  it('preserves explicit HTML source and artifact requests', async () => {
+    const detect = await loadReportDetector()
+    expect(detect(inlineHtmlReport, 'inventory report-এর HTML source/code দাও')).toEqual([])
+    expect(detect(inlineHtmlReport, 'inventory report-টা আলাদা HTML artifact হিসেবে বানাও')).toEqual([])
+  })
+
   it('does not force report chrome onto short or voice answers', async () => {
     const detect = await loadReportDetector()
     expect(detect('বস, রিপোর্টে বিক্রি স্থিতিশীল আছে।', 'এক লাইনে report দাও')).toEqual([])
+    expect(detect('বস, রিপোর্টে বিক্রি স্থিতিশীল আছে।', 'short professional management report দাও')).toEqual([])
     expect(detect(flatReport, 'voice reply-তে weekly report বলে দাও')).toEqual([])
     expect(detect(flatReport, 'সাপ্তাহিক report বলো', { voiceTurn: true })).toEqual([])
   })

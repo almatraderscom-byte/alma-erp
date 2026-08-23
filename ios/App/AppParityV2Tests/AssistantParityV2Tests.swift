@@ -2029,6 +2029,65 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertGreaterThan(titleFont?.pointSize ?? 0, bodyFont?.pointSize ?? 0)
     }
 
+    func testStreamingArtifactAuthoringHoldsRawHTMLAndSplitOpeners() {
+        let artifactPrefixes = [
+            "<",
+            "<!-",
+            "<!-- LOWEST STOCK TABLE -->\n<tab",
+            "<table><tbody><tr><td>Low stock</td></tr></tbody></table>",
+            "<div class=\"bar-container\"><div style=\"width: 80%\"></div></div>",
+            "```h",
+            "```html\n<table><tr><td>৳১,২০০</td></tr></table>\n```",
+            "```svg\n<svg><path d=\"M0 0\" /></svg>\n```",
+        ]
+
+        for source in artifactPrefixes {
+            XCTAssertEqual(
+                AgentChatMessage.ownerVisibleProse(source, whileStreaming: true),
+                "",
+                "streaming artifact leaked for prefix: \(source)")
+        }
+    }
+
+    func testStreamingArtifactAuthoringKeepsSafePrefixAndSettledSourceExactly() {
+        let safePrefix = "**রিপোর্ট তৈরি করছি।**\n\n"
+        let htmlSource = """
+        <!-- LOWEST STOCK TABLE -->
+        <table><tr><td>SKU-114</td></tr></table>
+        <div class="bar-container">15 running</div>
+        """
+        let combined = safePrefix + htmlSource
+
+        XCTAssertEqual(
+            AgentChatMessage.ownerVisibleProse(combined, whileStreaming: true),
+            safePrefix)
+        XCTAssertEqual(
+            AgentChatMessage.ownerVisibleProse(combined, whileStreaming: false),
+            combined,
+            "settled explicit source must remain byte-for-byte intact")
+    }
+
+    func testStreamingArtifactAuthoringPreservesNativeMarkdownAndRealCode() {
+        let markdown = """
+        ## স্টক রিপোর্ট
+
+        | বিল | অবস্থা |
+        | --- | --- |
+        | 114 | Production |
+        | 15 | Running |
+
+        5 < 10 এবং `<table>` এখানে inline code; <b>inline emphasis</b> অপরিবর্তিত।
+
+        ```swift
+        let html = "<table><tr><td>source</td></tr></table>"
+        ```
+        """
+
+        XCTAssertEqual(
+            AgentChatMessage.ownerVisibleProse(markdown, whileStreaming: true),
+            markdown)
+    }
+
     func testAskAndOpinionDraftsPersistAcrossRelaunch() {
         let cardId = "fixture-persisted-action"
         let first = AssistantVM()
