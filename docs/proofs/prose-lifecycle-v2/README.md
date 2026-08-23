@@ -197,3 +197,22 @@ conversation `21fc9c93-ad82-4418-9009-1ae391cee8cf`, prompt
 - Rig: the owner's E2E device is now a dedicated simulator "ALMA Preview E2E"
   (B69646A2-9D94-4404-9CCC-CE14280CA915) — another session's `xcodebuild test` (derivedData
   `/tmp/alma-dd-integration`) kept re-installing its plain build on "ALMA Build 102".
+
+### 2026-08-23 — Codex round 6 (seven P1), fixed on the stacked branches
+- #834 P1 ×3 → 9a8dfff7: the durable stream fails closed (`error: turn_snapshot_unavailable`)
+  when the turn snapshot cannot be read instead of serving v2 rows as v1; the web error
+  handler rekeys the message to the salvaged row (`messageId`) instead of stacking a
+  client-only warning under it; `onPreamble` splits a server switch notice from the model's
+  lead (notice = own progress block, preamble text = lead — commit text is authoritative for
+  the live reducers). presentation + drift suites 61/61.
+- #837 P1 ×2 → 0a131b6f: the durable max-seq lookup is retried and a persistent failure fails
+  the delivery before anything streams (never "start at 0" over an earlier attempt's rows);
+  the repair's `agent_turns.last_seq` stamp is checked on both paths and an existing terminal
+  re-stamps it to the true max row. worker durability 24/24; whole worker suite 159/159.
+- #838 P1 → 1f523b7f: the replay wipe is armed only when the snapshot's `lastSeq` is past the
+  attach cursor — an empty replay followed by live frames appends to the frozen partial.
+  Test: lastSeq nil / -1 then a live delta keeps the partial.
+- #839 P1 → 11a1aba1: the durable-tail EOF reconciliation adopts an assistant id only via
+  `applyTerminalStatusIdentity` with a positive match (same turn id or send-time evidence).
+  iOS full `AppParityV2Tests` on the stacked top (fresh device "ALMA Codex Tests"):
+  **421 tests, 0 failures** (`xcodebuild-test-15.log`). tsc clean; targeted vitest 12 files / 127 tests.
