@@ -67,163 +67,11 @@
       "notes": "Closed two-segment native exact-record focus; optional server-stamped business_id is validated before fetch."
     },
     {
-      "path": "/agent/mac",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/media",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
       "path": "/agent/phone",
       "pattern": "exact",
       "classification": "temporary-web",
       "nativeHandler": "web",
       "notes": "The protected staff softphone intentionally keeps its WebRTC web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/calls",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/extensions",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/line",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/live",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/quality",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/recordings",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/routing",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/routing/outbound",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/routing/preview",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/settings",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/settings/blocklist",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/settings/history",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/settings/hold",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/settings/hours",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/settings/limits",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
-    },
-    {
-      "path": "/agent/phone-console/settings/provider",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Reviewed responsive protected web surface pending a dedicated native parity decision.",
       "gapPhase": "IOSP-7"
     },
     {
@@ -707,14 +555,6 @@
       "screen": "TradingTelegramScreen"
     },
     {
-      "path": "/agent/browser-live",
-      "pattern": "exact",
-      "classification": "native-required",
-      "nativeHandler": "native",
-      "screen": "BrowserLiveScreen",
-      "notes": "VPS live browser feed — native since L8/L9."
-    },
-    {
       "path": "/agent/mac",
       "pattern": "exact",
       "classification": "temporary-web",
@@ -724,14 +564,6 @@
     },
     {
       "path": "/agent/media",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
-      "gapPhase": "IOSP-9"
-    },
-    {
-      "path": "/agent/phone",
       "pattern": "exact",
       "classification": "temporary-web",
       "nativeHandler": "web",
@@ -873,6 +705,13 @@
       "nativeHandler": "web",
       "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
       "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/report-preview",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Preview/dev-only professional report rendering fixture (owner-gated, no live ERP data); embedded web by design, no native counterpart planned."
     }
   ]
 }

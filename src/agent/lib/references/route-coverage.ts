@@ -103,6 +103,7 @@ const EXACT_ROUTES: Readonly<Record<string, string>> = {
 }
 
 const NONE_ROUTES: Readonly<Record<string, string>> = {
+  '/agent/report-preview': 'Preview-only report rendering fixture carrying no live ERP data; never a mintable business destination.',
   '/app/download': 'Public app-download handoff is not an ERP record or authenticated operational section reference.',
   '/forgot-password': 'Authentication recovery input must never be minted from agent output.',
   '/invoice/share/[slug]': 'Capability-style public invoice share slugs are not trusted internal entity references.',

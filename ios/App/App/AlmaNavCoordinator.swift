@@ -70,7 +70,9 @@ enum AlmaNavCoordinator {
         "/agent/phone-console/settings/hold",
         "/agent/phone-console/settings/hours",
         "/agent/phone-console/settings/limits",
-        "/agent/phone-console/settings/provider"
+        "/agent/phone-console/settings/provider",
+        // Preview/dev-only professional report fixture — embedded web by design.
+        "/agent/report-preview"
     ]
 
     /// NP-4 (AU-02): typed QUERY routes — these native screens accept their query

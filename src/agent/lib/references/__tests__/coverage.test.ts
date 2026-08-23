@@ -87,12 +87,12 @@ describe('AgentReferenceV1 machine-readable coverage gates', () => {
       return route || '/'
     }).sort()
     const covered = ROUTE_REFERENCE_COVERAGE.map((entry) => entry.route)
-    expect(discovered).toHaveLength(89)
+    expect(discovered).toHaveLength(90)
     expect(ROUTE_REFERENCE_COVERAGE).toHaveLength(discovered.length)
     expect(new Set(covered).size).toBe(covered.length)
     expect(covered).toEqual(discovered)
     expect(ROUTE_REFERENCE_COVERAGE.every((entry) => entry.reason.trim().length >= 12)).toBe(true)
-    expect(Object.values(ROUTE_REFERENCE_COVERAGE_COUNTS).reduce((sum, value) => sum + value, 0)).toBe(89)
+    expect(Object.values(ROUTE_REFERENCE_COVERAGE_COUNTS).reduce((sum, value) => sum + value, 0)).toBe(90)
     for (const entry of ROUTE_REFERENCE_COVERAGE) {
       if (entry.classification === 'section') {
         expect(Object.prototype.hasOwnProperty.call(INTERNAL_SECTION_REGISTRY, entry.fallbackSection!)).toBe(true)
@@ -106,6 +106,6 @@ describe('AgentReferenceV1 machine-readable coverage gates', () => {
       encoding: 'utf8',
     })
     expect(output).toContain('ROUTE CONTRACT OK:')
-    expect(output).toContain('93 fixture routes cover 89 web routes')
+    expect(output).toContain('94 fixture routes cover 90 web routes')
   })
 })
