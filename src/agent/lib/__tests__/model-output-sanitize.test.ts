@@ -403,6 +403,14 @@ describe('the SIXTH shape — Gemini 3.7 Flash speak-first, his screen 2026-08-2
     expect(out).toContain('ফলাফল এল')
   })
 
+  it('an unmatched CLOSING sentinel still reaches the sanitizer (Codex P2)', () => {
+    expect(stripToolCallMarkup('ফলাফল এল। </｜DSML｜invoke> </|DSML|tool_calls>')).toBe('ফলাফল এল।')
+    const f = createMarkupStreamFilter()
+    const out = f.push('ফলাফল এল। ') + f.push('</｜DSML｜tool_calls>') + f.flush()
+    expect(out).not.toContain('DSML')
+    expect(out).toContain('ফলাফল এল')
+  })
+
   it('streaming: an opener the stream never closes is dropped at flush, not spilled', () => {
     const f = createMarkupStreamFilter()
     const out = f.push('যাচাই করছি। <｜DSML｜invoke name="get_orders">') + f.push('{"li') + f.flush()
