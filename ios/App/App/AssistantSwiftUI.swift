@@ -11208,7 +11208,7 @@ final class AssistantVM {
             return AgentTurnEvent(dto: dto)
         }
         if case .unknown(let t)? = decode(#"{"type":"future_thing"}"#) { check("unknown telemetried", t == "future_thing") } else { check("unknown telemetried", false) }
-        if case .done(let mid, let tin, _, let cost, let cont, _, _, _, _, _)? = decode(#"{"type":"done","messageId":"m1","tokensIn":5,"costUsd":0.1,"needContinue":true}"#) {
+        if case .done(let mid, let tin, _, let cost, let cont, _, _, _, _, _, _)? = decode(#"{"type":"done","messageId":"m1","tokensIn":5,"costUsd":0.1,"needContinue":true}"#) {
             check("done fields", mid == "m1" && tin == 5 && cost == 0.1 && cont)
         } else { check("done fields", false) }
         if case .turnSnapshot(let tid, _, let st, let seq, _, _)? = decode(#"{"type":"turn_snapshot","turnId":"t9","status":"running","lastSeq":7}"#) {
