@@ -51,13 +51,17 @@ export function sseFrame(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\n\n`
 }
 
-/** Replay the durable event log for a turn, oldest first. Fail-open to [].
+/** Replay the durable event log for a turn, oldest first.
  *  `afterSeq` (roadmap 3.5) replays only events NEWER than the client's cursor;
- *  `limit` caps pathological turns while the cursor allows continuation. */
+ *  `limit` caps pathological turns while the cursor allows continuation.
+ *  Default fail-open to [] (advisory callers); the stream endpoint passes
+ *  `throwOnError` because a replay it cannot read must end the stream with an
+ *  explicit error rather than start a live-only tail mid-turn (F-09). */
 export async function getReplayEvents(
   turnId: string,
   afterSeq = -1,
   limit = 5000,
+  opts?: { throwOnError?: boolean },
 ): Promise<TurnEvent[]> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,6 +74,7 @@ export async function getReplayEvents(
     return rows as TurnEvent[]
   } catch (err) {
     console.warn('[turn-events] getReplayEvents failed:', err instanceof Error ? err.message : err)
+    if (opts?.throwOnError) throw err
     return []
   }
 }
@@ -262,16 +267,28 @@ export function pollTurnEvents(
 export async function subscribeTurnEvents(
   turnId: string,
   onEvent: (evt: TurnEvent) => void,
+  opts?: { signal?: AbortSignal },
 ): Promise<{ close: () => Promise<void> } | null> {
   // Must match the Redis the worker PUBLISHES to (LONG_TASK_REDIS_URL on the
   // worker), so the live tail sees the worker's events. Same precedence as the
   // enqueue side: LONG_TASK_REDIS_URL first, then REDIS_URL.
   const url = process.env.LONG_TASK_REDIS_URL || process.env.REDIS_URL
   if (!url) return null
+  const signal = opts?.signal
+  if (signal?.aborted) return null
+  let sub: { disconnect: () => void; quit: () => Promise<unknown> } | null = null
+  // The tailer aborts an attempt that outlives its deadline: stop reconnecting
+  // and fail the pending SUBSCRIBE instead of leaking a client per stream for
+  // the length of a Redis outage (Codex P1 #836 r4).
+  const onAbort = () => { sub?.disconnect() }
+  signal?.addEventListener('abort', onAbort, { once: true })
   try {
     const { default: Redis } = await import('ioredis')
-    const sub = new Redis(url, { maxRetriesPerRequest: null, lazyConnect: false })
-    sub.on('message', (_channel, raw) => {
+    if (signal?.aborted) return null
+    const client = new Redis(url, { maxRetriesPerRequest: null, lazyConnect: false })
+    sub = client
+    client.on('error', () => { /* surfaced by the pending command / close path */ })
+    client.on('message', (_channel, raw) => {
       try {
         const evt = JSON.parse(raw) as TurnEvent
         if (evt && typeof evt.seq === 'number') onEvent(evt)
@@ -279,18 +296,27 @@ export async function subscribeTurnEvents(
         /* malformed publish — ignore */
       }
     })
-    await sub.subscribe(turnEventChannel(turnId))
+    await client.subscribe(turnEventChannel(turnId))
+    if (signal?.aborted) {
+      client.disconnect()
+      return null
+    }
+    signal?.removeEventListener('abort', onAbort)
     return {
       close: async () => {
         try {
-          await sub.quit()
+          await client.quit()
         } catch {
-          sub.disconnect()
+          client.disconnect()
         }
       },
     }
   } catch (err) {
-    console.warn('[turn-events] subscribeTurnEvents failed:', err instanceof Error ? err.message : err)
+    signal?.removeEventListener('abort', onAbort)
+    sub?.disconnect()
+    if (!signal?.aborted) {
+      console.warn('[turn-events] subscribeTurnEvents failed:', err instanceof Error ? err.message : err)
+    }
     return null
   }
 }

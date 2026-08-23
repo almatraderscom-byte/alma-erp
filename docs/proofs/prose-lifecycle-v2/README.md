@@ -40,3 +40,13 @@ list). Visible after settlement: lead → "আগে স্টক দেখছ�
 tool A started twice) → tool cluster → "এ পর্যন্ত ২টা ধাপ সফল…" (forced update) →
 verified final; the superseded draft "কাজ শেষ, সব ঠিক আছে Boss!" is gone;
 "🔁 নিজে যাচাই করে ঠিক করেছে" badge present; 15 tokens footer from `done`.
+
+### R-2 — replay ordering + gap repair (handoff F-08; F-09 server half)
+- `src/agent/lib/turn-stream-tailer.ts`: subscribe FIRST, buffer live events during
+  replay, drain through the deduper, then serial live apply with gap healing from the
+  durable log (`gap_detected` / `replay_catchup` / `gap_unhealed` logs). A replay read
+  failure ends the stream with `turn_replay_unavailable` instead of a mid-turn live-only tail.
+- `src/agent/lib/__tests__/turn-stream-tailer.test.ts`: 9 tests — race-window event
+  delivered once; gap healed before the later event; unhealable gap logged + continues;
+  overlap dedupe; terminal-in-replay; replay failure; page cap; no-channel poll/settled;
+  cursor resume. vitest green, tsc clean.
