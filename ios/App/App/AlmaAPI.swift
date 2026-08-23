@@ -85,6 +85,9 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
         .init(id: "or-deepseek-v4-pro", label: "DeepSeek V4 Pro (OpenRouter)", provider: "openrouter", effortLevels: ["low", "medium", "high"]),
         .init(id: "or-qwen2.5-vl-72b", label: "Qwen 2.5 VL 72B (OpenRouter)", provider: "openrouter"),
         .init(id: "xai-grok-4.20", label: "Grok 4.20 (xAI direct)", provider: "xai"),
+        .init(id: "or-gemini-3.7-flash", label: "Gemini 3.7 Flash (OpenRouter)", provider: "openrouter", contextWindow: 1_048_576, effortLevels: ["low", "medium", "high"]),
+        .init(id: "or-ox-alpha", label: "Ox Alpha (OpenRouter stealth)", provider: "openrouter", contextWindow: 1_048_576, effortLevels: ["low", "medium", "high"]),
+        .init(id: "or-mimo-v2.5", label: "MiMo V2.5 (OpenRouter)", provider: "openrouter", contextWindow: 1_050_000, effortLevels: ["low", "medium", "high"]),
     ]
 
     private let interactiveStreamQueue = DispatchQueue(
