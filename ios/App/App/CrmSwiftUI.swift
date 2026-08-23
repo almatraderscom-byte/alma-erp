@@ -610,7 +610,8 @@ struct CrmScreen: View {
     private var webEscape: some View {
         VStack(spacing: 10) {
             // Native "Sync from orders" (owner 2026-07-11) — web syncFromOrders parity,
-            // POST /api/customers/backfill (server enforces the SUPER_ADMIN gate).
+            // POST /api/customers/backfill. Web: `canSyncFromOrders = role === 'SUPER_ADMIN'`.
+            if AlmaSession.shared.effectiveRole == .SUPER_ADMIN {
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 confirmingSync = true
@@ -631,6 +632,7 @@ struct CrmScreen: View {
             ) {
                 Button("হ্যাঁ, sync করুন") { runSync() }
                 Button("বাতিল", role: .cancel) {}
+            }
             }
             Button {
                 openWeb("/crm", "CRM")

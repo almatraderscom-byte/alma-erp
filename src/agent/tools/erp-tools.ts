@@ -1389,6 +1389,7 @@ const update_order: AgentTool = {
         data: {
           pendingActionId: action.id as string,
           orderId: plan.orderId,
+          orderEntities: [{ id: plan.orderId, orderNumber: plan.label }],
           changedFields: Object.keys(plan.changes),
           unchangedFields: plan.unchanged,
           message: `${Object.keys(plan.changes).length}টি পরিবর্তনের একটাই approval card পাঠানো হয়েছে।`,
@@ -1511,6 +1512,7 @@ const update_orders: AgentTool = {
         data: {
           pendingActionId: action.id as string,
           staged: plans.map((p) => p.label),
+          orderEntities: plans.map((p) => ({ id: p.orderId, orderNumber: p.label })),
           rejected,
           message: `${plans.length}টি অর্ডারের জন্য একটাই approval card পাঠানো হয়েছে।`,
         },

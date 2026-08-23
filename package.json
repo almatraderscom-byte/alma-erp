@@ -43,7 +43,9 @@
     "mobile:sync:ios": "npm run mobile:icons && npx cap sync ios",
     "mobile:open:ios": "npx cap open ios",
     "mobile:apk:debug": "node scripts/build-android-apk.mjs debug",
-    "mobile:apk:release": "node scripts/build-android-apk.mjs release"
+    "mobile:apk:release": "node scripts/build-android-apk.mjs release",
+    "access-contract:update": "UPDATE_ACCESS_CONTRACT=1 vitest run src/lib/__tests__/access-contract.test.ts",
+    "access-contract:check": "vitest run src/lib/__tests__/access-contract.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.104.1",

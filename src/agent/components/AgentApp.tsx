@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage, type TimelineEntry } from './AgentThread'
+import { markTimelinePreamble, supersedeLatestTimelineDraft } from './agent-timeline'
 import AgentComposer, { type PendingFile } from './AgentComposer'
 import AgentLiveDock from './AgentLiveDock'
 import { DEFAULT_CHAT_MODE, normalizeChatMode, type ChatMode } from '@/agent/lib/chat-mode'
@@ -38,7 +39,7 @@ import {
 
 /** Prose lifecycle v2 capability this client advertises (prose-lifecycle.ts). */
 const AGENT_PROSE_PROTOCOL = 2 as const
-import { supersedeVerificationTimeline } from '@/agent/lib/verification-retry-view'
+import { isHardVerificationReplacement, supersedeVerificationTimeline } from '@/agent/lib/verification-retry-view'
 import { reduceHeldVoiceReply, settleHeldVoiceReply } from '@/agent/lib/voice-reply-holdback'
 import { removeStoppedAssistantDraft } from '@/agent/lib/stopped-turn-view'
 import {
@@ -1520,6 +1521,16 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                 }
               : m
           ))
+        } else if (evt.type === 'preamble') {
+          // The text delta arrives first; flush it, then mark the exact timeline
+          // entry as the speak-first lead. Position is not identity: on turns
+          // without a preamble, entry zero is an ordinary replaceable draft.
+          flushStreamBuffer()
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? { ...m, timeline: markTimelinePreamble(m.timeline, String(evt.text ?? '')) }
+              : m,
+          ))
         } else if (evt.type === 'verification_retry') {
           if (proseProtocolBox.current === 2) {
             // A v2 turn never sends this; if a mixed stream does, prose is only
@@ -1542,13 +1553,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           setStreamStatus('🔁 নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…')
           setMessages((prev) => prev.map((m) => {
             if (m.id !== assistantMsgId) return m
-            const timeline = supersedeVerificationTimeline(
-              m.timeline ?? [],
-              verificationCategories,
-            ) as TimelineEntry[]
-            // Normal retries preserve the leading first line. Media hard-gate
-            // replacement cannot: that preamble may itself claim playback, and
-            // no model-authored line is allowed to survive without proof.
+            // Media hard-gate replacement supersedes EVERY text line (that preamble
+            // may itself claim playback); an ordinary retry keeps the explicit
+            // speak-first lead (`lead`, stamped by the preamble event) and
+            // supersedes only the latest replaceable draft.
+            const timeline = (isHardVerificationReplacement(verificationCategories)
+              ? supersedeVerificationTimeline(m.timeline ?? [], verificationCategories)
+              : supersedeLatestTimelineDraft(m.timeline)) as TimelineEntry[]
             timeline.push({
               t: 'verify',
               attempt: typeof evt.attempt === 'number' ? evt.attempt : 1,

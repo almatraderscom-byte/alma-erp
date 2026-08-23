@@ -4149,6 +4149,31 @@ final class AssistantParityV2Tests: XCTestCase {
         } == true)
     }
 
+    func testVerifiedLinkedBodyKeepsPreambleSeparatorAfterAtomicReplacement() {
+        let vm = AssistantVM()
+        let lead = "বস, অর্ডারটা যাচাই করছি।"
+        let linkedBody = "[অর্ডার AL-42](/orders/AL-42)-এ পেমেন্ট সমস্যা আছে।"
+
+        vm.debugApplyTurnEvents([.textDelta(lead), .preamble(lead)])
+        vm.debugApplyTurnEvents([.toolStart(
+            id: "tool-orders", name: "check_order_issues", inputPretty: nil)])
+        vm.debugApplyTurnEvents([.toolEnd(
+            id: "tool-orders", ok: true, resultPreview: nil, screenshot: nil)])
+        vm.debugApplyTurnEvents([.textDelta("অর্ডার AL-42-এ পেমেন্ট সমস্যা আছে।")])
+        vm.debugApplyTurnEvents([.verificationRetry(attempt: 1, maxAttempts: 1)])
+        vm.debugApplyTurnEvents([.textDelta("\n\n" + linkedBody)])
+        vm.debugApplyTurnEvents([.done(
+            messageId: "answer-linked", tokensIn: nil, tokensOut: nil, costUsd: nil,
+            needContinue: false, apiRounds: nil, cacheCreation: nil,
+            cacheRead: nil, roundCostsUsd: nil)])
+
+        XCTAssertEqual(vm.messages.last?.text, lead + "\n\n" + linkedBody)
+        XCTAssertTrue(vm.messages.last?.blocks.contains { block in
+            if case .prose(_, let text) = block { return text == linkedBody }
+            return false
+        } == true)
+    }
+
     func testProspectivePlanStartDecodesTypedNeverUnknown() throws {
         let event = try decodeTurnEvent(#"{"type":"prospective_plan_start"}"#)
         guard case .prospectivePlanStart = event else {
@@ -4195,17 +4220,113 @@ final class AssistantParityV2Tests: XCTestCase {
             for: URL(string: "//evil.example/agent")!))
     }
 
+    func testOrderEntityDeepLinksResolveNativelyWithExactFocus() throws {
+        // The role × business gate (AlmaSession) runs before route classification;
+        // pin the owner identity so these tests exercise the entity routing itself.
+        AlmaSession.shared.applyFixture(role: .SUPER_ADMIN, access: AlmaBusinessId.all)
+        for (path, expectedId) in [
+            ("/orders/ALM-0042", "ALM-0042"),
+            ("/orders?focus=ALM-0043&business_id=ALMA_LIFESTYLE", "ALM-0043"),
+            ("/orders/ALM%200044", "ALM 0044"),
+            ("/orders/ALM-0045?business_id=ALMA_LIFESTYLE", "ALM-0045"),
+        ] {
+            let decision = AlmaNavCoordinator.decide(path: path, openWebForced: { _, _ in })
+            guard case .native(let controller) = decision else {
+                return XCTFail("\(path) must resolve to a native Orders screen")
+            }
+            let host = try XCTUnwrap(controller as? AlmaHostingController<OrdersScreen>)
+            XCTAssertEqual(host.rootView.focusOrderId, expectedId)
+            XCTAssertEqual(host.rootView.businessId, "ALMA_LIFESTYLE")
+        }
+
+        let searchDecision = AlmaNavCoordinator.decide(
+            path: "/orders?q=ALM-0045", openWebForced: { _, _ in })
+        guard case .web(let reason) = searchDecision else {
+            return XCTFail("the existing orders search query must keep its web context")
+        }
+        XCTAssertEqual(reason, "query-context")
+    }
+
+    func testBusinessScopedEntityLinksValidateBeforeNativeFetch() throws {
+        // The role × business gate (AlmaSession) runs before route classification;
+        // pin the owner identity so these tests exercise the entity routing itself.
+        AlmaSession.shared.applyFixture(role: .SUPER_ADMIN, access: AlmaBusinessId.all)
+        let employee = AlmaNavCoordinator.decide(
+            path: "/employees/EMP-42?business_id=ALMA_LIFESTYLE",
+            openWebForced: { _, _ in })
+        guard case .native(let employeeController) = employee else {
+            return XCTFail("trusted Lifestyle employee link must stay native")
+        }
+        let employeeHost = try XCTUnwrap(
+            employeeController as? AlmaHostingController<EmployeesScreen>)
+        XCTAssertEqual(employeeHost.rootView.focusEmpId, "EMP-42")
+        XCTAssertEqual(employeeHost.rootView.businessId, "ALMA_LIFESTYLE")
+
+        let account = AlmaNavCoordinator.decide(
+            path: "/trading/accounts/acct-9?business_id=ALMA_TRADING",
+            openWebForced: { _, _ in })
+        guard case .native(let accountController) = account else {
+            return XCTFail("trusted Trading account link must stay native")
+        }
+        let accountHost = try XCTUnwrap(
+            accountController as? AlmaHostingController<TradingAccountsScreen>)
+        XCTAssertEqual(accountHost.rootView.focusAccountId, "acct-9")
+
+        for badPath in [
+            "/orders/ALM-42?business_id=ALMA_TRADING",
+            "/employees/EMP-42?business_id=ALMA_TRADING",
+            "/trading/accounts/acct-9?business_id=ALMA_LIFESTYLE",
+        ] {
+            let decision = AlmaNavCoordinator.decide(
+                path: badPath, openWebForced: { _, _ in })
+            guard case .unknown = decision else {
+                return XCTFail("\(badPath) must not cross-fetch or fall through to web")
+            }
+        }
+    }
+
+    func testMarkdownLinkRouterRejectsApiAndUnsafeHrefsLikeWeb() {
+        // Web parity: src/agent/lib/markdown-link-router.ts treats /api/* and
+        // credential-bearing or protocol-relative hrefs as never-clickable.
+        XCTAssertNil(AgentMarkdownLinkRouter.destination(for: URL(string: "/api/orders/orders")!))
+        XCTAssertNil(AgentMarkdownLinkRouter.destination(for: URL(string: "/api")!))
+        XCTAssertNil(AgentMarkdownLinkRouter.destination(
+            for: URL(string: "https://alma-erp-six.vercel.app/api/orders/orders?id=ALM-1")!))
+        XCTAssertNil(AgentMarkdownLinkRouter.destination(for: URL(string: "https://user:pw@example.com/x")!))
+        XCTAssertEqual(AgentMarkdownLinkRouter.destination(for: URL(string: "/orders/ALM-1")!),
+                       .almaPath("/orders/ALM-1"))
+        XCTAssertEqual(AgentMarkdownLinkRouter.destination(for: URL(string: "https://example.com/x")!),
+                       .external(URL(string: "https://example.com/x")!))
+    }
+
+    func testExactOrderResponseDecodesDeepLinkPayload() throws {
+        let data = Data(#"{"order":{"id":"ALM-0042","status":"Pending","sell_price":"2500"}}"#.utf8)
+        let response = try JSONDecoder().decode(OrderDetailResponse.self, from: data)
+
+        XCTAssertEqual(response.order?.id, "ALM-0042")
+        XCTAssertEqual(response.order?.sellPrice, 2_500)
+        XCTAssertNil(response.error)
+        XCTAssertEqual(response.exactOrder(for: "ALM-0042")?.id, "ALM-0042")
+        XCTAssertNil(response.exactOrder(for: "ALM-00420"),
+                     "a malformed/partial lookup must never open a different order")
+    }
+
     func testSourcesExcludeActionsMediaAndFencedCodeExamples() {
         let citations = AgentMarkdownText.extractCitations("""
         Evidence: [OpenAI research](https://openai.com/research).
         [Download report](/api/reports/launch.pdf)
         [Watch demo](https://example.com/demo.mp4)
+        Exact records: [ALM-42](/orders/ord_42), [Alex](/employees/EMP-2), [Main](/trading/accounts/acct_9).
         ```markdown
         [Literal example](https://example.com/not-a-source)
         ```
         """)
 
         XCTAssertEqual(citations.map(\.title), ["OpenAI research"])
+        XCTAssertEqual(
+            AgentMarkdownLinkRouter.destination(for: URL(string: "/orders/ord_42")!),
+            .almaPath("/orders/ord_42"),
+            "an entity action stays tappable even though it is not a citation")
     }
 
     func testCitationDestinationPreservesBalancedParentheses() {

@@ -31,13 +31,32 @@ const order_lifecycle_scan: AgentTool = {
     + 'decision (❓) under the current autonomy policy. '
     + 'Use for "অর্ডার অটোমেশন এর অবস্থা", "অর্ডার নিয়ে তুমি কী করবে", "ভুয়া অর্ডার আছে কিনা". Takes no action.',
   input_schema: { type: 'object' as const, properties: {} },
-  handler: async () => {
+  handler: async (input) => {
+    // This scanner currently reads the Lifestyle order service. It is present
+    // in the broader Trading pool for historical routing reasons, but must fail
+    // before that read (and before exact ERP IDs are produced) in any other
+    // business namespace.
+    if (input.businessId !== 'ALMA_LIFESTYLE') {
+      return {
+        success: false,
+        error: 'Order lifecycle scan is available only in ALMA Lifestyle.',
+        errorCode: 'wrong_business',
+        retryable: false,
+      }
+    }
     try {
       const { planned, policyEnabled, fakeSignals } = await planOrderLifecycleAutonomy()
 
       const autoN = planned.filter((p) => p.mode === 'auto').length
       const proposeN = planned.filter((p) => p.mode === 'propose').length
       const askN = planned.filter((p) => p.mode === 'ask').length
+      const orderEntities = Array.from(
+        new Map(
+          planned
+            .flatMap((p) => p.orderEntities ?? [])
+            .map((entity) => [entity.id, entity] as const),
+        ).values(),
+      )
 
       const lines: string[] = []
       lines.push('📦 *অর্ডার লাইফসাইকেল — অটোমেশন পর্যালোচনা*')
@@ -76,11 +95,13 @@ const order_lifecycle_scan: AgentTool = {
           autoCount: autoN,
           proposeCount: proposeN,
           askCount: askN,
+          orderEntities,
           planned: planned.map((p) => ({
             kind: p.kind,
             mode: p.mode,
             summary: p.summary,
             orders: p.orders ?? [],
+            orderEntities: p.orderEntities ?? [],
           })),
           message: lines.join('\n'),
         },
