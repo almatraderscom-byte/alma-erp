@@ -216,3 +216,21 @@ conversation `21fc9c93-ad82-4418-9009-1ae391cee8cf`, prompt
   `applyTerminalStatusIdentity` with a positive match (same turn id or send-time evidence).
   iOS full `AppParityV2Tests` on the stacked top (fresh device "ALMA Codex Tests"):
   **421 tests, 0 failures** (`xcodebuild-test-15.log`). tsc clean; targeted vitest 12 files / 127 tests.
+
+### 2026-08-23 — native simulator E2E against the PR-A preview (owner logged in; real business data)
+Device "ALMA Preview E2E" (iPhone 17 Pro Max / iOS 26.5), build pinned to the preview alias with a
+Vercel SSO share cookie (throwaway-worktree build, nothing committed). Head routed to DS V4 / Qwen 3.7.
+- **Live** (`sim-native-live-progress.png`): progress prose stays on screen across `Execute Plan` and
+  `Get Orders` tool cards — the incident behaviour (wiped at every tool_start) is gone.
+- **Settled** (`sim-native-settled-progress-kept.png`): thinking → progress → tool → progress → tool →
+  final, identical to the live view, after the server finished.
+- **Cold launch** (`sim-native-cold-final.png`): app killed + relaunched; the conversation rebuilt from
+  `presentationV2` shows the same blocks and the same final.
+- **Background 60 s → foreground** (`sim-native-after-background.png`): content intact, tail reconnected;
+  the turn later settled with its salvage warning block (a real Qwen provider error at the end).
+- **Stream stall**: the first turn sat in "সংযোগ ফিরছে…" for ~2.5 min because the server kept running
+  continuation hops after the final prose; the client kept every block and settled on `done`.
+- Observed, NOT in this stack's scope (reported to the owner): the Qwen 3.7 head echoed the
+  `get_ad_recommendations` JSON verbatim into its prose before summarising; DS V4 restated the same
+  intent twice after the plan step (and wrote "বস" instead of "Boss"); the pre-existing continuation
+  hop loop ("step tracker verify করা যায়নি", hop 1/2/3) produced extra assistant rows.
