@@ -192,21 +192,36 @@ export class ProseLifecycleTracker {
     this.reservedAnchor = index
   }
 
-  /** The authoritative block document for the terminal message write. */
-  document(messageId: string): PresentationV2Document {
+  /**
+   * The authoritative block document for the terminal message write.
+   * `remapTimelineIndex` translates a block's anchor from the runner's in-memory
+   * timeline to the COMPACTED timeline that is actually stored (a dropped
+   * anchor returns a negative index and the block becomes unanchored).
+   */
+  document(messageId: string, opts?: { remapTimelineIndex?: (index: number) => number | undefined }): PresentationV2Document {
     this.settle()
+    const remap = opts?.remapTimelineIndex
+    const anchorOf = (b: TrackerBlock): number | undefined => {
+      if (b.timelineIndex == null) return undefined
+      if (!remap) return b.timelineIndex
+      const mapped = remap(b.timelineIndex)
+      return typeof mapped === 'number' && mapped >= 0 ? mapped : undefined
+    }
     const blocks: PresentationV2DocumentBlock[] = this.blocks
       .filter((b) => b.state !== 'streaming')
-      .map((b) => ({
-        id: b.id,
-        kind: b.kind,
-        state: b.state === 'superseded' ? 'superseded' : 'committed',
-        revision: b.revision,
-        text: b.state === 'superseded' ? b.text.slice(0, SUPERSEDED_TEXT_CAP) : b.text,
-        ...(b.timelineIndex != null ? { timelineIndex: b.timelineIndex } : {}),
-        ...(b.replaces ? { replaces: b.replaces } : {}),
-        ...(b.reason ? { reason: b.reason } : {}),
-      }))
+      .map((b) => {
+        const timelineIndex = anchorOf(b)
+        return {
+          id: b.id,
+          kind: b.kind,
+          state: b.state === 'superseded' ? 'superseded' : 'committed',
+          revision: b.revision,
+          text: b.state === 'superseded' ? b.text.slice(0, SUPERSEDED_TEXT_CAP) : b.text,
+          ...(timelineIndex != null ? { timelineIndex } : {}),
+          ...(b.replaces ? { replaces: b.replaces } : {}),
+          ...(b.reason ? { reason: b.reason } : {}),
+        }
+      })
     return {
       version: 2,
       protocol: this.protocol,

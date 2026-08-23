@@ -8413,13 +8413,25 @@ final class AssistantVM {
     /// live-tail. A FULL replay (afterSeq < 0) rebuilds the tail from scratch —
     /// partial content rendered before a drop is replaced by the authoritative
     /// log, never doubled (the direct stream carries no seq to splice on). The
-    /// wipe fires on the stream's `turn_snapshot` hello, NOT before the request:
-    /// a failed attach must keep the frozen partial on screen.
+    /// wipe is ARMED by the stream's `turn_snapshot` hello and FIRES on the first
+    /// replayed content event (handoff F-09, R-1): a replay that turns out empty
+    /// — durable rows missing — keeps the frozen partial on screen instead of
+    /// replacing it with nothing.
     private var pendingReplayReset = false
+    private var replayWipeArmed = false
+    /// Cursor of the attach that armed the reset — the wipe fires only if the
+    /// snapshot says the server holds rows PAST it (Codex P1 #838 r6).
+    private var replayResetAfterSeq = -1
 
     private func tailDurableTurn(_ turnId: String, afterSeq: Int, buffer: AgentEventBuffer) async throws {
-        if afterSeq < 0 { pendingReplayReset = true }
-        defer { pendingReplayReset = false }
+        if afterSeq < 0 {
+            pendingReplayReset = true
+            replayResetAfterSeq = afterSeq
+        }
+        defer {
+            pendingReplayReset = false
+            replayWipeArmed = false
+        }
         var comps = URLComponents(url: AssistantNet.base.appendingPathComponent("/api/assistant/turn/\(turnId)/stream"),
                                   resolvingAgainstBaseURL: false)!
         // `proto`: which prose family this build can reduce (mixed-version safety —
@@ -8469,6 +8481,13 @@ final class AssistantVM {
         if stallRetryAttempt != 0 { stallRetryAttempt = 0 }   // stream is back
         var touchedStream = false
         for ev in events {
+            // Armed by the durable-stream hello: the first replayed CONTENT event
+            // proves the authoritative log has something to rebuild from, so only
+            // now is the frozen partial replaced (never by an empty replay).
+            if replayWipeArmed, ev.isReplayContent {
+                replayWipeArmed = false
+                resetStreamingTailForReplay()
+            }
             switch ev {
             case .conversationId(let id):
                 adoptNewConversationId(id)
@@ -8921,7 +8940,7 @@ final class AssistantVM {
                 thinkingLive = false
                 settleLiveMode()
                 errorToast = message
-            case .turnSnapshot(let turnId, let convId, _, _, let snapshotProtocol):
+            case .turnSnapshot(let turnId, let convId, _, let snapshotLastSeq, let snapshotProtocol):
                 // Durable-stream hello (PR 5) — reconcile ids on (re)connect, and
                 // NOW (stream provably attached) wipe the frozen partial so the
                 // authoritative replay rebuilds the tail without doubling.
@@ -8932,7 +8951,11 @@ final class AssistantVM {
                 }
                 if pendingReplayReset {
                     pendingReplayReset = false
-                    resetStreamingTailForReplay()
+                    // Arm the wipe only when the server HAS rows to replay past our
+                    // cursor. An empty replay followed by live frames must append
+                    // to the frozen partial — those frames cannot rebuild what the
+                    // wipe would erase (Codex P1 #838 r6).
+                    replayWipeArmed = (snapshotLastSeq ?? -1) > replayResetAfterSeq
                 }
                 // The family the replay/tail is served in for THIS client — the
                 // reducer is selected from this, never from the event shapes.
@@ -9012,6 +9035,12 @@ final class AssistantVM {
     /// the turn row contract.
     func debugApplyTurnEvents(_ events: [AgentTurnEvent]) {
         apply(events)
+    }
+
+    /// Tests: behave as if a FULL durable replay was just requested.
+    func debugArmReplayReset(afterSeq: Int = -1) {
+        replayResetAfterSeq = afterSeq
+        pendingReplayReset = true
     }
     #endif
 
@@ -18789,15 +18818,23 @@ struct AgentTurnBlocksView: View {
     }
 
     private var displayedBlocks: [AgentChatMessage.TurnBlock] {
-        guard message.blocks.count > Self.maxVisibleBlocks else { return message.blocks }
-        let tailStart = message.blocks.count - Self.maxVisibleBlocks
-        let pinned = message.blocks[..<tailStart].filter { block in
+        Self.boundedBlocks(message.blocks)
+    }
+
+    /// The mounted tail is bounded so a 100-step turn cannot become one enormous
+    /// SwiftUI row — but only ACTIVITY is ever evicted (handoff F-06, R-4). Every
+    /// owner prose block, file, card and owner message outside the window stays
+    /// pinned: the "আগের N ধাপ" summary can recover activity, never a reply.
+    static func boundedBlocks(_ blocks: [AgentChatMessage.TurnBlock]) -> [AgentChatMessage.TurnBlock] {
+        guard blocks.count > maxVisibleBlocks else { return blocks }
+        let tailStart = blocks.count - maxVisibleBlocks
+        let pinned = blocks[..<tailStart].filter { block in
             switch block {
-            case .file, .ownerMessage, .confirmCard, .askCard: return true
-            case .prose, .activity: return false
+            case .file, .ownerMessage, .confirmCard, .askCard, .prose: return true
+            case .activity: return false
             }
         }
-        return Array(pinned) + Array(message.blocks[tailStart...])
+        return Array(pinned) + Array(blocks[tailStart...])
     }
 
     static func makeRenderItems(

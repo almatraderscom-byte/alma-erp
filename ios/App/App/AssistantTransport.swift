@@ -923,6 +923,23 @@ enum AgentTurnEvent: Sendable {
         }
     }
 
+    /// Replayed CONTENT (as opposed to the stream's own envelope/handshake):
+    /// the first such event after a durable-stream hello releases the armed
+    /// tail wipe (handoff F-09 client half).
+    var isReplayContent: Bool {
+        switch self {
+        case .conversationId, .turnId, .personalMode, .modelInfo, .turnSnapshot,
+             .turnProtocol, .replayContinue, .unknown,
+             // A terminal on its own is not content: a replay whose rows are
+             // missing (`error: turn_replay_unavailable`) or a log holding only
+             // `done` must settle the frozen partial, not blank it (Codex P1 #838).
+             .done, .turnError:
+            return false
+        default:
+            return true
+        }
+    }
+
     init(dto ev: AgentSSEEvent) {
         switch ev.type {
         case "conversation_id":

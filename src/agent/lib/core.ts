@@ -16,6 +16,7 @@
  * appearing, this file can go.
  */
 import Anthropic from '@anthropic-ai/sdk'
+import { compactTimelineForStorage } from '@/agent/lib/presentation/timeline-compaction'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/config'
 import { getModel } from '@/agent/lib/models/registry'
@@ -1892,6 +1893,28 @@ export async function* runAgentTurn(
             ownerRequestedAction: turnAuthorization.allowMutations,
           })) {
             intentNudgeSent = true
+            // Handoff F-13: native Claude streamed this announced-intent prose
+            // live; retiring the assistant turn silently left it on every
+            // client until an unrelated tool start cleared it, while the cold
+            // history never had it. Emit the same explicit reset the steering
+            // and verifier retries use, and mark the draft superseded.
+            if (finalIntentText) {
+              yield {
+                type: 'verification_retry',
+                attempt: 1,
+                maxAttempts: 1,
+                categories: ['announced_intent'],
+                snippets: [],
+              }
+              for (let ti = timeline.length - 1; ti >= 0; ti--) {
+                const te = timeline[ti]
+                if (te.t === 'text') { te.state = 'superseded'; break }
+              }
+              // The cold history rebuilds activity from the persisted timeline:
+              // without this row the live "যাচাই" activity vanished on reload
+              // while the steering/verifier retries kept theirs (Codex P1 #838 r4).
+              timeline.push({ t: 'verify', attempt: 1, max: 1 })
+            }
             assistantTurns.pop()
             messages = [
               ...messages,
@@ -2849,7 +2872,7 @@ export async function* runAgentTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload; the GET route surfaces it as
         // `thinking`/`thinkingMs` and history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: chatModel.id, apiModel, provider: chatModel.provider, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: chatModel.id, apiModel, provider: chatModel.provider, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? compactTimelineForStorage(timeline) : undefined },
       },
     })
     nativeFinalMessageSaved = true
@@ -2995,7 +3018,7 @@ export async function* runAgentTurn(
               model: chatModel.id,
               apiModel,
               provider: chatModel.provider,
-              timeline: timeline.slice(0, 60),
+              timeline: compactTimelineForStorage(timeline),
               interrupted: true,
             },
           },

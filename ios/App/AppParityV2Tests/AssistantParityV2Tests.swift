@@ -5907,3 +5907,75 @@ final class ProseLifecycleV2Tests: XCTestCase {
         func append(_ batch: [AgentTurnEvent]) { all.append(batch) }
     }
 }
+
+
+// MARK: - Reliability epic R-4 (retention) — handoff F-06 / F-09 client half
+
+@MainActor
+final class ProseRetentionTests: XCTestCase {
+    func testBoundedTailNeverEvictsProseOnlyActivity() {
+        var blocks: [AgentChatMessage.TurnBlock] = [.prose(id: "p-lead", text: "লিড")]
+        for i in 0..<40 {
+            blocks.append(.activity(.init(id: "a-\(i)", kind: .tool, label: "tool \(i)", thinkFull: "", toolId: "t-\(i)", ok: true, live: false)))
+            if i == 5 { blocks.append(.prose(id: "p-early", text: "আগের আপডেট")) }
+        }
+        blocks.append(.prose(id: "p-final", text: "ফাইনাল"))
+        let shown = AgentTurnBlocksView.boundedBlocks(blocks)
+        XCTAssertLessThan(shown.count, blocks.count, "the window still bounds activity")
+        let prose = shown.compactMap { block -> String? in
+            if case .prose(let id, _) = block { return id }
+            return nil
+        }
+        XCTAssertEqual(prose, ["p-lead", "p-early", "p-final"], "every owner prose block stays mounted")
+        XCTAssertEqual(shown.filter { if case .activity = $0 { return true }; return false }.count, 24 - 1)
+    }
+
+    func testTerminalOnlyReplayKeepsTheFrozenPartial() {
+        // Codex P1 #838: the durable rows are gone (replay error) or the log holds
+        // only `done` — the frozen partial must survive and simply settle.
+        for terminal in [AgentTurnEvent.turnError(message: "turn_replay_unavailable"),
+                         .done(messageId: "m", tokensIn: nil, tokensOut: nil, costUsd: nil, needContinue: false,
+                               apiRounds: nil, cacheCreation: nil, cacheRead: nil, roundCostsUsd: nil)] {
+            let vm = AssistantVM()
+            vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("frozen partial", blockId: "t:p1")])
+            vm.debugArmReplayReset()
+            vm.debugApplyTurnEvents([.turnSnapshot(turnId: "t1", conversationId: "c1", status: "running",
+                                                   lastSeq: 3, agentProseProtocol: 2)])
+            vm.debugApplyTurnEvents([terminal])
+            XCTAssertEqual(vm.messages.last?.text, "frozen partial", "terminal-only replay must not blank the screen: \(terminal)")
+        }
+    }
+
+    func testEmptyReplayNeverWipesTheFrozenPartialOnLiveFrames() {
+        // Codex P1 #838 r6: a full attach whose durable log is still empty
+        // (snapshot lastSeq nil / -1) must NOT arm the wipe — the next LIVE
+        // frame cannot rebuild the earlier content it would erase.
+        for lastSeq in [Int?.none, -1] {
+            let vm = AssistantVM()
+            vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("frozen partial", blockId: "t:p1")])
+            vm.debugArmReplayReset()
+            vm.debugApplyTurnEvents([.turnSnapshot(turnId: "t1", conversationId: "c1", status: "running",
+                                                   lastSeq: lastSeq, agentProseProtocol: 2)])
+            vm.debugApplyTurnEvents([.textDelta(" then live", blockId: "t:p1")])
+            XCTAssertTrue(vm.messages.last?.text.contains("frozen partial") == true,
+                          "live frame after an empty replay appended instead of wiping (lastSeq \(String(describing: lastSeq)))")
+        }
+    }
+
+    func testReplayWipeWaitsForTheFirstReplayedContentEvent() {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("frozen partial", blockId: "t:p1")])
+        XCTAssertEqual(vm.messages.last?.text, "frozen partial")
+
+        vm.debugArmReplayReset()
+        vm.debugApplyTurnEvents([.turnSnapshot(turnId: "t1", conversationId: "c1", status: "running",
+                                               lastSeq: 3, agentProseProtocol: 2)])
+        XCTAssertEqual(vm.messages.last?.text, "frozen partial",
+                       "the hello alone must not blank the screen — an empty replay would leave nothing")
+
+        // The first replayed CONTENT event releases the wipe, then applies.
+        vm.debugApplyTurnEvents([.textDelta("replayed", blockId: "t:p1")])
+        XCTAssertEqual(vm.messages.last?.text, "replayed")
+        XCTAssertEqual(vm.messages.last?.proseProtocol, 2, "the negotiated protocol survives the wipe")
+    }
+}
