@@ -1814,6 +1814,12 @@ struct AgentChatMessage: Identifiable, Equatable {
     var roundCostsUsd: [Double]?
     var costUsd: String?
     var createdAt: String?
+    /// Optimistic send time of a local-only owner row — display only (the
+    /// time divider). Never `createdAt`: that feeds the read watermark
+    /// (`markConversationRead` takes the max createdAt across mounted rows), and
+    /// a local stamp later than an unseen persisted reply would advance
+    /// `last_read_at` past it (Codex P1 #841).
+    var sentAt: String?
     var isStreaming = false
     /// Live-only quarantine for a provider-emitted JSON tool envelope. Some
     /// OpenRouter heads briefly send their tool request as text before the
@@ -4961,6 +4967,10 @@ final class AssistantVM {
                 id: "local-recovered-\(rt.clientMessageId)", role: .user,
                 clientMessageId: rt.clientMessageId, outgoingState: .checking, text: text)
             owner.fileRefs = files
+            // Display-only send time from the persisted descriptor, so a row
+            // recovered across a relaunch keeps its divider even while recovery
+            // is offline or stalled (Codex P1 #841); the read watermark is untouched.
+            owner.sentAt = AgentMessageTimeLabel.iso(rt.startedAt)
             messages.append(owner)
         }
         isStreaming = true
@@ -9111,6 +9121,15 @@ final class AssistantVM {
     func debugIsTerminalForOurTurn(_ st: TurnStatusResponse, requireEvidence: Bool) -> Bool {
         isTerminalForOurTurn(st, requireEvidence: requireEvidence)
     }
+    func debugResumePreTurnDescriptor(clientMessageId: String, text: String, startedAt: Date) {
+        resumePreTurnDescriptor(RecoverableTurn(conversationId: "c-recover", turnId: nil,
+                                                clientMessageId: clientMessageId, lastSeq: -1,
+                                                startedAt: startedAt, message: text))
+    }
+    func debugAppendLocalOwnerMessage(text: String) {
+        upsertLocalOwnerIntent(clientMessageId: "debug-\(UUID().uuidString)", text: text,
+                               files: [], attachmentIds: [], state: .queued)
+    }
     func debugArmReplayReset(afterSeq: Int = -1) {
         replayResetAfterSeq = afterSeq
         pendingReplayReset = true
@@ -12182,6 +12201,10 @@ final class AssistantVM {
             clientMessageId: clientMessageId, outgoingState: state, text: text)
         owner.fileRefs = files
         owner.localImages = selected.compactMap(\.image)
+        // Stamped at send so the time divider above this message is right from
+        // the first frame; the server row's createdAt takes over on merge. Kept
+        // OFF createdAt so the read watermark never sees an optimistic time.
+        owner.sentAt = AgentMessageTimeLabel.isoNow()
         messages.append(owner)
     }
 
@@ -15154,6 +15177,117 @@ struct AgentChatImage: View {
             .fill(Color.white.opacity(0.06))
             .frame(width: 80, height: 80)
             .redacted(reason: .placeholder)
+    }
+}
+
+/// Bangla send-time label for the owner-message divider — "আজ দুপুর ২:৩৩",
+/// "গতকাল বিকাল ৪:২২", "শনিবার সকাল ৯:০৫", "১৩ আগস্ট রাত ৯:১০". Asia/Dhaka
+/// like every other clock in the ERP; pure so the parity suite can pin it.
+enum AgentMessageTimeLabel {
+    static let dhaka = TimeZone(identifier: "Asia/Dhaka") ?? .current
+    static let weekdays = ["রবিবার", "সোমবার", "মঙ্গলবার", "বুধবার", "বৃহস্পতিবার", "শুক্রবার", "শনিবার"]
+    static let months = ["জানুয়ারি", "ফেব্রুয়ারি", "মার্চ", "এপ্রিল", "মে", "জুন",
+                         "জুলাই", "আগস্ট", "সেপ্টেম্বর", "অক্টোবর", "নভেম্বর", "ডিসেম্বর"]
+
+    static func iso(_ date: Date) -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.string(from: date)
+    }
+
+    static func isoNow() -> String { iso(Date()) }
+
+    static func parse(_ raw: String?) -> Date? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: raw) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: raw)
+    }
+
+    static func dayPart(hour: Int) -> String {
+        switch hour {
+        case 4..<12: return "সকাল"
+        case 12..<16: return "দুপুর"
+        case 16..<18: return "বিকাল"
+        case 18..<20: return "সন্ধ্যা"
+        default: return "রাত"
+        }
+    }
+
+    static func label(for date: Date, now: Date = Date(), timeZone: TimeZone = dhaka) -> String {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = timeZone
+        let day: String
+        if cal.isDate(date, inSameDayAs: now) {
+            day = "আজ"
+        } else if let y = cal.date(byAdding: .day, value: -1, to: now), cal.isDate(date, inSameDayAs: y) {
+            day = "গতকাল"
+        } else if let weekAgo = cal.date(byAdding: .day, value: -6, to: now),
+                  date >= cal.startOfDay(for: weekAgo), date < now {
+            day = weekdays[cal.component(.weekday, from: date) - 1]
+        } else {
+            let d = cal.component(.day, from: date)
+            let m = cal.component(.month, from: date)
+            let sameYear = cal.component(.year, from: date) == cal.component(.year, from: now)
+            day = "\(almaBn(d)) \(months[m - 1])" + (sameYear ? "" : " \(almaBn(cal.component(.year, from: date)))")
+        }
+        let hour = cal.component(.hour, from: date)
+        let minute = cal.component(.minute, from: date)
+        let h12 = hour % 12 == 0 ? 12 : hour % 12
+        let mm = (minute < 10 ? "০" : "") + almaBn(minute)
+        return "\(day) \(dayPart(hour: hour)) \(almaBn(h12)):\(mm)"
+    }
+}
+
+/// Claude-style wavy rule.
+struct AgentWavyRule: Shape {
+    var amplitude: CGFloat = 2
+    var wavelength: CGFloat = 14
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let midY = rect.midY
+        p.move(to: CGPoint(x: rect.minX, y: midY))
+        var x = rect.minX
+        while x < rect.maxX {
+            let x1 = min(x + wavelength / 2, rect.maxX)
+            p.addQuadCurve(to: CGPoint(x: x1, y: midY),
+                           control: CGPoint(x: x + wavelength / 4, y: midY - amplitude))
+            let x2 = min(x1 + wavelength / 2, rect.maxX)
+            p.addQuadCurve(to: CGPoint(x: x2, y: midY),
+                           control: CGPoint(x: x1 + wavelength / 4, y: midY + amplitude))
+            x = x2
+        }
+        return p
+    }
+}
+
+/// Owner request 2026-08-23: every owner message opens with a time divider
+/// (wavy rule · "শনিবার বিকাল ৪:২২" · wavy rule), so each new send reads as a
+/// fresh exchange — like the Claude app.
+@available(iOS 17.0, *)
+struct AgentMessageTimeDivider: View {
+    let message: AgentChatMessage
+    let pal: AgentPalette
+
+    var body: some View {
+        if let date = AgentMessageTimeLabel.parse(message.createdAt ?? message.sentAt) {
+            HStack(spacing: 12) {
+                AgentWavyRule().stroke(pal.muted.opacity(0.35), lineWidth: 1)
+                    .frame(height: 6)
+                Text(AgentMessageTimeLabel.label(for: date))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(pal.muted)
+                    .fixedSize()
+                AgentWavyRule().stroke(pal.muted.opacity(0.35), lineWidth: 1)
+                    .frame(height: 6)
+            }
+            .padding(.top, 6)
+            .padding(.bottom, 14)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("agent.message.timeDivider")
+        }
     }
 }
 
@@ -19090,6 +19224,10 @@ struct AgentTurnBlocksView: View {
                     if let owner = vm.messages.first(where: {
                         $0.role == .user && $0.clientMessageId == clientMessageId
                     }) {
+                        // A steering message sent mid-turn lives INSIDE the turn's
+                        // blocks (its top-level row is hidden) — it gets the same
+                        // time divider as every other owner message (Codex P2 #841).
+                        AgentMessageTimeDivider(message: owner, pal: pal)
                         AgentInlineOwnerMessage(message: owner, pal: pal, vm: vm)
                     }
                 case .confirmCard(_, let pid):
@@ -25186,6 +25324,11 @@ struct AssistantScreen: View {
                             .accessibilityIdentifier("agent.session.load.failure")
                         }
                         ForEach(chronologicalMessages) { msg in
+                            // Owner 2026-08-23: every owner message opens a fresh
+                            // exchange — Claude-style wavy time divider above it.
+                            if msg.role == .user, !msg.isHeartbeatWake {
+                                AgentMessageTimeDivider(message: msg, pal: pal)
+                            }
                             AgentMessageRow(
                                 message: msg, vm: vm,
                                 showWorkingIndicator: vm.isStreaming && msg.isStreaming
