@@ -8950,6 +8950,7 @@ final class AssistantVM {
                     markOutgoingAccepted(clientMessageId: clientMessageId)
                 }
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    Self.commitVerifiedReplacement(on: &messages[i])
                     messages[i].suppressedRawToolEnvelope = nil
                     // R-1 (handoff F-12): the server names the exact persisted row.
                     // Bind the tail to it so the settle merge pairs by identity —
@@ -8988,6 +8989,9 @@ final class AssistantVM {
                 AlmaAgentTickHaptic.turnCompleted()
             case .turnError(let message, let salvagedMessageId):
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    // Verification never produced a terminal replacement; retain
+                    // the complete draft the owner can already see.
+                    messages[i].verificationReplacementText = nil
                     messages[i].suppressedRawToolEnvelope = nil
                     // Verification never produced a terminal replacement; retain
                     // the complete draft the owner can already see.
@@ -9094,26 +9098,6 @@ final class AssistantVM {
         }
     }
 
-    /// Replace a verifier-rejected draft only when the complete verified answer
-    /// is available. This is one MainActor mutation: the old answer and the new
-    /// answer are never both absent from the rendered block list.
-    private static func commitVerifiedReplacement(on message: inout AgentChatMessage) {
-        guard let buffered = message.verificationReplacementText else { return }
-        message.verificationReplacementText = nil
-        let replacement = buffered.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !replacement.isEmpty else { return }
-        let lead = message.leadProseId
-        let leadText = message.leadProseText
-        message.blocks.removeAll { block in
-            if case .prose(let id, _) = block { return id != lead }
-            return false
-        }
-        message.blocks.append(.prose(
-            id: "bp-\(message.id)-verified", text: replacement))
-        message.text = leadText + replacement
-        message.supersededBlockIds = []
-    }
-
     #if DEBUG
     /// Exercises the same live reducer used by SSE without opening a network
     /// stream. Tests use this to keep composer-level live state in sync with
@@ -9172,6 +9156,36 @@ final class AssistantVM {
             m.streamStartedAt = Date()
             messages.append(m)
         }
+    }
+
+    /// Replace a verifier-rejected draft only when the complete verified answer
+    /// is available. This is one MainActor mutation: the old answer and the new
+    /// answer are never both absent from the rendered block list.
+    private static func commitVerifiedReplacement(on message: inout AgentChatMessage) {
+        guard let buffered = message.verificationReplacementText else { return }
+        message.verificationReplacementText = nil
+        // The server includes the separator that originally joined the pinned
+        // speak-first line to a rewritten final body. Keep that join in the
+        // flattened transcript even though the final prose block itself is
+        // trimmed for rendering. Otherwise a live verification rewrite settles
+        // as "leadbody" while the durable/cold-loaded reply is "lead\n\nbody".
+        let bufferedSeparator = String(buffered.prefix { $0.isWhitespace })
+        let replacement = buffered.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !replacement.isEmpty else { return }
+
+        let lead = message.leadProseId
+        let leadText = message.leadProseText
+        message.blocks.removeAll { block in
+            if case .prose(let id, _) = block { return id != lead }
+            return false
+        }
+        message.blocks.append(.prose(
+            id: "bp-\(message.id)-verified", text: replacement))
+        let separator = leadText.isEmpty
+            ? ""
+            : (bufferedSeparator.isEmpty ? "\n\n" : bufferedSeparator)
+        message.text = leadText + separator + replacement
+        message.supersededBlockIds = []
     }
 
     func stopStreaming(cancelServer: Bool = true) {
@@ -13065,12 +13079,26 @@ enum AgentMarkdownLinkDestination: Equatable {
 /// selectable UITextView path. Relative/same-ALMA URLs enter the existing
 /// `.almaOpenPath` native router; only valid external HTTP(S) URLs reach Safari.
 enum AgentMarkdownLinkRouter {
+    /// Web parity (src/agent/lib/markdown-link-router.ts): oversized hrefs and
+    /// control/backslash characters fail closed before any classification.
+    private static let maxHrefChars = 4_096
+    private static func isUnsafeHref(_ raw: String) -> Bool {
+        if raw.isEmpty || raw.count > maxHrefChars { return true }
+        return raw.unicodeScalars.contains { scalar in
+            scalar.value < 0x20 || scalar.value == 0x7f || scalar == "\\"
+        }
+    }
+
     static func destination(for url: URL) -> AgentMarkdownLinkDestination? {
+        if isUnsafeHref(url.absoluteString) { return nil }
         let scheme = url.scheme?.lowercased()
         if scheme == nil, url.host == nil {
             return internalPath(from: url).map(AgentMarkdownLinkDestination.almaPath)
         }
         guard scheme == "http" || scheme == "https", url.host != nil else { return nil }
+        // Credentials inside a chat link are unnecessary and visually deceptive.
+        if let user = url.user, !user.isEmpty { return nil }
+        if let password = url.password, !password.isEmpty { return nil }
         if isALMAHost(url.host) {
             return internalPath(from: url).map(AgentMarkdownLinkDestination.almaPath)
         }
@@ -13080,6 +13108,18 @@ enum AgentMarkdownLinkRouter {
     static func isALMAURL(_ url: URL) -> Bool {
         if case .almaPath = destination(for: url) { return true }
         return false
+    }
+
+    /// Exact ERP records are navigation actions, not research evidence. They
+    /// remain tappable through `destination(for:)`, but must not also create a
+    /// citation chip and a duplicate Sources-sheet row.
+    static func isALMAEntityDetailURL(_ url: URL) -> Bool {
+        guard case .almaPath = destination(for: url) else { return false }
+        let parts = url.path.split(separator: "/", omittingEmptySubsequences: true)
+        if parts.count == 2, parts[0] == "orders" || parts[0] == "employees" {
+            return true
+        }
+        return parts.count == 3 && parts[0] == "trading" && parts[1] == "accounts"
     }
 
     private static func isALMAHost(_ host: String?) -> Bool {
@@ -13094,6 +13134,9 @@ enum AgentMarkdownLinkRouter {
         }
         var path = components.percentEncodedPath
         if path.isEmpty { path = "/" }
+        // Chat-authored links are navigation only. API routes may read private
+        // data and must never become tappable destinations (web parity).
+        if path == "/api" || path.hasPrefix("/api/") { return nil }
         if let query = components.percentEncodedQuery, !query.isEmpty { path += "?\(query)" }
         guard path.hasPrefix("/"), !path.hasPrefix("//"),
               !path.contains("\\"), !path.contains("\n"), !path.contains("\r") else { return nil }
@@ -13330,6 +13373,7 @@ struct AgentMarkdownText: View {
         if link.title.range(of: actionLabel, options: [.regularExpression, .caseInsensitive]) != nil {
             return false
         }
+        if AgentMarkdownLinkRouter.isALMAEntityDetailURL(link.url) { return false }
         if link.url.path.lowercased().hasPrefix("/api/") { return false }
         let mediaExtensions: Set<String> = ["mp4", "mov", "m4v", "mp3", "m4a", "wav", "aac"]
         return !mediaExtensions.contains(link.url.pathExtension.lowercased())

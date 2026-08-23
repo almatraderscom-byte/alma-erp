@@ -339,7 +339,7 @@ struct PortalWalletRouteScreen: View {
     @State private var errorText: String? = nil
 
     /// The same business every native tab scopes to (PortalVM.businessId parity).
-    private static let businessId = "ALMA_LIFESTYLE"
+    private static var businessId: String { AlmaAccess.Context.currentId }
 
     var body: some View {
         Group {

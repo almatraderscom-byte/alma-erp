@@ -8,6 +8,11 @@ export interface OrderIssue {
   detail: string
   count?: number
   orders?: string[]
+  /**
+   * Exact ERP identities for navigation. `orders` above is display-first and may
+   * contain an invoice number, which is not safe to use as /orders/:id.
+   */
+  orderEntities?: Array<{ id: string; orderNumber?: string }>
 }
 
 const MS_PER_DAY = 86_400_000
@@ -48,6 +53,10 @@ export async function detectOrderIssues(): Promise<OrderIssue[]> {
       detail: `${stuck.length}টি অর্ডার ${STUCK_PENDING_DAYS}+ দিন ধরে pending — confirm/deliver হয়নি`,
       count: stuck.length,
       orders: stuck.slice(0, 10).map(orderRef),
+      orderEntities: stuck.slice(0, 10).map((order) => ({
+        id: order.id,
+        ...(order.orderNumber ? { orderNumber: order.orderNumber } : {}),
+      })),
     })
   }
 
@@ -103,6 +112,10 @@ export async function detectOrderIssues(): Promise<OrderIssue[]> {
       detail: `${mismatchPending.length}টি pending অর্ডারে payment method খালি — verify করুন`,
       count: mismatchPending.length,
       orders: mismatchPending.slice(0, 8).map(orderRef),
+      orderEntities: mismatchPending.slice(0, 8).map((order) => ({
+        id: order.id,
+        ...(order.orderNumber ? { orderNumber: order.orderNumber } : {}),
+      })),
     })
   }
 

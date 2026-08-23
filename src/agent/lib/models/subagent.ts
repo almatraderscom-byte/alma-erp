@@ -36,6 +36,11 @@ import {
   needsCustomerFacingBanglaGate,
 } from '@/agent/lib/models/bangla-output-gate'
 import { anthropicToolsToNeutral } from '@/agent/lib/models/neutral'
+import {
+  linkifyAgentEntityText,
+  mergeAgentEntityLinks,
+  type AgentEntityLink,
+} from '@/agent/lib/entity-links'
 
 const SUBAGENT_MAX_ITERATIONS = 4
 const SUBAGENT_MAX_TOKENS = 2048
@@ -179,6 +184,8 @@ export interface SubAgentResult {
   tier: TaskTier
   summary: string
   toolsUsed: string[]
+  /** Exact, server-verified entity references gathered by this specialist. */
+  entityLinks: AgentEntityLink[]
   costUsd: number
   fallbackUsed?: boolean
   error?: string
@@ -189,6 +196,7 @@ function buildSystemPrompt(def: (typeof SPECIALIST_ROLES)[SpecialistRole]): stri
     `${def.instruction}\n\n` +
     `তুমি একজন বিশেষজ্ঞ সাব-এজেন্ট (${def.label})। হেড এজেন্ট তোমাকে একটি নির্দিষ্ট কাজ দিয়েছে। ` +
     `প্রয়োজনীয় tool ব্যবহার করে আসল ডেটা সংগ্রহ করো — অনুমান করবে না, verify করবে। ` +
+    `Tool result-এ verified entityLinks থাকলে relevant item ঠিক [entityLinks[i].label](entityLinks[i].href) আকারে লেখো; route বা ID বানাবে না। ` +
     `শেষে সংক্ষিপ্ত, তথ্যভিত্তিক ফলাফল বাংলায় ফেরত দাও (৩-৬ লাইন)। কোনো অপ্রয়োজনীয় ভূমিকা নয়।`
   )
 }
@@ -214,9 +222,17 @@ async function runAnthropicSubAgent(args: {
   conversationId?: string
   toolContext?: DelegatedToolContext
   signal?: AbortSignal
-}): Promise<{ summary: string; completed: boolean; toolsUsed: string[]; inputTokens: number; outputTokens: number }> {
+}): Promise<{
+  summary: string
+  completed: boolean
+  toolsUsed: string[]
+  entityLinks: AgentEntityLink[]
+  inputTokens: number
+  outputTokens: number
+}> {
   let messages: Anthropic.Messages.MessageParam[] = [{ role: 'user', content: args.task }]
   const toolsUsed: string[] = []
+  let entityLinks: AgentEntityLink[] = []
   let inputTokens = 0
   let outputTokens = 0
   let finalText = ''
@@ -269,6 +285,7 @@ async function runAnthropicSubAgent(args: {
         // PM-5: the parent turn's rules travel with the delegation.
         ...(args.toolContext ?? {}),
       })
+      entityLinks = mergeAgentEntityLinks(entityLinks, result.entityLinks ?? [])
       toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(annotateEmptyResult(result)) })
       if (tu.name === FIND_TOOL_NAME && result.success) {
         const matches = (result.data as { matches?: Array<{ name?: unknown }> } | undefined)?.matches ?? []
@@ -320,6 +337,7 @@ async function runAnthropicSubAgent(args: {
     summary: finalText,
     completed,
     toolsUsed: Array.from(new Set(toolsUsed)),
+    entityLinks,
     inputTokens,
     outputTokens,
   }
@@ -334,6 +352,7 @@ async function runWithModel(
   summary: string
   completed: boolean
   toolsUsed: string[]
+  entityLinks: AgentEntityLink[]
   inputTokens: number
   outputTokens: number
   /** Cached-prompt tokens (adapter path reports inputTokens as uncached-only). */
@@ -398,6 +417,7 @@ async function runWithModel(
     summary: r.text,
     completed: r.completed,
     toolsUsed: r.toolsUsed,
+    entityLinks: r.entityLinks,
     inputTokens: r.inputTokens,
     outputTokens: r.outputTokens,
     cacheRead: r.cacheRead,
@@ -417,6 +437,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
     tier,
     summary: '',
     toolsUsed: [],
+    entityLinks: [],
     costUsd: 0,
     error,
   })
@@ -444,13 +465,17 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
   let fallbackUsed = false
 
   try {
-    let result = await runWithModel(model, tier, params, def)
+    const result = await runWithModel(model, tier, params, def)
     if (!result.completed) throw new SubAgentIncompleteError(params.role)
 
     let summary = result.summary || '(সাব-এজেন্ট কোনো সারাংশ দেয়নি)'
     if (isOpenRouterProvider(model.provider) && needsCustomerFacingBanglaGate(params.role, tier)) {
       summary = gateCheapModelBanglaOutput(summary, { customerFacing: true })
     }
+    // The specialist summary is also persisted directly on approval and can be
+    // streamed without another head-model round. Link it here from trusted tool
+    // metadata so every delegation path has the same deterministic contract.
+    summary = linkifyAgentEntityText(summary, result.entityLinks, { appendUnmentioned: true })
 
     const costUsd = result.actualCostUsd != null
       ? roundUsd(result.actualCostUsd)
@@ -493,6 +518,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
       tier,
       summary,
       toolsUsed: result.toolsUsed,
+      entityLinks: result.entityLinks,
       costUsd,
       fallbackUsed,
     }
@@ -523,6 +549,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
         if (isOpenRouterProvider(model.provider) && needsCustomerFacingBanglaGate(params.role, tier)) {
           fbSummary = gateCheapModelBanglaOutput(fbSummary, { customerFacing: true })
         }
+        fbSummary = linkifyAgentEntityText(fbSummary, result.entityLinks, { appendUnmentioned: true })
         const costUsd = result.actualCostUsd != null
           ? roundUsd(result.actualCostUsd)
           : calcModelTurnCostUsd(model, {
@@ -563,6 +590,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
           tier,
           summary: fbSummary,
           toolsUsed: result.toolsUsed,
+          entityLinks: result.entityLinks,
           costUsd,
           fallbackUsed: true,
         }

@@ -12,14 +12,25 @@ import {
   filterListByArchivedIds,
   getArchivedRegistryIds,
 } from '@/lib/business-archive/registry-filter'
+import { orderDetailPath } from '@/lib/order-links'
+import { getJwt } from '@/lib/api-guards'
+import { businessAllowed } from '@/lib/business-access'
 
 export async function GET(req: NextRequest) {
   const p = Object.fromEntries(new URL(req.url).searchParams)
   const url = new URL(req.url)
   const archiveVisibility = parseArchiveVisibility(url.searchParams.get('archive_visibility'))
   try {
-    const data = p.id ? await getLifestyleOrder(p.id, p) : await getLifestyleOrders(p)
+    const token = await getJwt(req)
+    if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const businessId = String(p.business_id || 'ALMA_LIFESTYLE')
+    if (businessId !== 'ALMA_LIFESTYLE') {
+      return NextResponse.json({ error: 'Orders are not available for this business.' }, { status: 400 })
+    }
+    if (!businessAllowed(token.businessAccess as string, businessId)) {
+      return NextResponse.json({ error: 'Business not permitted for this user.' }, { status: 403 })
+    }
+    const data = p.id ? await getLifestyleOrder(p.id, p) : await getLifestyleOrders(p)
     if (!p.id && archiveVisibility === 'active' && data && typeof data === 'object') {
       const archivedIds = await getArchivedRegistryIds(businessId, 'orders')
       const payload = data as { orders?: Array<{ id?: string; order_id?: string }> }
@@ -65,15 +76,15 @@ export async function POST(req: NextRequest) {
     void Promise.all([
       // Role matrix (notification-routing.ts): staff fulfil orders, so they get
       // this too — the audit found "New order assigned" reached only admins.
-      // ?q= is the orders page's existing search deep link — the tap lands ON
-      // the order, not the bare list.
+      // Canonical exact-record link. /orders/[id] resolves into drawer focus mode;
+      // unlike the list's generic ?q= search, it cannot stop at a filtered list.
       notifyRoles(NOTIFY_ROLES.orderCreated, {
         businessId: String(payload.business_id || 'ALMA_LIFESTYLE'),
         type: 'ORDER_ASSIGNED',
         priority: 'NORMAL',
         title: 'New order assigned',
         message: `Order ${createdOrderId} was created for ${String(payload.customer || payload.customer_name || 'customer')}.`,
-        actionUrl: createdOrderId ? `/orders?q=${encodeURIComponent(createdOrderId)}` : '/orders',
+        actionUrl: orderDetailPath(createdOrderId),
       }),
       sendOrderAlert({
         businessId: String(payload.business_id || 'ALMA_LIFESTYLE'),
