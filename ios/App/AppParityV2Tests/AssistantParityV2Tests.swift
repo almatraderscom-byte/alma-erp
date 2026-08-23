@@ -1797,8 +1797,11 @@ final class AssistantParityV2Tests: XCTestCase {
     func testInteractiveClaudePreviewUsesRealCatalogAndChronologicalSSEContract() {
         let models = AlmaMergeReadinessURLProtocol.interactivePreviewModels
         let ids = Set(models.map(\.id))
-        XCTAssertEqual(models.count, 17)
+        XCTAssertEqual(models.count, 20)
         XCTAssertTrue(ids.contains("claude-sonnet-4-6"))
+        XCTAssertTrue(ids.contains("or-gemini-3.7-flash"))
+        XCTAssertTrue(ids.contains("or-ox-alpha"))
+        XCTAssertTrue(ids.contains("or-mimo-v2.5"))
         XCTAssertTrue(ids.contains("gemini-3.1-pro"))
         XCTAssertTrue(ids.contains("gpt-5.6-luna"))
         XCTAssertTrue(ids.contains("or-qwen3-max"))
@@ -1806,6 +1809,11 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertTrue(ids.contains("xai-grok-4.20"))
         XCTAssertFalse(ids.contains("or-glm-4-32b"), "worker-only models must stay out of the picker")
         XCTAssertEqual(AgentModelShortName.display("Qwen 3.7 Max (OpenRouter)"), "Qwen 3.7")
+        // Owner-picked 2026-08-23 additions: the fallback branch must not keep
+        // empty brackets once the vendor note is gone (sim showed "MiMo V2.5 ()").
+        XCTAssertEqual(AgentModelShortName.display("MiMo V2.5 (OpenRouter)"), "MiMo V2.5")
+        XCTAssertEqual(AgentModelShortName.display("Ox Alpha (OpenRouter stealth)"), "Ox Alpha")
+        XCTAssertEqual(AgentModelShortName.display("Gemini 3.7 Flash (OpenRouter)"), "Gemini 3.7")
         XCTAssertEqual(AgentModelShortName.display("Qwen3.5 Coder (OpenRouter)"), "Qwen3.5")
 
         let frames = AlmaMergeReadinessURLProtocol.interactivePreviewFrames(
