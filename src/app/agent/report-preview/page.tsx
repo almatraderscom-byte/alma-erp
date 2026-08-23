@@ -68,7 +68,7 @@ export default async function ProfessionalReportPreviewPage() {
         </span>
       </header>
 
-      <article className="overflow-hidden rounded-[24px] border border-border-subtle bg-card/78 shadow-[0_24px_70px_-38px_rgba(0,0,0,0.65)] backdrop-blur-xl">
+      <article className="shrink-0 overflow-hidden rounded-[24px] border border-border-subtle bg-card/78 shadow-[0_24px_70px_-38px_rgba(0,0,0,0.65)] backdrop-blur-xl">
         <div className="flex items-center gap-2 border-b border-border-subtle px-5 py-3.5 sm:px-7">
           <span className="grid size-8 place-items-center rounded-full bg-[#E07A5F]/12 text-sm font-bold text-[#E07A5F]" aria-hidden="true">
             A
