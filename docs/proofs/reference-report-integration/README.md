@@ -46,6 +46,25 @@ seen, and the snapshot re-added console routes main already had:
 | reference coverage gate | PASS — zero unclassified active tools, zero unclassified operational routes |
 | access contract (web ⇄ iOS) | PASS |
 | iOS simulator build (iPhone 17 Pro, Debug) | BUILD SUCCEEDED |
+| iOS `AppParityV2Tests` | PASS — 220 tests, 0 failures |
+
+> Run the suite on an **idle** Mac. A concurrent `xcodebuild` pushed load to 56 and
+> produced 21–52 failures that were *every one* `Test timed out`, zero assertions.
+
+## Codex review rounds (all findings fixed on this branch)
+
+| Round | Sev | Finding | Fix |
+|---|---|---|---|
+| 1 | P1 | shadow mode turned every legacy Markdown link inert | `7564ed90` |
+| 1 | P1 | trusted tool screenshots became alt text | `7564ed90` |
+| 2 | P1 | hidden replay/tail terminal read as a LIVE contract | `2deafeb1` |
+| 2 | P1 | ON + zero citations left model-authored links clickable | `2deafeb1` |
+| 3 | P2 | early terminals (answer gate, route guard, browser salvage) stated nothing | `1ec96612` |
+
+All five share one root cause: an empty `references` array cannot say *why* it is
+empty. The messages API and every stream terminal now carry `referencesActive`,
+and neither client infers the contract state from the array's shape.
+`references/__tests__/stream-contract.test.ts` fails if any emit site drops it.
 
 ## Deployed proof — professional report renderer
 
