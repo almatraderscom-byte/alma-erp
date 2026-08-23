@@ -382,7 +382,7 @@ struct DigitalClientsScreen: View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 heroCard
-                addClientButton
+                if AlmaSession.shared.can(.cditAdminWrite) { addClientButton }
                 searchRow
                 if vm.authExpired { authCard }
                 if let err = vm.error { errorCard(err) }
@@ -614,8 +614,10 @@ private struct DigitalClientsDetailSheet: View {
                     .padding(.vertical, 24)
                 } else {
                     billingCard
+                    if AlmaSession.shared.can(.cditAdminWrite) {
                     recordPaymentButton
                     createProjectButton
+                    }
                     contactCard
                     projectsCard
                     historyCard

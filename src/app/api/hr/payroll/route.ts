@@ -7,6 +7,8 @@ import { getWalletContext, resolveWalletScopeBusinessId } from '@/lib/payroll-wa
 import { createCompensationLedgerEntry, isDebitCompensationType } from '@/lib/payroll-compensation'
 import { periodFromDate } from '@/lib/payroll-wallet'
 import { logEvent } from '@/lib/logger'
+import { getJwt } from '@/lib/api-guards'
+import { businessAllowed } from '@/lib/business-access'
 
 type MirrorWalletResult = {
   ok: boolean
@@ -36,6 +38,12 @@ type MirrorSkipExtra = {
 export async function GET(req: NextRequest) {
   const p = Object.fromEntries(new URL(req.url).searchParams)
   try {
+    const token = await getJwt(req)
+    const businessId = String(p.business_id || 'ALMA_LIFESTYLE')
+    if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if (!businessAllowed(token.businessAccess as string, businessId)) {
+      return NextResponse.json({ error: 'Business not permitted for this user.' }, { status: 403 })
+    }
     const data = await serverGet('hr_payroll', p, 0)
     return NextResponse.json(data, { headers: { 'Cache-Control': 'private, no-store' } })
   } catch (e) {

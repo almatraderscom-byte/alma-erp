@@ -103,10 +103,7 @@ final class DashboardHostController: UIViewController {
         super.viewDidAppear(animated)
         guard !dockBuilt else { return }
         dockBuilt = true
-        Task { @MainActor [weak self] in
-            let owner = await Self.probeOwner()
-            self?.buildDock(owner: owner)
-        }
+        buildDock()
     }
 
     /// The Capacitor WKWebView re-asserts itself to the front when its content loads or
@@ -118,17 +115,10 @@ final class DashboardHostController: UIViewController {
         if let nav = assistiveNav, nav.superview === view { view.bringSubviewToFront(nav) }
     }
 
-    /// Owner probe — the To-Do route (SUPER_ADMIN-only) answers 403 for everyone else, so a
-    /// clean fetch means the owner. Same signal the dashboard's To-Do chip already trusts.
-    private static func probeOwner() async -> Bool {
-        do { let _: TodosEnvelope = try await AlmaAPI.shared.get("/api/assistant/todos"); return true }
-        catch { return false }
-    }
-
     /// (Re)build the floating shortcut dock from the persisted selection, role-gated.
-    private func buildDock(owner: Bool) {
+    private func buildDock() {
         assistiveNav?.removeFromSuperview()
-        let available = DashShortcutCatalog.available(owner: owner)
+        let available = DashShortcutCatalog.available()
         let byPath = Dictionary(available.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
         let chosen = DashShortcutStore.load().compactMap { byPath[$0] }.prefix(5)
         var items: [AgentAssistiveNav.Item] = chosen.map { sc in
@@ -137,7 +127,7 @@ final class DashboardHostController: UIViewController {
             }
         }
         items.append(AgentAssistiveNav.Item(title: "এডিট", icon: "slider.horizontal.3") { [weak self] in
-            self?.presentShortcutEditor(owner: owner)
+            self?.presentShortcutEditor()
         })
         let nav = AgentAssistiveNav(items: items)
         view.addSubview(nav)
@@ -147,14 +137,14 @@ final class DashboardHostController: UIViewController {
     }
 
     /// Present the shortcut editor (choose up to 5 from the role-available catalog).
-    private func presentShortcutEditor(owner: Bool) {
+    private func presentShortcutEditor() {
         let editor = ShortcutEditorView(
-            available: DashShortcutCatalog.available(owner: owner),
+            available: DashShortcutCatalog.available(),
             initial: DashShortcutStore.load(),
             onSave: { [weak self] chosen in
                 DashShortcutStore.save(chosen)
                 self?.dismiss(animated: true)
-                self?.buildDock(owner: owner)
+                self?.buildDock()
             },
             onCancel: { [weak self] in self?.dismiss(animated: true) })
         present(UIHostingController(rootView: editor), animated: true)
@@ -182,10 +172,12 @@ private enum DashShortcutCatalog {
         DashShortcut(path: "/briefing",   title: "ব্রিফিং",       icon: "newspaper"),
         DashShortcut(path: "/portal",     title: "আমার ডেস্ক",    icon: "person.text.rectangle"),
     ]
-    /// Pages a non-owner (staff) may open. Everything else is owner-only.
-    static let staffPaths: Set<String> = ["/orders", "/invoice", "/attendance", "/portal"]
-    static func available(owner: Bool) -> [DashShortcut] {
-        owner ? all : all.filter { staffPaths.contains($0.path) }
+    /// Pages this user may open — the web nav gate (AlmaSession.canSee), not an
+    /// owner/staff guess: an ADMIN gets Finance but not Employees, exactly like web.
+    @MainActor
+    static func available() -> [DashShortcut] {
+        guard #available(iOS 17.0, *) else { return all }
+        return all.filter { AlmaSession.shared.canSee($0.path) }
     }
     static let defaultPaths = ["/orders", "/invoice", "/payroll", "/analytics"]
 }

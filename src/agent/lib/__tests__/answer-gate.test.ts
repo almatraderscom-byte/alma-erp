@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { isGateableQuestion, GATE_DENY_RE, isExpensiveHead } from '@/agent/lib/answer-gate'
+import {
+  answerGateScopeForContext,
+  isGateableQuestion,
+  GATE_DENY_RE,
+  isExpensiveHead,
+} from '@/agent/lib/answer-gate'
 import { getModel } from '@/agent/lib/models/registry'
 
 /**
@@ -13,6 +18,10 @@ describe('answer gate — deny rules (never gated)', () => {
     expect(isGateableQuestion('pending order koto?')).toBe(false)
     expect(isGateableQuestion('কে অফিসে আছে এখন?')).toBe(false)
     expect(isGateableQuestion('stock e koyta ase?')).toBe(false)
+    expect(isGateableQuestion('Eyafi staff profile ta ki?')).toBe(false)
+    expect(isGateableQuestion('Main Binance trading account ta ki?')).toBe(false)
+    expect(isGateableQuestion('Eyafi সম্পর্কে কী জানো?', 'business')).toBe(false)
+    expect(isGateableQuestion('Main Binance-এর অবস্থা কী?', 'business')).toBe(false)
   })
 
   it('money figures never gate', () => {
@@ -50,6 +59,15 @@ describe('answer gate — allow side (stable knowledge questions)', () => {
     expect(isGateableQuestion('আমাদের ওয়েবসাইটের ঠিকানা কী?')).toBe(true)
     expect(isGateableQuestion('return policy ta ki আমাদের?')).toBe(true)
     expect(isGateableQuestion('আমাদের কোন কোন business আছে?')).toBe(true)
+    expect(isGateableQuestion('আমাদের ওয়েবসাইটের ঠিকানা কী?', 'business')).toBe(false)
+  })
+
+  it('business turns always run fresh so entity-adjacent wording cannot replay linkless prose', () => {
+    expect(isGateableQuestion('ALMA সম্পর্কে কী জানো?', 'business')).toBe(false)
+    expect(isGateableQuestion('return policy ta ki আমাদের?', 'business')).toBe(false)
+    expect(isGateableQuestion('Eyafi কোন business-এ কাজ করে?', 'business')).toBe(false)
+    expect(isGateableQuestion('Eyafi আমাদের কোন brand-এর লোক?', 'business')).toBe(false)
+    expect(isGateableQuestion('Mustahid-এর office address কী?', 'business')).toBe(false)
   })
 
   it('non-questions are not gateable', () => {
@@ -63,5 +81,16 @@ describe('answer gate — expensive-head scoping', () => {
     expect(isExpensiveHead(getModel('or-qwen3-max'))).toBe(true)
     expect(isExpensiveHead(getModel('or-deepseek-v4-flash'))).toBe(false)
     expect(isExpensiveHead(getModel('gemini-3.1-flash-lite'))).toBe(false)
+  })
+
+  it('uses distinct cache scopes per business and never serves legacy generic business rows', () => {
+    const lifestyle = answerGateScopeForContext(false, 'ALMA_LIFESTYLE')
+    const trading = answerGateScopeForContext(false, 'ALMA_TRADING')
+
+    expect(lifestyle).toBe('business:ALMA_LIFESTYLE')
+    expect(trading).toBe('business:ALMA_TRADING')
+    expect(lifestyle).not.toBe(trading)
+    expect([lifestyle, trading]).not.toContain('business')
+    expect(answerGateScopeForContext(true, 'ALMA_TRADING')).toBe('personal')
   })
 })
