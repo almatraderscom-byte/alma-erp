@@ -40,9 +40,14 @@ export default async function ProfessionalReportPreviewPage() {
   const isLocalDevelopment = process.env.NODE_ENV !== 'production'
   if (!isPreview && !isLocalDevelopment) notFound()
 
-  const session = await getServerSession(authOptions)
-  if (!session?.user) redirect('/login')
-  if (!isSystemOwner(session)) notFound()
+  // Vercel preview deployments are already protected by team SSO. Keep this
+  // static, data-free proof route free of application-session/database writes;
+  // local development still requires the normal ALMA owner session.
+  if (!isPreview) {
+    const session = await getServerSession(authOptions)
+    if (!session?.user) redirect('/login')
+    if (!isSystemOwner(session)) notFound()
+  }
 
   return (
     <div className="mx-auto flex min-h-[calc(100dvh-5rem)] w-full max-w-3xl flex-col px-4 pb-24 pt-8 sm:px-8 sm:pt-12">
