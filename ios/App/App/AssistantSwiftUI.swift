@@ -902,6 +902,11 @@ struct AgentMessageWire: Decodable {
     /// Prose lifecycle v2 — typed projection; see AgentMessagePresentationV2Wire.
     let presentationV2: AgentMessagePresentationV2Wire?
     let references: [AgentReferenceV1Wire]?
+    /// Server-authoritative: is the reference contract live for this row? An
+    /// empty `references` alone cannot say whether the rollout is off/shadow or
+    /// the reply simply cited nothing — and treating those the same made shadow
+    /// mode turn every legacy link inert (Codex P1, PR #845).
+    let referencesActive: Bool?
     /// Build 103 Issue 3 — durable work-step tracker snapshot(s) anchored to
     /// this assistant message (cold history equals the settled live tracker).
     let workSteps: [AgentWorkStepsSnapshotColdWire]?
@@ -2049,6 +2054,10 @@ struct AgentChatMessage: Identifiable, Equatable {
     var askCards: [AskCard] = []
     /// Message-scoped server-minted destinations. Markdown is inert without one.
     var references: [AgentReferenceV1Wire] = []
+    /// Is the server's reference contract authoritative for THIS message? False
+    /// while the rollout is off/shadow and for pre-contract history, where the
+    /// legacy sanitized-link and inline-image rendering is the correct one.
+    var referencesActive = false
     /// Distinguishes an authoritative explicit empty array from an older/thinner
     /// history projection that did not know about the field at all.
     var referenceProjectionPresent = false
@@ -2388,7 +2397,13 @@ struct AgentChatMessage: Identifiable, Equatable {
         m.referenceProjectionPresent = validReferencePresentation
             ? (wire.presentation?.references != nil || wire.references != nil)
             : wire.references != nil
-        m.references = AgentReferenceV1Wire.trustedOnly(projectedReferences)
+        // A server that answers `referencesActive: false` is telling us the
+        // rollout is off/shadow: keep the projection authoritative (so links
+        // cached during ON are dropped by the kill switch) but render legacy.
+        m.referencesActive = wire.referencesActive == true
+        m.references = m.referencesActive
+            ? AgentReferenceV1Wire.trustedOnly(projectedReferences)
+            : []
         m.createdAt = wire.createdAt
         if let c = wire.costUsd {
             switch c {
@@ -6181,6 +6196,7 @@ final class AssistantVM {
             if !incoming[i].referenceProjectionPresent {
                 incoming[i].references = old.references
                 incoming[i].referenceProjectionPresent = old.referenceProjectionPresent
+                incoming[i].referencesActive = old.referencesActive
             }
             if old.selfCorrected { incoming[i].selfCorrected = true }
             incoming[i].id = lid
@@ -9377,6 +9393,7 @@ final class AssistantVM {
                     if let doneReferences {
                         messages[i].references = AgentReferenceV1Wire.trustedOnly(doneReferences)
                         messages[i].referenceProjectionPresent = true
+                        messages[i].referencesActive = true
                     }
                     if messages[i].proseProtocol == 2 {
                         messages[i].settleProse()
@@ -13580,11 +13597,34 @@ enum AgentMarkdownLinkRouter {
         }
     }
 
+    /// Legacy contract (rollout off/shadow, or a history row written before the
+    /// reference pipeline existed): the sanitized classifier alone decides, as it
+    /// did before. Requiring a reference in those modes turned every existing link
+    /// — and every trusted tool screenshot — inert (Codex P1, PR #845).
+    static func legacyDestination(for url: URL) -> AgentMarkdownLinkDestination? {
+        if isUnsafeHref(url.absoluteString) { return nil }
+        let scheme = url.scheme?.lowercased()
+        if scheme == nil, url.host == nil {
+            return internalPath(from: url).map(AgentMarkdownLinkDestination.almaPath)
+        }
+        guard scheme == "http" || scheme == "https", url.host != nil else { return nil }
+        // Credentials inside a chat link are unnecessary and visually deceptive.
+        if let user = url.user, !user.isEmpty { return nil }
+        if let password = url.password, !password.isEmpty { return nil }
+        if isALMAHost(url.host) {
+            return internalPath(from: url).map(AgentMarkdownLinkDestination.almaPath)
+        }
+        return .external(url)
+    }
+
     /// A link is clickable ONLY when a server-minted reference on THIS message
     /// names this exact destination. The raw-href guard still runs first so an
     /// oversized/control-character href fails closed before any matching.
+    /// `contractActive == false` falls back to `legacyDestination(for:)`.
     static func destination(for url: URL,
-                            references: [AgentReferenceV1Wire]) -> AgentMarkdownLinkDestination? {
+                            references: [AgentReferenceV1Wire],
+                            contractActive: Bool = true) -> AgentMarkdownLinkDestination? {
+        if !contractActive { return legacyDestination(for: url) }
         if isUnsafeHref(url.absoluteString) { return nil }
         guard let reference = references.first(where: { matches(url, reference: $0) }),
               reference.trusted else { return nil }
@@ -13867,6 +13907,9 @@ struct AgentMarkdownText: View {
     var suppressRemoteImages = false
     var onAskSelection: ((String, Bool) -> Void)? = nil
     var references: [AgentReferenceV1Wire] = []
+    /// False (rollout off/shadow, or pre-contract history) = legacy sanitized
+    /// links and inline images, exactly as before the reference pipeline.
+    var referencesActive = false
     @State private var showSources = false
 
     static func shouldRenderRemoteImages(suppressRemoteImages: Bool) -> Bool {
@@ -13960,8 +14003,10 @@ struct AgentMarkdownText: View {
     }
 
     static func extractCitations(_ source: String,
-                                 references: [AgentReferenceV1Wire] = []) -> [AgentCitation] {
-        extractMarkdownLinks(source)
+                                 references: [AgentReferenceV1Wire] = [],
+                                 contractActive: Bool = true) -> [AgentCitation] {
+        guard contractActive else { return [] }
+        return extractMarkdownLinks(source)
             .compactMap { link -> (ParsedMarkdownLink, AgentReferenceV1Wire, String)? in
                 guard AgentMarkdownLinkRouter.destination(
                     for: link.url, references: references) != nil,
@@ -13989,7 +14034,9 @@ struct AgentMarkdownText: View {
     }
 
     static func citationIDs(in paragraph: String, from citations: [AgentCitation],
-                            references: [AgentReferenceV1Wire]) -> [Int] {
+                            references: [AgentReferenceV1Wire],
+                            contractActive: Bool = true) -> [Int] {
+        guard contractActive else { return [] }
         let paragraphURLs = Set(
             extractMarkdownLinks(paragraph)
                 .filter { AgentMarkdownLinkRouter.destination(for: $0.url, references: references) != nil
@@ -14044,10 +14091,14 @@ struct AgentMarkdownText: View {
         }
     }
 
-    private var citations: [AgentCitation] { Self.extractCitations(text, references: references) }
-    private var mediaLinks: [AgentVerifiedMediaLink] { Self.extractMediaLinks(text, references: references) }
+    private var citations: [AgentCitation] {
+        Self.extractCitations(text, references: references, contractActive: referencesActive)
+    }
+    private var mediaLinks: [AgentVerifiedMediaLink] {
+        referencesActive ? Self.extractMediaLinks(text, references: references) : []
+    }
     private var externalDestinations: [AgentVerifiedDestinationLink] {
-        Self.extractExternalDestinations(text, references: references)
+        referencesActive ? Self.extractExternalDestinations(text, references: references) : []
     }
 
     private enum Segment: Identifiable {
@@ -14206,6 +14257,15 @@ struct AgentMarkdownText: View {
                 case .mermaid(let source): AgentMermaidDiagram(source: source, pal: pal)
                 case .form(let source): AgentInteractiveFormCard(source: source, pal: pal)
                 case .imageGroup(let images):
+                    // Legacy contract (rollout off/shadow, pre-contract history):
+                    // trusted tool output — camera and Mac screenshots return a
+                    // plain `imageUrl` and mint no media reference — renders
+                    // inline exactly as before (Codex P1, PR #845).
+                    if !referencesActive {
+                        if Self.shouldRenderRemoteImages(suppressRemoteImages: suppressRemoteImages) {
+                            AgentAdjacentRemoteImageGallery(images: images)
+                        }
+                    } else {
                     let verifiedImages = images.filter { image in
                         guard let url = URL(string: image.url) else { return false }
                         return references.contains { reference in
@@ -14243,6 +14303,7 @@ struct AgentMarkdownText: View {
                         Text(rejectedImages.map { Self.safeImageAlt($0.alt) }.joined(separator: " · "))
                             .font(.footnote)
                             .foregroundStyle(pal.mutedHi)
+                    }
                     }
                 }
             }
@@ -14290,6 +14351,22 @@ struct AgentMarkdownText: View {
     }
 
     private func openMarkdownLink(_ url: URL) {
+        // Legacy contract: no reference is required — the sanitized classifier
+        // already decided this href is safe, and it is the only decision there is.
+        guard referencesActive else {
+            guard let legacy = AgentMarkdownLinkRouter.legacyDestination(for: url) else { return }
+            AlmaAgentHaptics.selection()
+            switch legacy {
+            case .almaPath(let path):
+                NotificationCenter.default.post(
+                    name: .almaOpenPath, object: nil, userInfo: ["path": path])
+            case .external(let target):
+                browserURL = target
+            case .artifact:
+                break
+            }
+            return
+        }
         guard let reference = references.first(where: { AgentMarkdownLinkRouter.matches(url, reference: $0) }),
               let destination = AgentMarkdownLinkRouter.destination(for: url, references: references) else { return }
         AlmaAgentHaptics.selection()
@@ -14325,7 +14402,8 @@ struct AgentMarkdownText: View {
         VStack(alignment: .leading, spacing: 6) {
             paragraph(source)
             let localIDs = Set(Self.citationIDs(
-                in: source, from: citations, references: references))
+                in: source, from: citations, references: references,
+                contractActive: referencesActive))
             let localCitations = citations.filter { localIDs.contains($0.id) }
             if !localCitations.isEmpty {
                 AgentCitationChips(citations: localCitations, pal: pal, onOpen: openCitation)
@@ -14335,7 +14413,8 @@ struct AgentMarkdownText: View {
 
     @ViewBuilder private func paragraph(_ s: String) -> some View {
         if selectable {
-            AlmaSelectableRichText(attributed: Self.attributedParagraph(s, pal: pal, references: references),
+            AlmaSelectableRichText(attributed: Self.attributedParagraph(
+                s, pal: pal, references: references, contractActive: referencesActive),
                                    onAskSelection: onAskSelection,
                                    onOpenURL: openMarkdownLink)
         } else {
@@ -14376,7 +14455,8 @@ struct AgentMarkdownText: View {
     }
 
     static func attributedParagraph(_ s: String, pal: AgentPalette,
-                                    references: [AgentReferenceV1Wire] = []) -> NSAttributedString {
+                                    references: [AgentReferenceV1Wire] = [],
+                                    contractActive: Bool = true) -> NSAttributedString {
         let body = UIFontMetrics(forTextStyle: .body).scaledFont(
             for: UIFont.systemFont(ofSize: 16.5, weight: .regular))
         let ink = UIColor(pal.ink)
@@ -14409,23 +14489,23 @@ struct AgentMarkdownText: View {
                 out.append(NSAttributedString(
                     string: task.checked ? "☑  " : "☐  ",
                     attributes: [.font: body, .foregroundColor: UIColor(AgentPalette.teal)]))
-                out.append(inlineNS(task.body, baseFont: body, color: ink, references: references))
+                out.append(inlineNS(task.body, baseFont: body, color: ink, references: references, contractActive: contractActive))
             } else if let item = orderedListParts(trimmed) {
                 out.append(NSAttributedString(string: "\(item.marker)  ", attributes: [
                     .font: UIFont.systemFont(ofSize: body.pointSize, weight: .semibold),
                     .foregroundColor: UIColor(AgentPalette.teal),
                 ]))
-                out.append(inlineNS(item.body, baseFont: body, color: ink, references: references))
+                out.append(inlineNS(item.body, baseFont: body, color: ink, references: references, contractActive: contractActive))
             } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") || trimmed.hasPrefix("• ") {
                 out.append(NSAttributedString(string: "•  ", attributes: [
                     .font: body, .foregroundColor: UIColor(AgentPalette.coral.opacity(0.85))]))
-                out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: ink, references: references))
+                out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: ink, references: references, contractActive: contractActive))
             } else if trimmed.hasPrefix("> ") {
                 out.append(NSAttributedString(string: "│  ", attributes: [
                     .font: body, .foregroundColor: UIColor(AgentPalette.coral.opacity(0.75))]))
-                out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: UIColor(pal.mutedHi), references: references))
+                out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: UIColor(pal.mutedHi), references: references, contractActive: contractActive))
             } else {
-                out.append(inlineNS(line, baseFont: body, color: ink, references: references))
+                out.append(inlineNS(line, baseFont: body, color: ink, references: references, contractActive: contractActive))
             }
         }
         out.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: out.length))
@@ -14436,8 +14516,10 @@ struct AgentMarkdownText: View {
     /// resolved to real fonts (AttributedString keeps them as presentation intents,
     /// which UIKit ignores).
     private static func inlineNS(_ line: String, baseFont: UIFont, color: UIColor,
-                                 references: [AgentReferenceV1Wire]) -> NSAttributedString {
-        guard let md = sanitizedInlineMarkdown(line, references: references) else {
+                                 references: [AgentReferenceV1Wire],
+                                 contractActive: Bool = true) -> NSAttributedString {
+        guard let md = sanitizedInlineMarkdown(
+            line, references: references, contractActive: contractActive) else {
             return NSAttributedString(string: line, attributes: [.font: baseFont, .foregroundColor: color])
         }
         let out = NSMutableAttributedString()
@@ -14532,7 +14614,8 @@ struct AgentMarkdownText: View {
     }
 
     private func inline(_ s: String) -> Text {
-        if let a = Self.sanitizedInlineMarkdown(s, references: references) {
+        if let a = Self.sanitizedInlineMarkdown(
+            s, references: references, contractActive: referencesActive) {
             return Text(a)
                 .font(.system(.body, design: .default))
                 .foregroundStyle(pal.ink)
@@ -14542,7 +14625,8 @@ struct AgentMarkdownText: View {
 
     private static func sanitizedInlineMarkdown(
         _ source: String,
-        references: [AgentReferenceV1Wire]
+        references: [AgentReferenceV1Wire],
+        contractActive: Bool = true
     ) -> AttributedString? {
         guard var value = try? AttributedString(
             markdown: source,
@@ -14550,7 +14634,8 @@ struct AgentMarkdownText: View {
         ) else { return nil }
         let untrustedRanges = value.runs.compactMap { run -> Range<AttributedString.Index>? in
             guard let url = run.link,
-                  AgentMarkdownLinkRouter.destination(for: url, references: references) == nil else { return nil }
+                  AgentMarkdownLinkRouter.destination(
+                    for: url, references: references, contractActive: contractActive) == nil else { return nil }
             return run.range
         }
         for range in untrustedRanges { value[range].link = nil }
@@ -15223,6 +15308,9 @@ private struct AgentProgressiveMarkdownText: View {
     var suppressRemoteImages = false
     var onAskSelection: ((String, Bool) -> Void)? = nil
     var references: [AgentReferenceV1Wire] = []
+    /// False (rollout off/shadow, or pre-contract history) = legacy sanitized
+    /// links and inline images, exactly as before the reference pipeline.
+    var referencesActive = false
     @State private var expanded = false
     private static let initialCharacterBudget = 12_000
 
@@ -15239,7 +15327,7 @@ private struct AgentProgressiveMarkdownText: View {
             AgentMarkdownText(text: visibleText, pal: pal, selectable: selectable,
                               suppressRemoteImages: suppressRemoteImages,
                               onAskSelection: onAskSelection,
-                              references: references)
+                              references: references, referencesActive: referencesActive)
             if isGiant {
                 Button {
                     AlmaAgentHaptics.selection()
@@ -16430,7 +16518,8 @@ struct AgentMessageRow: View {
                                                 suppressRemoteImages: !message.fileRefs.filter {
                                                     $0.mediaType.hasPrefix("image/")
                                                 }.isEmpty,
-                                                references: message.references)
+                                                references: message.references,
+                                                referencesActive: message.referencesActive)
                                                 .modifier(AgentShimmerModifier())
                                             AgentTypingCursor()
                                         }
@@ -16444,7 +16533,8 @@ struct AgentMessageRow: View {
                                         onAskSelection: { selection, side in
                                             Task { await vm.prepareSelectionQuestion(selection, inSideConversation: side) }
                                         },
-                                        references: message.references)
+                                        references: message.references,
+                                        referencesActive: message.referencesActive)
                                         .contentShape(Rectangle())
                                         // Owner issue #6 (build 69): long-press → copy + haptic.
                                         .contextMenu {
@@ -20136,7 +20226,8 @@ struct AgentTurnBlocksView: View {
                         suppressRemoteImages: message.fileRefs.contains {
                             $0.mediaType.hasPrefix("image/")
                         },
-                        references: message.references)
+                        references: message.references,
+                        referencesActive: message.referencesActive)
                         .modifier(AgentShimmerModifier())
                     AgentTypingCursor()
                 }
@@ -20154,7 +20245,8 @@ struct AgentTurnBlocksView: View {
                     onAskSelection: { selection, side in
                         Task { await vm.prepareSelectionQuestion(selection, inSideConversation: side) }
                     },
-                    references: message.references)
+                    references: message.references,
+                    referencesActive: message.referencesActive)
                     .padding(.vertical, 2)
             }
         }

@@ -87,6 +87,7 @@ describe('AgentMarkdown links', () => {
     const html = renderToStaticMarkup(createElement(AgentMarkdown, {
       content: `[Order AL-42](<${reference.destination.webPath}>)`,
       references: [reference],
+      referencesActive: true,
     }))
 
     expect(html).toContain(`href="${reference.destination.webPath.replaceAll('&', '&amp;')}"`)
@@ -98,6 +99,7 @@ describe('AgentMarkdown links', () => {
     const html = renderToStaticMarkup(createElement(AgentMarkdown, {
       content: '[OpenAI](https://openai.com/research)',
       references: [reference],
+      referencesActive: true,
     }))
 
     expect(html).toContain('href="https://openai.com/research"')
@@ -111,6 +113,7 @@ describe('AgentMarkdown links', () => {
     const html = renderToStaticMarkup(createElement(AgentMarkdown, {
       content: '[Unknown](https://example.com) [Spoof](https://evil.example/orders/AL-42)',
       references: [reference],
+      referencesActive: true,
     }))
 
     expect(html).toContain('Unknown')
@@ -140,6 +143,7 @@ describe('AgentMarkdown links', () => {
     const html = renderToStaticMarkup(createElement(AgentMarkdown, {
       content: '![Generated image](https://media.example.com/generated.png)',
       references: [reference],
+      referencesActive: true,
     }))
 
     expect(html).toContain('Generated image')
@@ -147,6 +151,43 @@ describe('AgentMarkdown links', () => {
     expect(html).toContain('ছবি লোড করুন')
     expect(html).not.toContain('<img')
     expect(html).not.toContain('https://media.example.com/generated.png')
+  })
+})
+
+describe('AgentMarkdown legacy contract (rollout off/shadow)', () => {
+  // Codex P1 (PR #845): shadow mode is meant to collect reference metadata
+  // WITHOUT changing anything the owner sees. Requiring a reference for
+  // clickability there turned every link in existing history inert, and every
+  // trusted tool screenshot into its alt text.
+  it('keeps ordinary internal and external links clickable without any reference', () => {
+    const html = renderToStaticMarkup(createElement(AgentMarkdown, {
+      content: '[Order AL-42](/orders/AL-42) and [OpenAI](https://openai.com/research)',
+    }))
+
+    expect(html).toContain('href="/orders/AL-42"')
+    expect(html).toContain('href="https://openai.com/research"')
+    expect(html).toContain('target="_blank"')
+  })
+
+  it('renders a trusted tool screenshot inline instead of its alt text', () => {
+    const html = renderToStaticMarkup(createElement(AgentMarkdown, {
+      content: '![Mac screen](https://media.example.com/mac-screenshot.png)',
+    }))
+
+    expect(html).toContain('<img')
+    expect(html).toContain('https://media.example.com/mac-screenshot.png')
+    expect(html).not.toContain('ছবি লোড করুন')
+  })
+
+  it('an explicit empty projection with the contract ON still makes links inert', () => {
+    const html = renderToStaticMarkup(createElement(AgentMarkdown, {
+      content: '[Order AL-42](/orders/AL-42)',
+      references: [],
+      referencesActive: true,
+    }))
+
+    expect(html).toContain('Order AL-42')
+    expect(html).not.toContain('<a')
   })
 })
 

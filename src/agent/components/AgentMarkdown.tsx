@@ -15,6 +15,12 @@ interface AgentMarkdownProps {
   className?: string
   onArtifactDetected?: (content: string, type: 'code' | 'markdown') => void
   references?: AgentReferenceV1[]
+  /** Is the server's verified-reference contract authoritative for THIS message?
+   *  Only then does a link need a reference to be clickable. While the rollout is
+   *  off/shadow — and for every history row written before the contract existed —
+   *  the legacy sanitized-link and inline-image behaviour is the correct one, and
+   *  turning those inert would be a visible regression in the default mode. */
+  referencesActive?: boolean
   onArtifactOpen?: (id: string) => void
 }
 
@@ -53,11 +59,13 @@ function AgentMarkdownLink({
   href,
   children,
   reference,
+  referencesActive,
   onArtifactOpen,
 }: {
   href?: string
   children: React.ReactNode
   reference?: AgentReferenceV1
+  referencesActive?: boolean
   onArtifactOpen?: (id: string) => void
 }) {
   // Root-relative links classify identically during SSR and hydration. The exact
@@ -66,11 +74,27 @@ function AgentMarkdownLink({
   const currentOrigin = useCurrentOrigin()
 
   const destination = React.useMemo(
-    () => reference && href === referenceHref(reference)
+    () => !referencesActive || (reference && href === referenceHref(reference))
       ? classifyAgentMarkdownHref(href, currentOrigin)
       : { kind: 'invalid' as const },
-    [href, currentOrigin, reference],
+    [href, currentOrigin, reference, referencesActive],
   )
+
+  // Legacy contract (rollout off/shadow, or a pre-contract history row): the
+  // sanitized classifier alone decides, exactly as before this pipeline landed.
+  if (!referencesActive) {
+    if (destination.kind === 'internal') {
+      return <Link href={destination.href} prefetch={false} className={MARKDOWN_LINK_CLASS}>{children}</Link>
+    }
+    if (destination.kind === 'external') {
+      return (
+        <a href={destination.href} target="_blank" rel="noopener noreferrer" className={MARKDOWN_LINK_CLASS}>
+          {children}
+        </a>
+      )
+    }
+    return <span className={MARKDOWN_LINK_CLASS}>{children}</span>
+  }
 
   // A readable label is harmless; clickability requires a structured reference
   // attached to this exact message. A plausible model-authored URL/path is inert.
@@ -139,13 +163,17 @@ function ImageWithDownload({
   alt,
   provider,
   domain,
+  /** Legacy contract: trusted tool output loads inline with no consent step,
+   *  exactly as it did before the reference pipeline existed. */
+  immediate = false,
 }: {
   src?: string
   alt?: string
-  provider: string
-  domain: string
+  provider?: string
+  domain?: string
+  immediate?: boolean
 }) {
-  const [loaded, setLoaded] = React.useState(false)
+  const [loaded, setLoaded] = React.useState(immediate)
   const [busy, setBusy] = React.useState(false)
   // Click = full-screen preview (owner ask 2026-07-15: "image e click korle boro
   // hoy na, direct download lekha thake") — download stays as the corner button.
@@ -231,7 +259,7 @@ function ImageWithDownload({
   )
 }
 
-function AgentMarkdownInner({ content, className, references, onArtifactOpen }: AgentMarkdownProps) {
+function AgentMarkdownInner({ content, className, references, referencesActive, onArtifactOpen }: AgentMarkdownProps) {
   // The server strips typed tool calls when the ROUND ends — which is too late
   // for the person watching it stream. Live on 2026-07-28 the owner read
   // `{"type": "tool_call", …}` as it arrived, and it vanished only afterwards.
@@ -345,6 +373,7 @@ function AgentMarkdownInner({ content, className, references, onArtifactOpen }: 
               <AgentMarkdownLink
                 href={href}
                 reference={href ? referencesByHref.get(href) : undefined}
+                referencesActive={referencesActive}
                 onArtifactOpen={onArtifactOpen}
               >
                 {children}
@@ -356,6 +385,19 @@ function AgentMarkdownInner({ content, className, references, onArtifactOpen }: 
           img({ src, alt }) {
             const value = typeof src === 'string' ? src : undefined
             const reference = value ? referencesByHref.get(value) : undefined
+            // Legacy contract: trusted tool output (camera / Mac screenshots) is
+            // rendered inline exactly as before. Those tools return a plain
+            // `imageUrl` and mint no media reference, so requiring one here would
+            // replace the screenshot the owner asked for with its alt text.
+            if (!referencesActive) {
+              return (
+                <ImageWithDownload
+                  src={value}
+                  alt={typeof alt === 'string' ? alt : undefined}
+                  immediate
+                />
+              )
+            }
             if (!reference || reference.kind !== 'external_media'
               || reference.purpose !== 'media'
               || reference.destination.type !== 'external_media'

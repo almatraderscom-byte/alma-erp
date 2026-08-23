@@ -11,7 +11,7 @@ import { buildAgentPresentationV2, presentationV1FromV2 } from '@/agent/lib/pres
 import { readPresentationV2Document } from '@/agent/lib/presentation/prose-lifecycle'
 import { mergeAgentEntityLinks, type AgentEntityLink } from '@/agent/lib/entity-links'
 import { filterAgentReferencesForContext } from '@/agent/lib/references/validator'
-import { exposedAgentReferences } from '@/agent/lib/references/flags'
+import { exposedAgentReferences, shouldRenderAgentReferences } from '@/agent/lib/references/flags'
 import {
   IMAGE_WORKER_CAPABILITY_KV_KEY,
   imageModelAvailability,
@@ -479,6 +479,13 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       // An explicit empty list is authoritative. Omitting this field in hidden
       // mode made native cold reload preserve references cached during ON.
       references: visibleReferences,
+      // …but an empty list alone cannot say WHY it is empty. Without this the
+      // clients could not tell "rollout is off/shadow" from "contract is on and
+      // this reply cited nothing", so shadow mode turned every legacy link and
+      // every trusted tool screenshot inert — a visible regression in the
+      // DEFAULT mode (Codex P1, PR #845). Reference-scoped rendering is enforced
+      // only while this is true; otherwise the clients keep legacy behaviour.
+      referencesActive: shouldRenderAgentReferences(),
       // Build 103 Issue 3 — durable work-step tracker snapshot(s) anchored to
       // this assistant message; cold history equals the settled live tracker.
       // Plan trackers come from agent_plans; unplanned runtime trackers ride

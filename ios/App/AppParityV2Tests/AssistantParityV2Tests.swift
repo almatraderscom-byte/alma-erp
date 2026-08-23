@@ -4700,6 +4700,32 @@ final class AssistantParityV2Tests: XCTestCase {
         }
     }
 
+    func testLegacyContractKeepsOrdinaryLinksClickableAndStillRejectsUnsafeHrefs() throws {
+        // Codex P1 (PR #845): with the rollout off/shadow the server sends no
+        // references, so demanding one made every link in existing history — and
+        // every trusted tool screenshot — inert. Legacy mode must render exactly
+        // as it did before the reference pipeline, unsafe hrefs still refused.
+        XCTAssertEqual(
+            AgentMarkdownLinkRouter.destination(
+                for: try XCTUnwrap(URL(string: "/orders/ALM-1")), references: [], contractActive: false),
+            .almaPath("/orders/ALM-1"))
+        XCTAssertEqual(
+            AgentMarkdownLinkRouter.destination(
+                for: try XCTUnwrap(URL(string: "https://example.com/x")), references: [], contractActive: false),
+            .external(try XCTUnwrap(URL(string: "https://example.com/x"))))
+        for unsafe in [
+            "/api/orders/orders",
+            "/api",
+            "https://alma-erp-six.vercel.app/api/orders/orders?id=ALM-1",
+            "https://user:pw@example.com/x",
+        ] {
+            XCTAssertNil(
+                AgentMarkdownLinkRouter.destination(
+                    for: try XCTUnwrap(URL(string: unsafe)), references: [], contractActive: false),
+                unsafe)
+        }
+    }
+
     func testMarkdownLinkRouterRejectsApiAndUnsafeHrefsWithoutAVerifiedReference() throws {
         // Web parity (src/agent/lib/markdown-link-router.ts): with no server-minted
         // reference on THIS message NOTHING is clickable — /api/*, credential-bearing

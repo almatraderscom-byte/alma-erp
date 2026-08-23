@@ -135,6 +135,9 @@ type MessageRow = {
   /** Ordered reasoning↔tool timeline — drives the unified stream after reload. */
   timeline?: TimelineEntry[]
   references?: AgentReferenceV1[]
+  /** The verified-reference contract is authoritative for this message. Absent
+   *  or false (rollout off/shadow, pre-contract history) = legacy rendering. */
+  referencesActive?: boolean
   createdAt?: string
 }
 
@@ -223,6 +226,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       apiRounds: r.apiRounds ?? undefined,
       roundCostsUsd: r.roundCostsUsd ?? undefined,
       references: r.references,
+      referencesActive: r.referencesActive === true,
       pendingActions: confirmBlocks.length
         ? confirmBlocks.map((cb) => ({
             id: cb.pendingActionId as string,
@@ -1576,7 +1580,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             if (m.id !== assistantMsgId) return m
             // Server projections are authoritative, including [] after a
             // rollout kill-switch. Merging would retain stale ON-era links.
-            return { ...m, references: incoming }
+            return { ...m, references: incoming, referencesActive: true }
           }))
         } else if (evt.type === 'done') {
           gotStreamDone = true
@@ -1611,6 +1615,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   references: Array.isArray(evt.references)
                     ? evt.references as AgentReferenceV1[]
                     : m.references,
+                  referencesActive: Array.isArray(evt.references) ? true : m.referencesActive,
                 }
               : m
           ))

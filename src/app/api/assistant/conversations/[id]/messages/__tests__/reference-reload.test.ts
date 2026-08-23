@@ -73,6 +73,7 @@ describe('message reload reference projection', () => {
     expect(response.status, JSON.stringify(body)).toBe(200)
     expect(Array.isArray(body), JSON.stringify(body)).toBe(true)
     expect(body[0].references).toEqual([reference])
+    expect(body[0].referencesActive).toBe(true)
   })
 
   it.each(['off', 'shadow'] as const)(
@@ -89,6 +90,10 @@ describe('message reload reference projection', () => {
       expect(body[0]).toHaveProperty('references')
       expect(body[0].references).toEqual([])
       expect(body[0].presentation.references ?? null).toBeNull()
+      // …and the clients are told WHY it is empty. Without this an empty list is
+      // indistinguishable from "contract on, nothing cited", which turned every
+      // legacy link and tool screenshot inert in the default mode (Codex P1 #845).
+      expect(body[0].referencesActive).toBe(false)
     },
   )
 })
