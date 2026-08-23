@@ -342,7 +342,7 @@ export class ProseLifecycleTracker {
       case 'text_delta':
         return this.onTextDelta(event)
       case 'preamble':
-        return [...this.onPreamble(), event]
+        return [...this.onPreamble(event), event]
       case 'tool_start':
         return [...this.onToolStart(), event]
       case 'progress_update':
@@ -510,9 +510,27 @@ export class ProseLifecycleTracker {
     return out
   }
 
-  private onPreamble(): WireEvent[] {
+  private onPreamble(event: WireEvent): WireEvent[] {
     const block = this.open ?? this.blocks[this.blocks.length - 1] ?? null
     if (!block || block.state === 'superseded') return []
+    // A server notice (model OFF / worker-only redirect) streams into the open
+    // block BEFORE the delegated runner speaks its lead. Committing both as one
+    // `lead` put the notice after the preamble-thinking row on reload while the
+    // live view showed it first (Codex P1 #834 r6): split them — the notice is
+    // its own progress block, the preamble text alone is the lead.
+    const preambleText = typeof event.text === 'string' ? event.text.trim() : ''
+    const cut = preambleText ? block.text.lastIndexOf(preambleText) : -1
+    if (preambleText && cut > 0 && block.text.slice(0, cut).trim()) {
+      const out: WireEvent[] = []
+      block.text = block.text.slice(0, cut)
+      block.dirty = true
+      out.push(...this.commit(block, 'progress'))
+      const { block: lead, events } = this.openBlock()
+      lead.text = preambleText
+      out.push(...events)
+      out.push(...this.commit(lead, 'lead'))
+      return out
+    }
     return this.commit(block, 'lead')
   }
 

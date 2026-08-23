@@ -5825,6 +5825,22 @@ final class ProseRetentionTests: XCTestCase {
         }
     }
 
+    func testEmptyReplayNeverWipesTheFrozenPartialOnLiveFrames() {
+        // Codex P1 #838 r6: a full attach whose durable log is still empty
+        // (snapshot lastSeq nil / -1) must NOT arm the wipe — the next LIVE
+        // frame cannot rebuild the earlier content it would erase.
+        for lastSeq in [Int?.none, -1] {
+            let vm = AssistantVM()
+            vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("frozen partial", blockId: "t:p1")])
+            vm.debugArmReplayReset()
+            vm.debugApplyTurnEvents([.turnSnapshot(turnId: "t1", conversationId: "c1", status: "running",
+                                                   lastSeq: lastSeq, agentProseProtocol: 2)])
+            vm.debugApplyTurnEvents([.textDelta(" then live", blockId: "t:p1")])
+            XCTAssertTrue(vm.messages.last?.text.contains("frozen partial") == true,
+                          "live frame after an empty replay appended instead of wiping (lastSeq \(String(describing: lastSeq)))")
+        }
+    }
+
     func testReplayWipeWaitsForTheFirstReplayedContentEvent() {
         let vm = AssistantVM()
         vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("frozen partial", blockId: "t:p1")])

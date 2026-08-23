@@ -8453,9 +8453,15 @@ final class AssistantVM {
     /// replacing it with nothing.
     private var pendingReplayReset = false
     private var replayWipeArmed = false
+    /// Cursor of the attach that armed the reset — the wipe fires only if the
+    /// snapshot says the server holds rows PAST it (Codex P1 #838 r6).
+    private var replayResetAfterSeq = -1
 
     private func tailDurableTurn(_ turnId: String, afterSeq: Int, buffer: AgentEventBuffer) async throws {
-        if afterSeq < 0 { pendingReplayReset = true }
+        if afterSeq < 0 {
+            pendingReplayReset = true
+            replayResetAfterSeq = afterSeq
+        }
         defer {
             pendingReplayReset = false
             replayWipeArmed = false
@@ -8998,7 +9004,7 @@ final class AssistantVM {
                 thinkingLive = false
                 settleLiveMode()
                 errorToast = message
-            case .turnSnapshot(let turnId, let convId, _, _, let snapshotProtocol, let snapshotAssistantId):
+            case .turnSnapshot(let turnId, let convId, _, let snapshotLastSeq, let snapshotProtocol, let snapshotAssistantId):
                 // Durable-stream hello (PR 5) — reconcile ids on (re)connect, and
                 // NOW (stream provably attached) wipe the frozen partial so the
                 // authoritative replay rebuilds the tail without doubling.
@@ -9009,7 +9015,11 @@ final class AssistantVM {
                 }
                 if pendingReplayReset {
                     pendingReplayReset = false
-                    replayWipeArmed = true
+                    // Arm the wipe only when the server HAS rows to replay past our
+                    // cursor. An empty replay followed by live frames must append
+                    // to the frozen partial — those frames cannot rebuild what the
+                    // wipe would erase (Codex P1 #838 r6).
+                    replayWipeArmed = (snapshotLastSeq ?? -1) > replayResetAfterSeq
                 }
                 // The family the replay/tail is served in for THIS client — the
                 // reducer is selected from this, never from the event shapes.
@@ -9117,7 +9127,8 @@ final class AssistantVM {
     func debugIsTerminalForOurTurn(_ st: TurnStatusResponse, requireEvidence: Bool) -> Bool {
         isTerminalForOurTurn(st, requireEvidence: requireEvidence)
     }
-    func debugArmReplayReset() {
+    func debugArmReplayReset(afterSeq: Int = -1) {
+        replayResetAfterSeq = afterSeq
         pendingReplayReset = true
     }
     #endif
