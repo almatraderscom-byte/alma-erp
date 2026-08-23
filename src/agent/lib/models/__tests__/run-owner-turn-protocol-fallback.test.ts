@@ -54,20 +54,20 @@ vi.mock('@/lib/prisma', () => {
   }
   const table = (name: string) => ({
     findMany: vi.fn(async () => (name === 'agentMessage' ? [...store.messages] : [])),
-     
+
     findFirst: vi.fn(async (args: any = {}) => byId(name, args?.where)),
-     
+
     findUnique: vi.fn(async (args: any = {}) => byId(name, args?.where)),
     count: vi.fn(async () => 0),
     aggregate: vi.fn(async () => ({ _sum: {}, _count: 0 })),
     groupBy: vi.fn(async () => []),
-     
+
     create: vi.fn(async ({ data }: any) => {
       const row = { id: `${name}-${store.messages.length + 1}`, ...data }
       if (name === 'agentMessage') store.messages.push(row)
       return row
     }),
-     
+
     createMany: vi.fn(async ({ data }: any) => {
       if (name === 'agentToolCall') store.toolCalls.push(...data)
       return { count: Array.isArray(data) ? data.length : 0 }
@@ -79,11 +79,11 @@ vi.mock('@/lib/prisma', () => {
     deleteMany: vi.fn(async () => ({ count: 0 })),
   })
   const cache = new Map<string | symbol, ReturnType<typeof table>>()
-   
+
   const prisma: any = new Proxy({}, {
     get(_target, prop) {
       if (prop === '$transaction') {
-         
+
         return async (arg: any) => (typeof arg === 'function' ? arg(prisma) : [])
       }
       if (typeof prop === 'string' && prop.startsWith('$')) return async () => []
@@ -167,7 +167,7 @@ async function runTurn(options: Record<string, unknown> = {}): Promise<Event[]> 
     },
     continuationBinding: { state: 'absent' },
     ...options,
-     
+
   } as any)) events.push(event as Event)
   return events
 }

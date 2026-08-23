@@ -111,7 +111,7 @@ function routeRequest(turnId: string, afterSeq: number, signal: AbortSignal) {
   const req = new Request(url, { signal })
   // The route reads `req.nextUrl`; NextRequest is a thin wrapper over Request.
   Object.defineProperty(req, 'nextUrl', { value: url, configurable: true })
-   
+
   return GET(req as any, { params: Promise.resolve({ id: turnId }) })
 }
 

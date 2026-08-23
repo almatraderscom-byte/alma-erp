@@ -38,7 +38,7 @@ const database = vi.hoisted(() => {
     messages: [] as Array<Record<string, unknown>>,
     turnSeq: 0,
   }
-   
+
   const matches = (row: any, where: any): boolean => {
     for (const [key, expected] of Object.entries(where ?? {})) {
       const actual = row?.[key]
@@ -54,31 +54,31 @@ const database = vi.hoisted(() => {
     return true
   }
   const collection = <T extends Record<string, unknown>>(rows: () => T[], onCreate?: (data: T) => T) => ({
-     
+
     findUnique: async ({ where }: any) => rows().find((row) => matches(row, where)) ?? null,
-     
+
     findFirst: async ({ where }: any) => rows().find((row) => matches(row, where)) ?? null,
-     
+
     findMany: async ({ where }: any = {}) => rows().filter((row) => matches(row, where ?? {})),
-     
+
     updateMany: async ({ where, data }: any) => {
       const hit = rows().filter((row) => matches(row, where))
       for (const row of hit) Object.assign(row, data)
       return { count: hit.length }
     },
-     
+
     update: async ({ where, data }: any) => {
       const row = rows().find((candidate) => matches(candidate, where))
       if (row) Object.assign(row, data)
       return row ?? null
     },
-     
+
     create: async ({ data }: any) => {
       const created = (onCreate ? onCreate(data) : data) as T
       rows().push(created)
       return created
     },
-     
+
     upsert: async ({ where, update }: any) => {
       const row = rows().find((candidate) => matches(candidate, where))
       if (row) Object.assign(row, update)
@@ -108,7 +108,7 @@ const database = vi.hoisted(() => {
         versions: null,
         ...(data as Record<string, unknown>),
       }
-       
+
     }) as any,
     agentOpenTask: collection(() => state.openTasks),
     workflowRun: collection(() => state.workflows),
@@ -117,7 +117,7 @@ const database = vi.hoisted(() => {
     agentPlanStep: collection(() => []),
     agentPlan: collection(() => []),
     agentArtifactDeliveryOutbox: collection(() => []),
-     
+
     $transaction: async (arg: any) => (typeof arg === 'function' ? arg(client) : []),
     $queryRaw: async () => [],
     $executeRaw: async () => 0,
@@ -163,7 +163,7 @@ const enqueue = vi.hoisted(() => ({ calls: 0 }))
 vi.mock('@/agent/lib/approval-continuation', async () => {
   const binding = await import('@/agent/lib/continuation-binding')
   return {
-     
+
     enqueueAgentContinuation: async (opts: any) => {
       enqueue.calls += 1
       const bound = await binding.bindContinuationTurn({
