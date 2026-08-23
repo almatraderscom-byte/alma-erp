@@ -50,3 +50,17 @@ verified final; the superseded draft "কাজ শেষ, সব ঠিক আ�
   delivered once; gap healed before the later event; unhealable gap logged + continues;
   overlap dedupe; terminal-in-replay; replay failure; page cap; no-channel poll/settled;
   cursor resume. vitest green, tsc clean.
+
+### R-3 — durability fail-closed (handoff F-09 / F-10 / F-11)
+- Inline publisher (`turn-events.ts`): durable append retried (50/200/600 ms); an event
+  that cannot be stored is neither published nor counted in `lastSeq`
+  (`durabilityHoles()`); `getReplayEvents` opt-in `throwOnError` for the stream route.
+- Worker (`run-streamed-turn.mjs`): PostgREST `{ error }` treated as failure (retried);
+  `agent_turns.last_seq` bumped after every durable append (duplicate `/turn` requests
+  no longer mistake a healthy worker for a dead one; replay paging knows the tail);
+  a BullMQ retry resumes seq from the durable max; an upstream stream ending without
+  a terminal is reported as `error: turn_stream_ended_without_terminal` — no synthetic
+  `done` without a durable assistant message.
+- Tests: `turn-event-publisher.test.ts` (+2: transient retry, permanent hole) 8/8;
+  new `worker/src/__tests__/streamed-turn-durability.test.mjs` 6/6 (`node --test`);
+  `vitest run src/agent/lib/__tests__ src/app/api/assistant` 257 files / 2367 tests green.

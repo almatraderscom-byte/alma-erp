@@ -1239,7 +1239,14 @@ export async function POST(req: NextRequest) {
         clearInterval(keepAlive)
         clearTimeout(turnCapTimer)
         // Flush the durable log before the function freezes (replay completeness).
-        try { await durable?.finish() } catch { /* advisory — rows already best-effort */ }
+        try {
+          await durable?.finish()
+        } catch (err) {
+          // The durable log has no terminal for this turn (Codex P1 #837): say so
+          // loudly — a reconnecting client will be told by the stream's own
+          // replay-unavailable handling, but the operator must see it.
+          console.error('[assistant/chat] durable terminal repair FAILED', { turnId, error: err instanceof Error ? err.message : String(err) })
+        }
         req.signal.removeEventListener('abort', markDisconnected)
         // Safety net: if the turn ended without done/error (hard-cap timeout or a
         // crash), leave it marked error rather than stuck 'running'. No-op if the

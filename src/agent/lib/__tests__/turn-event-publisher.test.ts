@@ -12,11 +12,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 interface Row { turnId: string; seq: number; type: string; payload: unknown }
 const rows: Row[] = []
 const turnUpdates: Array<{ id: string; lastSeq: number }> = []
+/** Per-test failure injection for the durable write (R-3 fail-closed tests). */
+const upsertFailures = { remaining: 0, attempts: 0 }
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     agentTurnEvent: {
       upsert: async ({ create }: { create: Row }) => {
+        upsertFailures.attempts += 1
+        if (upsertFailures.remaining > 0) {
+          upsertFailures.remaining -= 1
+          throw new Error('db write failed')
+        }
         // (turnId, seq) unique: second write with same key is a no-op (upsert update:{})
         if (!rows.some((r) => r.turnId === create.turnId && r.seq === create.seq)) rows.push(create)
         return create
@@ -36,6 +43,8 @@ import { createTurnEventPublisher, createSeqDeduper, getReplayEvents } from '@/a
 beforeEach(() => {
   rows.length = 0
   turnUpdates.length = 0
+  upsertFailures.remaining = 0
+  upsertFailures.attempts = 0
   delete process.env.REDIS_URL
   delete process.env.LONG_TASK_REDIS_URL
 })
@@ -99,10 +108,71 @@ describe('Phase 3 — replay cursor semantics', () => {
     expect(dedup.accept(9)).toBe(true)
   })
 
-  it('getReplayEvents fails open to [] when the store is unreachable', async () => {
-    // The mock has no findMany — the helper must warn and return [] (fail-open),
-    // never throw into the SSE route.
+  it('getReplayEvents fails open to [] by default and throws for the stream endpoint (R-3)', async () => {
+    // The mock has no findMany. Advisory callers keep the fail-open [] …
     const out = await getReplayEvents('missing-turn', 3)
     expect(out).toEqual([])
+    // … but the stream endpoint must see the failure: a replay it cannot read
+    // ends the stream with an explicit error instead of a live-only tail.
+    await expect(getReplayEvents('missing-turn', 3, 5000, { throwOnError: true })).rejects.toThrow()
+  })
+})
+
+describe('R-3 — durable writes are fail-closed (handoff F-09)', () => {
+  it('retries a transient durable failure and then publishes + bumps lastSeq once', async () => {
+    upsertFailures.remaining = 2   // first two attempts fail, third succeeds
+    const pub = createTurnEventPublisher('t5', { coalesceMs: 5_000, retryDelaysMs: [1, 1, 1] })
+    pub.emit({ type: 'tool_start', id: 't', name: 'get_orders' })
+    const lastSeq = await pub.finish()
+
+    expect(upsertFailures.attempts).toBe(3)
+    expect(rows.map((r) => [r.seq, r.type])).toEqual([[0, 'tool_start']])
+    expect(turnUpdates).toEqual([{ id: 't5', lastSeq: 0 }])
+    expect(lastSeq).toBe(0)
+    expect(pub.durabilityHoles()).toBe(0)
+  })
+
+  it('an event that can never be stored is not published and does not advance lastSeq', async () => {
+    upsertFailures.remaining = 99
+    const pub = createTurnEventPublisher('t6', { coalesceMs: 5_000, retryDelaysMs: [1, 1] })
+    pub.emit({ type: 'tool_start', id: 't', name: 'lost' })   // control event → written immediately
+    // Let the 3 attempts fail, then storage recovers for the next event.
+    await new Promise((r) => setTimeout(r, 100))
+    upsertFailures.remaining = 0
+    pub.emit({ type: 'done', messageId: 'm1' })
+    await pub.finish()
+
+    expect(rows.map((r) => [r.seq, r.type])).toEqual([[1, 'done']])
+    expect(turnUpdates).toEqual([{ id: 't6', lastSeq: 1 }])   // no lastSeq for the hole
+    expect(pub.durabilityHoles()).toBe(1)
+  })
+})
+
+describe('R-3 round 2 — terminal durability repair (Codex P1 #837)', () => {
+  it('a terminal whose write failed is repaired with an explicit durable error terminal', async () => {
+    upsertFailures.remaining = 3   // the `done` fails every attempt…
+    const pub = createTurnEventPublisher('t7', { coalesceMs: 5_000, retryDelaysMs: [1, 1] })
+    pub.emit({ type: 'done', messageId: 'm1' })
+    // Wait for the three failing attempts to actually happen (a fixed 30 ms
+    // sleep was flaky under CPU load: storage came back before the last
+    // attempt and the `done` landed instead of being abandoned).
+    const deadline = Date.now() + 5_000
+    while (upsertFailures.remaining > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5))
+    await new Promise((r) => setTimeout(r, 10))
+    upsertFailures.remaining = 0   // …storage is back for the repair
+    const lastSeq = await pub.finish()
+    expect(rows.map((r) => [r.seq, r.type, (r.payload as { message?: string }).message])).toEqual([
+      [1, 'error', 'turn_terminal_not_durable:done'],
+    ])
+    expect(lastSeq).toBe(1)
+    expect(pub.durabilityHoles()).toBe(1)
+  })
+
+  it('finish() rejects when no terminal can be stored at all', async () => {
+    upsertFailures.remaining = 99
+    const pub = createTurnEventPublisher('t8', { coalesceMs: 5_000, retryDelaysMs: [1, 1] })
+    pub.emit({ type: 'done', messageId: 'm1' })
+    await expect(pub.finish()).rejects.toThrow(/terminal event could not be stored durably/)
+    expect(rows).toHaveLength(0)
   })
 })

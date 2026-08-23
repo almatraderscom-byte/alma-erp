@@ -85,25 +85,35 @@ export async function getReplayEvents(
  * this gives the INLINE (serverless) execution the same durability, so a
  * reconnecting client can replay a direct turn instead of waiting for polls.
  *
- * Semantics per event: append durable row FIRST, then publish live, then bump
- * `AgentTurn.lastSeq` — the same order the worker uses. Writes are serialized on
- * an internal chain so the SSE hot loop never awaits the database; text/thinking
- * deltas are coalesced (~350ms or maxChars) to keep row counts sane, and control
- * events flush pending deltas first so replay chronology is exact.
+ * Semantics per event: append durable row FIRST (bounded retries), then publish
+ * live, then bump `AgentTurn.lastSeq` — the same order the worker uses. A row
+ * that cannot be stored is neither published nor counted (fail-closed, R-3).
+ * Writes are serialized on an internal chain so the SSE hot loop never awaits
+ * the database; text/thinking deltas are coalesced (~350ms or maxChars) to keep
+ * row counts sane, and control events flush pending deltas first so replay
+ * chronology is exact.
  */
 export interface TurnEventPublisher {
   emit(event: { type: string; [k: string]: unknown }): void
   /** Flush + await every pending write. Returns the final lastSeq. */
   finish(): Promise<number>
+  /** Events that could not be stored durably (and were therefore not published). */
+  durabilityHoles(): number
 }
+
+const DEFAULT_DURABLE_RETRY_DELAYS_MS = [50, 200, 600]
 
 export function createTurnEventPublisher(
   turnId: string,
-  opts?: { coalesceMs?: number; maxDeltaChars?: number },
+  opts?: { coalesceMs?: number; maxDeltaChars?: number; retryDelaysMs?: number[] },
 ): TurnEventPublisher {
   const coalesceMs = opts?.coalesceMs ?? 350
   const maxDeltaChars = opts?.maxDeltaChars ?? 2000
+  const retryDelaysMs = opts?.retryDelaysMs ?? DEFAULT_DURABLE_RETRY_DELAYS_MS
   let seq = -1
+  let holes = 0
+  /** A `done`/`error` whose durable write failed every attempt (type kept for the repair). */
+  let terminalLost: string | null = null
   let chain: Promise<void> = Promise.resolve()
   // Prose lifecycle v2: a text delta may carry `blockId`/`revision`. Deltas are
   // coalesced only within ONE block — merging across blocks would corrupt the
@@ -129,10 +139,10 @@ export function createTurnEventPublisher(
     return redis
   }
 
-  function writeRow(event: { type: string }) {
-    seq += 1
-    const mySeq = seq
-    chain = chain.then(async () => {
+  /** Durable append with bounded retries. Returns false when the row was never stored. */
+  async function storeDurably(mySeq: number, event: { type: string }): Promise<boolean> {
+    let lastError: unknown = null
+    for (let attempt = 0; attempt <= retryDelaysMs.length; attempt++) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (prisma as any).agentTurnEvent.upsert({
@@ -140,8 +150,30 @@ export function createTurnEventPublisher(
           create: { turnId, seq: mySeq, type: event.type, payload: event },
           update: {},
         })
+        return true
       } catch (err) {
-        console.warn(`[turn-events] durable write seq=${mySeq} failed:`, err instanceof Error ? err.message : err)
+        lastError = err
+        if (attempt < retryDelaysMs.length) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[attempt]))
+        }
+      }
+    }
+    console.error(`[turn-events] durable write seq=${mySeq} FAILED after ${retryDelaysMs.length + 1} attempts:`, lastError instanceof Error ? lastError.message : lastError)
+    return false
+  }
+
+  function writeRow(event: { type: string }) {
+    seq += 1
+    const mySeq = seq
+    chain = chain.then(async () => {
+      // Reliability epic R-3 (handoff F-09): durable FIRST; an event that could
+      // not be stored is neither published nor counted in lastSeq — the live
+      // tail and the replay log must never disagree about what happened.
+      const stored = await storeDurably(mySeq, event)
+      if (!stored) {
+        holes += 1
+        if (isTerminalEventType(event.type)) terminalLost = event.type
+        return
       }
       try {
         const pub = await redisPublisher()
@@ -199,10 +231,30 @@ export function createTurnEventPublisher(
     async finish() {
       flushDelta()
       await chain
+      if (terminalLost) {
+        // The log has no terminal: a client that reconnects after the live SSE
+        // dropped would tail forever. Repair with an explicit durable terminal
+        // (its own seq, full retries); if even that fails, reject so the caller
+        // cannot mistake the turn for cleanly finished (Codex P1 #837).
+        const lost = terminalLost
+        terminalLost = null
+        writeRow({ type: 'error', message: `turn_terminal_not_durable:${lost}` } as { type: string })
+        await chain
+        if (terminalLost) {
+          if (redis) {
+            try { await redis.quit() } catch { redis.disconnect?.() }
+          }
+          throw new Error(`[turn-events] turn ${turnId}: terminal event could not be stored durably`)
+        }
+      }
       if (redis) {
         try { await redis.quit() } catch { redis.disconnect?.() }
       }
+      if (holes > 0) console.error(`[turn-events] turn ${turnId} finished with ${holes} durable hole(s) — replay is incomplete`)
       return seq
+    },
+    durabilityHoles() {
+      return holes
     },
   }
 }
