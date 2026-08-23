@@ -27,10 +27,14 @@ enum AlmaNativeRouter {
         // Strip query/fragment — the map is keyed on bare route paths.
         let clean = path.split(separator: "?").first.map(String.init) ?? path
 
-        func host<V: View>(_ view: V, _ title: String) -> UIViewController {
+        func host<V: View>(_ view: V, _ title: String, takeover: Bool = false) -> UIViewController {
             let h = AlmaHostingController(rootView: view)
             h.title = title
             h.hidesBottomBarWhenPushed = false
+            // Full-takeover screens draw their own header; the shell's nav
+            // controller hides the bar for them and restores it for everything
+            // else (see AlmaNavigationController).
+            h.almaHidesNavigationBar = takeover
             // The More tab's nav has prefersLargeTitles=true; a pushed SwiftUI host in
             // large-title mode renders an EMPTY expanded bar (big gap, no visible page
             // name — owner-reported 2026-07-06). Force the compact INLINE title so every
@@ -54,7 +58,7 @@ enum AlmaNativeRouter {
         case "/", "/dashboard": return host(DashboardScreen(openWeb: openWebForced), "Dashboard")
         // Owner 2026-07-11: login goes NATIVE — every authCard's "লগইন খুলুন" push lands
         // here via pushSmart; the screen's own "ওয়েবে লগইন" fallback stays forced-web.
-        case "/login": return host(NativeLoginScreen(onSuccess: {}, openWeb: openWebForced), "Sign in")
+        case "/login": return host(NativeLoginScreen(onSuccess: {}, openWeb: openWebForced), "Sign in", takeover: true)
         // S8 audit fix: the three tab pages were reachable natively ONLY as tab roots —
         // any cross-page link (Dashboard "সব দেখুন" → /orders, briefing → /approvals)
         // fell through to the web view. One case each closes that hole.
@@ -109,7 +113,7 @@ enum AlmaNativeRouter {
         case "/agent/subscriptions": return host(SubscriptionsScreen(openWeb: openWebForced), "Subscriptions")
         case "/agent/whatsapp": return host(AgentWhatsappScreen(openWeb: openWebForced), "WhatsApp inbox")
         case "/agent/catalog-images": return host(CatalogImagesScreen(openWeb: openWebForced), "Product Images")
-        case "/agent/creative-studio": return host(CreativeStudioScreen(openWeb: openWebForced), "Creative Studio")
+        case "/agent/creative-studio": return host(CreativeStudioScreen(openWeb: openWebForced), "Creative Studio", takeover: true)
         // The VPS browser, live. Distinct from /agent/live-watch, which watches the
         // companion inside the owner's OWN Chrome — different machine, different feed.
         case "/agent/browser-live": return host(BrowserLiveScreen(), "Live Browser")

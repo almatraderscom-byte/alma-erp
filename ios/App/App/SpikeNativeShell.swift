@@ -1440,7 +1440,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     /// light/dark frosted appearance tracks the app-wide mode via AlmaTheme (Claude-style in
     /// both) — the Assistant adds its own hamburger/coral buttons on top.
     static func darkNav(root: UIViewController, tabTitle: String, icon: String, largeTitles: Bool) -> UINavigationController {
-        let nav = UINavigationController(rootViewController: root)
+        let nav = AlmaNavigationController(rootViewController: root)
         nav.navigationBar.prefersLargeTitles = largeTitles
         AlmaTheme.applyNav(nav)
         nav.tabBarItem = UITabBarItem(
