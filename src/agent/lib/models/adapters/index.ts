@@ -5,6 +5,10 @@ import { createOpenAiAdapter, createXaiAdapter } from '@/agent/lib/models/adapte
 import { createOpenRouterAdapter } from '@/agent/lib/models/adapters/openrouter'
 import { createAnthropicAdapter } from '@/agent/lib/models/adapters/anthropic'
 import { costGatePreAuth, costGateMessage, type CostGateSurface } from '@/agent/lib/models/cost-gate'
+import {
+  providerApi,
+  withProviderProtocolNormalizer,
+} from '@/agent/lib/models/provider-protocol'
 
 /**
  * Cost Governor seam (audit P0-2): EVERY provider chat call is pre-authorized
@@ -38,7 +42,10 @@ function withCostGate(inner: ProviderAdapter, surface: CostGateSurface): Provide
 }
 
 export function adapterFor(provider: Provider, opts?: { surface?: CostGateSurface }): ProviderAdapter {
-  return withCostGate(rawAdapterFor(provider), opts?.surface ?? 'other')
+  return withProviderProtocolNormalizer(
+    withCostGate(rawAdapterFor(provider), opts?.surface ?? 'other'),
+    { provider, api: providerApi(provider) },
+  )
 }
 
 function rawAdapterFor(provider: Provider): ProviderAdapter {

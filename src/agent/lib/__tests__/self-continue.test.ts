@@ -14,17 +14,44 @@ const mockPrisma = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
 
-const continuation = vi.hoisted(() => ({ enqueueAgentContinuation: vi.fn().mockResolvedValue(undefined) }))
+const continuation = vi.hoisted(() => ({
+  enqueueAgentContinuation: vi.fn().mockResolvedValue({
+    outcome: 'queued', turnId: 'next-turn', requestId: 'self-request', status: 'running',
+  }),
+}))
 vi.mock('@/agent/lib/approval-continuation', () => continuation)
 
+const sourceBinding = vi.hoisted(() => ({
+  buildSelfContinueBinding: vi.fn(),
+}))
+vi.mock('@/agent/lib/continuation-binding', () => sourceBinding)
+
 import { shouldAutoContinueTurn, mayContinueChain, MAX_SELF_CONTINUE_HOPS } from '@/agent/lib/continuation-policy'
-import { scheduleSelfContinue, buildResumeDirective, clearHops } from '@/agent/lib/self-continue'
+import { scheduleSelfContinue, clearHops } from '@/agent/lib/self-continue'
 
 beforeEach(() => {
   vi.clearAllMocks()
   mockPrisma.agentKvSetting.findUnique.mockResolvedValue(null)
   mockPrisma.agentKvSetting.upsert.mockResolvedValue({})
   mockPrisma.agentKvSetting.deleteMany.mockResolvedValue({ count: 0 })
+  continuation.enqueueAgentContinuation.mockResolvedValue({
+    outcome: 'queued', turnId: 'next-turn', requestId: 'self-request', status: 'running',
+  })
+  sourceBinding.buildSelfContinueBinding.mockResolvedValue({
+    v: 1,
+    origin: 'self_continue',
+    source: { kind: 'turn', id: 'source-turn-1' },
+    conversationId: 'c1',
+    domain: 'seo',
+    event: 'deadline_resume',
+    workflowRunId: 'workflow-seo-1',
+    authorityRef: {
+      kind: 'source_binding',
+      id: 'continuation:v1:job_result:pending_action:action-seo:artifact_delivered',
+    },
+    directive: { kind: 'deadline_resume', version: 1 },
+    expected: { sourceStatus: ['running', 'done'] },
+  })
 })
 
 describe('when a deadline-hit turn should carry itself on', () => {
@@ -72,15 +99,34 @@ describe('when a deadline-hit turn should carry itself on', () => {
 
 describe('the wake-up chain', () => {
   it('schedules the next hop on the server, so his app need not be open', async () => {
-    const res = await scheduleSelfContinue({ conversationId: 'c1', summary: 'অডিট পড়া হয়েছে' })
+    const res = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1',
+    })
 
     expect(res.scheduled).toBe(true)
     expect(res.hops).toBe(1)
     const call = continuation.enqueueAgentContinuation.mock.calls[0][0]
     expect(call.conversationId).toBe('c1')
     expect(call.force).toBe(true)               // not subject to the auto-continue toggle
-    expect(call.message).toContain('SELF-CONTINUE')
-    expect(call.message).toContain('অডিট পড়া হয়েছে')
+    expect(call.message).toBeUndefined()
+    expect(sourceBinding.buildSelfContinueBinding).toHaveBeenCalledWith({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1',
+    })
+    expect(call.binding).toEqual({
+      v: 1,
+      origin: 'self_continue',
+      source: { kind: 'turn', id: 'source-turn-1' },
+      conversationId: 'c1',
+      domain: 'seo',
+      event: 'deadline_resume',
+      workflowRunId: 'workflow-seo-1',
+      authorityRef: {
+        kind: 'source_binding',
+        id: 'continuation:v1:job_result:pending_action:action-seo:artifact_delivered',
+      },
+      directive: { kind: 'deadline_resume', version: 1 },
+      expected: { sourceStatus: ['running', 'done'] },
+    })
   })
 
   it('counts hops so a confused task cannot run all night', () => {
@@ -92,11 +138,32 @@ describe('the wake-up chain', () => {
   it('stops scheduling at the hop limit and says why', async () => {
     mockPrisma.agentKvSetting.findUnique.mockResolvedValue({ value: String(MAX_SELF_CONTINUE_HOPS) })
 
-    const res = await scheduleSelfContinue({ conversationId: 'c1', summary: 'x' })
+    const res = await scheduleSelfContinue({ conversationId: 'c1', sourceTurnId: 'source-turn-1' })
 
     expect(res.scheduled).toBe(false)
     expect(res.reason).toContain('hop limit')
     expect(continuation.enqueueAgentContinuation).not.toHaveBeenCalled()
+  })
+
+  it('fails visibly without an exact predecessor turn instead of using the summary as authority', async () => {
+    const res = await scheduleSelfContinue({ conversationId: 'c1', sourceTurnId: '' })
+
+    expect(res).toEqual({ scheduled: false, hops: 0, reason: 'source turn missing' })
+    expect(continuation.enqueueAgentContinuation).not.toHaveBeenCalled()
+    expect(sourceBinding.buildSelfContinueBinding).not.toHaveBeenCalled()
+    expect(mockPrisma.agentKvSetting.upsert).not.toHaveBeenCalled()
+  })
+
+  it('does not claim a wake was scheduled when bound enqueue is rejected', async () => {
+    continuation.enqueueAgentContinuation.mockResolvedValue({
+      outcome: 'rejected', turnId: null, requestId: null, status: 'binding_required',
+    })
+
+    const res = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1',
+    })
+
+    expect(res).toMatchObject({ scheduled: false, hops: 1, reason: 'binding_required' })
   })
 
   it('clears an already-absent hop counter without a record-not-found error', async () => {
@@ -107,12 +174,5 @@ describe('the wake-up chain', () => {
     expect(mockPrisma.agentKvSetting.deleteMany).toHaveBeenNthCalledWith(1, {
       where: { key: 'self_continue_hops:c1' },
     })
-  })
-
-  it('tells the next hop to continue, not to re-plan from scratch', () => {
-    const d = buildResumeDirective(3, 'ব্যাচ ২ শেষ')
-    expect(d).toContain('hop 3')
-    expect(d).toContain('আবার কোরো না')
-    expect(d).toContain('Boss-কে জিজ্ঞেস করার দরকার নেই')
   })
 })

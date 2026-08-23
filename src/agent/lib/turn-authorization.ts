@@ -76,7 +76,7 @@ const ENGLISH_IMPERATIVE_RE =
 // NOTE: `\b` is ASCII-only in JS, so Bangla alternatives must sit OUTSIDE the
 // \b-fenced group or they can never match.
 const DEEP_SCOPE_SRC =
-  '(?:\\b(?:deep|full|complete|comprehensive|detailed|thorough|end[\\s-]*to[\\s-]*end|entire|whole)\\b|গভীর|পূর্ণ|সম্পূর্ণ|পুরো|বিস্তারিত)'
+  '(?:\\b(?:deep(?:ly)?|full|complete|comprehensive|detailed|thorough|end[\\s-]*to[\\s-]*end|entire|whole)\\b|গভীর|পূর্ণ|সম্পূর্ণ|পুরো|বিস্তারিত)'
 export const DEEP_SCOPE_RE = new RegExp(DEEP_SCOPE_SRC, 'i')
 
 // A scope word + deliverable noun IS an order even without a verb:

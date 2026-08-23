@@ -192,6 +192,15 @@ export interface FocusLite {
   currentStep?: string | null
   completedSteps?: string[]
   lastEffectId?: string | null
+  /** Exact canonical workflow identity, when this focus fronts a WorkflowRun. */
+  workflowRunId?: string | null
+}
+
+export interface ContinuationSourceLite {
+  /** Finite durable execution domain (for example `seo`). */
+  domain: string
+  /** Exact workflow that emitted the source event, when applicable. */
+  workflowRunId: string | null
 }
 
 export interface ContinuityInput {
@@ -204,6 +213,11 @@ export interface ContinuityInput {
   activeFocus: FocusLite | null
   parkedFocuses?: FocusLite[]
   checkpoints: Array<{ taskRef?: string; taskType: string; step: string; failureClass?: string }>
+  /**
+   * Server-bound source event for an internal continuation. When present it
+   * outranks transcript-shaped words such as an old "Continue".
+   */
+  continuationSource?: ContinuationSourceLite | null
 }
 
 export interface ContinuityDecision {
@@ -226,6 +240,36 @@ export function resolveContinuityDecision(input: ContinuityInput): ContinuityDec
   // 0. Listen mode: keep every focus, resume nothing.
   if (input.listenMode) {
     return { ...base, binding: 'none', action: 'listen', reason: 'listen_mode_suppresses_work' }
+  }
+
+  // A worker/job continuation is bound to its immutable source before any text
+  // classifier runs. The text may be the last historical owner utterance and
+  // therefore has zero routing authority here. Resume only the focus carrying
+  // the exact WorkflowRun id; if it is absent, let the source-specific runner
+  // proceed without borrowing an unrelated active/dormant focus.
+  if (input.continuationSource) {
+    const workflowRunId = input.continuationSource.workflowRunId?.trim() ?? ''
+    const candidates = [input.activeFocus, ...(input.parkedFocuses ?? [])]
+      .filter((focus): focus is FocusLite => Boolean(focus))
+    const matching = workflowRunId
+      ? candidates.filter((focus) => focus.workflowRunId === workflowRunId)
+      : []
+    if (matching.length === 1) {
+      const focus = matching[0]
+      return {
+        forbiddenEffects: focus.completedSteps ?? [],
+        binding: 'active_focus',
+        action: 'resume',
+        focusId: focus.id,
+        reason: 'source_binding_matches_workflow_focus',
+      }
+    }
+    return {
+      forbiddenEffects: [],
+      binding: 'none',
+      action: 'proceed',
+      reason: 'source_binding_has_no_matching_focus',
+    }
   }
 
   // 1. Explicit reply-to card wins over everything.
@@ -378,6 +422,7 @@ export async function resolveConversationContinuity(opts: {
   listenMode: boolean
   replyToCardId?: string | null
   surface?: string | null
+  continuationSource?: ContinuationSourceLite | null
 }): Promise<{ decision: ContinuityDecision; mode: ContinuityResolverMode } | null> {
   const mode = continuityResolverMode()
   if (mode === 'off') return null
@@ -426,9 +471,17 @@ export async function resolveConversationContinuity(opts: {
             currentStep: stack.active.currentStep,
             completedSteps: stack.active.completedSteps,
             lastEffectId: stack.active.lastEffectId,
+            workflowRunId: stack.active.workflowRunId,
           }
         : null,
-      parkedFocuses: stack.parked.map((f) => ({ id: f.id, goal: f.goal, kind: f.kind, status: 'parked' as const })),
+      parkedFocuses: stack.parked.map((f) => ({
+        id: f.id,
+        goal: f.goal,
+        kind: f.kind,
+        status: 'parked' as const,
+        workflowRunId: f.workflowRunId,
+        completedSteps: f.completedSteps,
+      })),
       checkpoints: (checkpoints as Array<{ checkpoint: { taskRef: string; taskType: string; currentStep?: string } }>).map(
         (c) => ({
           taskRef: c.checkpoint.taskRef,
@@ -436,6 +489,7 @@ export async function resolveConversationContinuity(opts: {
           step: c.checkpoint.currentStep ?? 'unknown',
         }),
       ),
+      continuationSource: opts.continuationSource ?? null,
     })
     return { decision, mode }
   } catch (err) {

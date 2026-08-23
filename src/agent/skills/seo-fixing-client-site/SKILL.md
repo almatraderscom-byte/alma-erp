@@ -31,7 +31,8 @@ keywords: client site seo, ক্লায়েন্টের সাইট, �
 3. **যাচাই** — বড় দাবিগুলো `fetch_website_page` দিয়ে নিজে মিলিয়ে নাও।
 4. **করণীয়** — প্রতিটা সমস্যার জন্য: কোন পেজ, কী বদলাতে হবে, **কীভাবে**।
    ক্লায়েন্টের ডেভেলপার যেন ধরে কাজ করতে পারে।
-5. **রিপোর্ট** — `save_artifact`। প্রাধান্য অনুযায়ী সাজানো।
+5. **রিপোর্ট** — `check_website_seo_audit`-এর existing `artifactCard`। সার্ভারের
+   durable outbox প্রাধান্য অনুযায়ী সাজানো dashboard আগেই ফাইল করে; আবার save নয়।
 
 ## একাধিক সাইট একসাথে বললে
 
@@ -41,8 +42,8 @@ Boss যে ক্রমে নাম বলেছেন, সেই ক্রম
 
 ## ডেলিভারি কী, আর কী নয়
 
-শুধু চ্যাটে লেখা = ডেলিভারি **নয়**। `save_artifact` দিয়ে ক্লায়েন্ট-রেডি একটা
-ফাইল না বানানো পর্যন্ত কাজ শেষ নয়। Boss "report" শব্দটা না বললেও এটাই নিয়ম।
+শুধু চ্যাটে লেখা = ডেলিভারি **নয়**। executed audit-এর durable outbox-linked
+`artifactCard`-টাই ক্লায়েন্ট-রেডি ফাইল; আলাদা `save_artifact` ডাকা নিষেধ।
 
 status `executed` হলে `check_website_seo_audit` আবার ডাকো `read: "report"` দিয়ে —
 পুরো client-grade রিপোর্টটা তখন **নিজে থেকেই চ্যাটে file card হয়ে যায়**।
@@ -89,4 +90,4 @@ call না করেই "আপনার Chrome দিয়ে করছি" �
 
 ## শেষ কখন
 
-`check_website_seo_audit` সফল **এবং** করণীয়সহ রিপোর্ট artifact তৈরি।
+`check_website_seo_audit` সফল **এবং** করণীয়সহ existing `artifactCard` পাওয়া।

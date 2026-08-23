@@ -55,20 +55,6 @@ export async function clearHops(conversationId: string): Promise<void> {
   await prisma.agentKvSetting.deleteMany({ where: { key: hopsKey(conversationId) } }).catch(() => {})
 }
 
-/** The resume instruction the next hop wakes up to. */
-export function buildResumeDirective(hops: number, summary: string): string {
-  return (
-    `[SELF-CONTINUE — hop ${hops}] আগের টার্ন থেমেছে, কিন্তু durable completion criteria অনুযায়ী কাজ শেষ হয়নি। ` +
-    `Boss নতুন কিছু বলেননি; তুমি নিজেই নিজের কাজ চালিয়ে যাচ্ছ।\n\n` +
-    (summary ? `আগের টার্নে যেখানে ছিলে:\n${summary}\n\n` : '') +
-    `নিয়ম:\n` +
-    `- যা আগে হয়ে গেছে তা আবার কোরো না — checkpoint/আগের ধাপ পড়ে ঠিক পরের কাজ থেকে ধরো।\n` +
-    `- আবার শুরু থেকে পরিকল্পনা বোলো না; কাজটা এগোও।\n` +
-    `- এই টার্নেও শেষ না হলে আবার একই ভাবে নিজে থেকে চালিয়ে যাবে — Boss-কে জিজ্ঞেস করার দরকার নেই।\n` +
-    `- সত্যিই কিছু জানার থাকলে তখনই থামবে এবং ask_user দেবে।`
-  )
-}
-
 export interface SelfContinueResult {
   scheduled: boolean
   hops: number
@@ -81,10 +67,14 @@ export interface SelfContinueResult {
  */
 export async function scheduleSelfContinue(input: {
   conversationId: string
-  /** What the turn had achieved when the deadline hit — becomes the resume brief. */
-  summary: string
+  /** Exact predecessor whose persisted checkpoint/workflow authorizes the wake. */
+  sourceTurnId: string
 }): Promise<SelfContinueResult> {
   const { conversationId } = input
+  const sourceTurnId = input.sourceTurnId.trim()
+  if (!sourceTurnId) {
+    return { scheduled: false, hops: 0, reason: 'source turn missing' }
+  }
   try {
     const hops = await readHops(conversationId)
     if (!mayContinueChain(hops)) {
@@ -93,17 +83,22 @@ export async function scheduleSelfContinue(input: {
     }
 
     const next = hops + 1
+    const { buildSelfContinueBinding } = await import('@/agent/lib/continuation-binding')
+    const binding = await buildSelfContinueBinding({ conversationId, sourceTurnId })
     await writeHops(conversationId, next)
 
     const { enqueueAgentContinuation } = await import('@/agent/lib/approval-continuation')
-    await enqueueAgentContinuation({
+    const enqueued = await enqueueAgentContinuation({
       conversationId,
       // Carrying on with work Boss already asked for is correctness, not an
       // approval convenience — it must not depend on the auto-continue toggle.
       force: true,
-      message: buildResumeDirective(next, input.summary),
+      binding,
     })
-    return { scheduled: true, hops: next }
+    if (['queued', 'completed', 'observe', 'deferred'].includes(enqueued.outcome)) {
+      return { scheduled: true, hops: next }
+    }
+    return { scheduled: false, hops: next, reason: enqueued.status || enqueued.outcome }
   } catch (err) {
     console.warn('[self-continue] could not schedule:', err instanceof Error ? err.message : err)
     return { scheduled: false, hops: 0, reason: 'schedule failed' }

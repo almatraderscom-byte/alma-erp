@@ -15,8 +15,7 @@
     "run_website_seo_audit",
     "check_website_seo_audit",
     "fetch_website_page",
-    "web_research",
-    "save_artifact"
+    "web_research"
   ],
   "outputContract": {
     "kind": "artifact_report",
@@ -33,10 +32,8 @@
   ],
   "done": [
     {
-      "tool": "check_website_seo_audit"
-    },
-    {
-      "tool": "save_artifact"
+      "tool": "check_website_seo_audit",
+      "check": "seo_artifact_delivered"
     }
   ],
   "networkPolicy": "allowlist",

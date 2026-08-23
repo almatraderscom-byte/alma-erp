@@ -32,6 +32,10 @@ import {
   isPotentialYouTubeComputerUseMutation,
 } from '@/agent/lib/live-browser/intent'
 import {
+  EXPLICIT_CHROME_MODALITY_TOOLS,
+  hasExplicitChromeModality,
+} from '@/agent/lib/live-browser/modality'
+import {
   DIRECT_YOUTUBE_ROUTE_MISS_BLOCKER,
   DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER,
   DIRECT_YOUTUBE_LANE_UNAVAILABLE_TOOL_NAMES,
@@ -44,19 +48,27 @@ import {
   type DirectYouTubeTurnLane,
 } from '@/agent/lib/live-browser/turn-lane'
 import {
+  CONTINUATION_BINDING_BLOCKER,
+  OWNER_INPUT_BINDING_BLOCKER,
+  continuationBindingBlockerForTurn,
+  directBrowserOwnerInputForTurn,
   loadTurnOwnerInputBinding,
   snapshotTurnHistoryRows,
   turnScopedOwnerInput,
 } from '@/agent/lib/live-browser/turn-owner-input'
 import {
-  claimsCompletion,
+  loadContinuationBindingForTurn,
+  type ContinuationBindingV1,
+  type LoadedContinuationBinding,
+} from '@/agent/lib/continuation-binding'
+import {
   dependencyBlockMessage,
-  doneGateMessage,
   filterToolsForSkill,
   skillAllowlist,
   skillDependencyGaps,
-  skillDoneMisses,
+  skillDoneGateForClaim,
 } from '@/agent/lib/skill-engine/enforcement'
+import { liveArtifactCard } from '@/agent/lib/artifact-card-visibility'
 import { getOfficePulse } from '@/agent/lib/office-pulse'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
@@ -83,8 +95,8 @@ import {
   WorkflowVersionConflictError,
   type WorkflowRunView,
 } from '@/agent/lib/workflow-run'
-import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
-import { executeTool, executePersonalTool } from '@/agent/tools/registry'
+import { getAgentControls, controlsPromptNote } from '@/agent/lib/agent-controls'
+import { executeTool, executePersonalTool, type AgentTool } from '@/agent/tools/registry'
 import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
 import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
 import { applyOwnerHookRules } from '@/agent/lib/hook-rules'
@@ -112,7 +124,17 @@ import {
   workStepsSignature,
 } from '@/agent/lib/work-steps'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
-import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
+import {
+  FIND_TOOL_NAME,
+  resolveToolsByName,
+  MAX_DYNAMIC_TOOLS_PER_TURN,
+} from '@/agent/tools/find-tool'
+import {
+  composeTurnToolAllowlist,
+  filterTurnToolDefinitions,
+  prepareFindToolResultForTurn,
+  type FindToolResultLike,
+} from '@/agent/tools/selection/turn-capability-context'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
 import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
@@ -128,8 +150,8 @@ import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/tur
 import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
 import { compileTaskCard, CONTINUATION_KEEP_MESSAGES } from '@/agent/lib/task-card'
-import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
-import { adviseForAction, filterToolsForPermissionMode, isFamilyGrantLive, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
+import { chatModeDirective, normalizeChatMode } from '@/agent/lib/chat-mode'
+import { adviseForAction, isFamilyGrantLive, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import {
@@ -173,10 +195,10 @@ import {
 } from '@/agent/lib/turn-loop-policy'
 import {
   deriveOwnerTurnAuthorization,
-  filterToolsForOwnerTurn,
   isReadOnlyPlanControlTool,
   ownerTurnAuthorizationNote,
   upgradeAuthorizationForDeliverable,
+  type OwnerTurnAuthorization,
 } from '@/agent/lib/turn-authorization'
 import {
   verifyClaimsAgainstLedger,
@@ -213,6 +235,12 @@ import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/mod
 import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { adapterFor } from '@/agent/lib/models/adapters'
+import {
+  isExplicitOwnerProtocolPin,
+  isProviderContentProtocolError,
+  protocolSafeFallback,
+  runtimeProtocolFallback,
+} from '@/agent/lib/models/provider-protocol'
 import { logRouteSpan, logToolEvent } from '@/agent/lib/tool-telemetry'
 import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 import { isRoutineGraphEnabled, runRoutineTurnGraph, type RoutineGraphResult } from '@/agent/lib/graph/routine-turn-graph'
@@ -251,64 +279,9 @@ import {
 import type { NeutralMsg, NeutralTool } from '@/agent/lib/models/types'
 import { modelProviderToCostProvider } from '@/agent/lib/cost-provider'
 
-/** The shape of a find_tool result as this loop reads (and edits) it. */
-interface FindToolResultLike {
-  data?: { matches?: Array<{ name?: unknown }>; note?: unknown }
-}
-
-/**
- * A find_tool result must never advertise a tool this turn cannot call.
- *
- * Deadlock caught live 2026-08-12 (conversation 8b7b482e, unattended plan
- * driver): find_tool matched tools the pinned skill's allowlist then refused,
- * but only a console.info recorded the refusal — the MODEL still saw the
- * matches, called them, and the membership gate bounced it back to "আগে
- * find_tool দিয়ে খুঁজে নাও". find_tool ok → membership_gate/tool_not_shipped,
- * repeating every plan-driver tick, burning tokens with the step never
- * completing.
- *
- * So the filter now EDITS the result in place before it is serialized into the
- * transcript: refused matches are removed and a note says why, giving the model
- * an honest exit (use a permitted tool, or tell Boss the tool is not allowed at
- * this step). Returns the names that may actually be granted this turn.
- * Exported for tests.
- */
-export function filterFindToolResultForTurn(
-  res: FindToolResultLike | undefined,
-  opts: {
-    /** Names already shipped/loaded this turn — neither granted again nor refused. */
-    already: Set<string>
-    turnDenylist: Set<string>
-    /** The pinned skill's allowlist (null = does not narrow). */
-    turnAllowlist: Set<string> | null
-  },
-): { permitted: string[]; refused: string[] } {
-  const matchNames = (res?.data?.matches ?? [])
-    .map((m) => String(m?.name ?? ''))
-    .filter(Boolean)
-  if (matchNames.length === 0) return { permitted: [], refused: [] }
-  // A SEARCH MUST NOT WIDEN WHAT THIS TURN IS ALLOWED TO DO. Without this
-  // the skill allowlist was list-time only: a read-only audit skill could
-  // find_tool its way to a write tool, and "an absent tool is a guarantee"
-  // was untrue exactly where it was quoted most.
-  const permitted = matchNames.filter((n) => {
-    if (opts.already.has(n)) return false
-    if (opts.turnDenylist.has(n)) return false
-    if (opts.turnAllowlist && !opts.turnAllowlist.has(n)) return false
-    return true
-  })
-  const refused = matchNames.filter((n) => !opts.already.has(n) && !permitted.includes(n))
-  if (refused.length > 0 && res?.data && Array.isArray(res.data.matches)) {
-    const refusedSet = new Set(refused)
-    res.data.matches = res.data.matches.filter((m) => !refusedSet.has(String(m?.name ?? '')))
-    res.data.note =
-      `${typeof res.data.note === 'string' ? res.data.note : ''}` +
-      `\n\n[হারনেস] এই টার্নে অনুমোদিত নয় বলে বাদ: ${refused.join(', ')}। ` +
-      'এগুলো call কোরো না — বিকল্প: অনুমোদিত tool ব্যবহার করো, ' +
-      'নয়তো Boss-কে বলো এই ধাপে টুলটা অনুমোদিত নেই।'
-  }
-  return { permitted, refused }
-}
+// Backward-compatible test/import surface; implementation is shared with the
+// native Anthropic loop so discovery policy cannot drift by provider.
+export { filterFindToolResultForTurn } from '@/agent/tools/selection/turn-capability-context'
 
 export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
   /** Registry model id from AgentConversation.modelId */
@@ -324,12 +297,90 @@ export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
    * routed again — see head-pin.ts.
    */
   continuation?: boolean
+  /** Loaded once by the public dispatcher; internal to the owner runner. */
+  continuationBinding?: LoadedContinuationBinding
   /**
    * This turn's model is a ONE-TURN override, not a decision about the job —
    * today only the declined-upgrade fallback. Such a model must never become
    * the task pin (review bot, #690).
    */
   ephemeralModel?: boolean
+}
+
+type BoundWorkflowCapabilityView = Pick<
+  WorkflowRunView,
+  'id' | 'kind' | 'nextAllowedTools'
+>
+
+export function sourceBoundContinuationCapabilities(
+  binding: ContinuationBindingV1 | null,
+  workflowRuns: readonly BoundWorkflowCapabilityView[],
+): {
+  authorization: OwnerTurnAuthorization | null
+  driveClientSeoBatch: boolean
+  requiredToolNames: string[]
+  chromeModality: boolean
+  ownerIntentGateEnabled: boolean
+} {
+  if (!binding) {
+    return {
+      authorization: null,
+      driveClientSeoBatch: false,
+      requiredToolNames: [],
+      chromeModality: false,
+      ownerIntentGateEnabled: true,
+    }
+  }
+  const exactWorkflow = binding.workflowRunId
+    ? workflowRuns.find((run) => run.id === binding.workflowRunId) ?? null
+    : null
+  const workflowKindMatches = Boolean(
+    exactWorkflow
+    && (!binding.expected.workflowKind || exactWorkflow.kind === binding.expected.workflowKind),
+  )
+  const workflowAuthorityValid = !binding.workflowRunId || workflowKindMatches
+  const requiredToolNames = workflowKindMatches
+    ? [...new Set((exactWorkflow?.nextAllowedTools ?? []).filter((name) => typeof name === 'string' && name.trim()))]
+    : []
+  return {
+    authorization: workflowAuthorityValid
+      ? { allowMutations: true, reason: 'workflow_continuation' }
+      : null,
+    driveClientSeoBatch: Boolean(
+      binding.domain === 'seo'
+      && workflowKindMatches
+      && exactWorkflow?.kind === 'client_seo_batch',
+    ),
+    requiredToolNames,
+    // Domain/history is never enough to borrow a Chrome session. Only the
+    // immutable binding modality can compose the paired-Chrome quartet.
+    chromeModality: workflowAuthorityValid && binding.modalities?.includes('chrome') === true,
+    // No owner prose exists on a server-bound turn. Re-running the lexical
+    // owner-intent filter on "" would erase the exact workflow tools that the
+    // already-claimed source authorized.
+    ownerIntentGateEnabled: !workflowAuthorityValid,
+  }
+}
+
+type SourceBoundToolDefinition = Pick<AgentTool, 'name' | 'description' | 'input_schema'>
+
+export async function supplySourceBoundWorkflowTools<T extends SourceBoundToolDefinition>(
+  tools: readonly T[],
+  requiredToolNames: readonly string[],
+  resolve: (names: string[]) => Promise<SourceBoundToolDefinition[]> = resolveToolsByName,
+): Promise<SourceBoundToolDefinition[]> {
+  if (requiredToolNames.length === 0) return [...tools]
+  const present = new Set(tools.map((tool) => tool.name))
+  const missing = [...new Set(requiredToolNames)].filter((name) => !present.has(name))
+  if (missing.length === 0) return [...tools]
+  return [
+    ...tools,
+    ...(await resolve(missing)).map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.input_schema,
+    })),
+  ]
 }
 
 /**
@@ -745,24 +796,63 @@ async function* runAlternateProviderTurn(
     if (typeof m.content === 'string' && m.content.trim()) recentUserTexts.unshift(m.content.trim())
   }
   const historyLastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
-  const scopedOwnerInput = turnScopedOwnerInput(turnOwnerInput, historyLastUserText)
+  const continuationBinding = options.continuationBinding ?? { state: 'absent' as const }
+  const sourceContinuation = continuationBinding.state === 'bound'
+    ? continuationBinding.binding
+    : null
+  const initialSourceCapabilities = sourceBoundContinuationCapabilities(sourceContinuation, [])
+  const scopedOwnerInput = sourceContinuation
+    ? { state: 'none' as const, authoritativeText: '' }
+    : turnScopedOwnerInput(turnOwnerInput, historyLastUserText)
+  const routingBlocker = continuationBindingBlockerForTurn(
+    options.continuation === true,
+    continuationBinding,
+  ) ?? (
+    !sourceContinuation
+    && scopedOwnerInput.state === 'unavailable'
+    && options.continuation !== true
+      ? OWNER_INPUT_BINDING_BLOCKER
+      : null
+  )
+  if (routingBlocker) {
+    const messageId = await persistServerRoutingBlocker(
+      conversationId,
+      routingBlocker,
+      routingBlocker === CONTINUATION_BINDING_BLOCKER
+        ? 'continuation-binding-guard'
+        : 'owner-input-binding-guard',
+    )
+    yield { type: 'text_delta', delta: routingBlocker }
+    yield {
+      type: 'done',
+      messageId,
+      tokensIn: 0,
+      tokensOut: 0,
+      cacheCreation: 0,
+      cacheRead: 0,
+      costUsd: 0,
+    }
+    return
+  }
   const lastUserText = scopedOwnerInput.authoritativeText
   const explicitAskCardId = scopedOwnerInput.state === 'exact'
     ? scopedOwnerInput.askCardId
     : null
-  const directBrowserLane: DirectYouTubeTurnLane | null = scopedOwnerInput.state === 'exact'
+  const directBrowserOwnerInput = directBrowserOwnerInputForTurn(
+    scopedOwnerInput,
+    continuationBinding,
+  )
+  const directBrowserLane: DirectYouTubeTurnLane | null = directBrowserOwnerInput.state === 'resolve'
     ? await resolveDirectYouTubeTurnRequest(
         conversationId,
-        [scopedOwnerInput.authoritativeText],
+        [directBrowserOwnerInput.ownerRequest],
         turnId ?? undefined,
         {
-          askCardId: scopedOwnerInput.askCardId,
-          selectedOption: scopedOwnerInput.authoritativeText,
+          askCardId: directBrowserOwnerInput.askCardId,
+          selectedOption: directBrowserOwnerInput.ownerRequest,
         },
       )
-    : scopedOwnerInput.state === 'unavailable'
-      ? { state: 'unavailable', ownerRequest: scopedOwnerInput.blockerOwnerText, token: null }
-      : null
+    : null
   const directBrowserOwnerRequest = directBrowserLane?.ownerRequest ?? null
   const directBrowserLaneUnavailable = directBrowserLane?.state === 'unavailable'
   const directBrowserTurnAllowedTools = directBrowserLaneUnavailable
@@ -770,6 +860,10 @@ async function* runAlternateProviderTurn(
     : DIRECT_BROWSER_ALLOWED_TOOL_NAMES
   const browserOwnerText = directBrowserOwnerRequest ?? lastUserText
   const directBrowserTask = directBrowserLane !== null
+  const explicitChromeModality = !directBrowserTask && (
+    initialSourceCapabilities.chromeModality
+    || hasExplicitChromeModality(browserOwnerText)
+  )
   let directBrowserSteeringRevoked = false
   let currentOwnerInstructions = browserOwnerText
   // Boss just pointed out a fault. One block, this turn only, telling the head
@@ -982,6 +1076,9 @@ async function* runAlternateProviderTurn(
     deriveOwnerTurnAuthorization(browserOwnerText),
     ownerRequirements.clientSeo || ownerRequirements.liveBrowser,
   )
+  if (initialSourceCapabilities.authorization) {
+    turnAuthorization = initialSourceCapabilities.authorization
+  }
   // Harness round 2 — refresh the owner's kv-configured hook rules (block/notify)
   // for this turn. Fail-open inside; a broken rules JSON registers nothing.
   await applyOwnerHookRules()
@@ -1178,12 +1275,18 @@ async function* runAlternateProviderTurn(
   // Gate: AGENT_CONTINUITY_RESOLVER off|shadow|on (unset → preview on, prod
   // shadow). Fail-open: null → exactly the legacy behaviour below.
   let continuity: Awaited<ReturnType<typeof resolveConversationContinuity>> = null
-  if (!directBrowserTask && lastUserText) {
+  if (!directBrowserTask && (lastUserText || sourceContinuation)) {
     continuity = await resolveConversationContinuity({
       conversationId,
       text: lastUserText,
       listenMode,
       replyToCardId: explicitAskCardId ?? matchedAskCard?.id ?? null,
+      continuationSource: sourceContinuation
+        ? {
+            domain: sourceContinuation.domain,
+            workflowRunId: sourceContinuation.workflowRunId ?? null,
+          }
+        : null,
     })
   }
   const continuityLive = continuity?.mode === 'on'
@@ -1260,6 +1363,7 @@ async function* runAlternateProviderTurn(
   // already authorized — the intent regex must not strand it tool-less.
   // Phase 32: the resolver's wider continuation net ("তারপর?", "baki ta koro",
   // "যেখানে ছিলে সেখান থেকে করো") counts the same as the narrow CONTINUE_RE.
+  const sourceCapabilities = sourceBoundContinuationCapabilities(sourceContinuation, workflowRuns)
   if (!turnAuthorization.allowMutations) {
     const resolverContinues =
       continuityLive
@@ -1279,6 +1383,8 @@ async function* runAlternateProviderTurn(
     !listenMode
     && workflowRuns.some((r) => r.kind === 'client_seo_batch')
     && (
+      sourceCapabilities.driveClientSeoBatch
+      ||
       ownerRequirements.clientSeo
       || isContinuationText(lastUserText)
       || isJobDeliveryDirective(projectSystemInstructions)
@@ -1372,7 +1478,11 @@ async function* runAlternateProviderTurn(
       reason: activeSkills.heldBack.reason,
     }
   }
-  let ownerIntentTools = filterToolsForOwnerIntent(browserOwnerText, toolSelection.tools)
+  const intentGateOn = process.env.AGENT_OWNER_INTENT_GATE !== 'false'
+  const ownerIntentGateEnabled = intentGateOn && sourceCapabilities.ownerIntentGateEnabled
+  let ownerIntentTools = ownerIntentGateEnabled
+    ? filterToolsForOwnerIntent(browserOwnerText, toolSelection.tools)
+    : [...toolSelection.tools]
   // Plan-before-work on a big job (owner ask 2026-07-26). The FIRST deep-work
   // turn of a conversation plans and asks everything at once; the staging/write
   // tools are withheld so it cannot half-start the job while "planning".
@@ -1385,6 +1495,17 @@ async function* runAlternateProviderTurn(
       console.info('[plan-first] withheld', { conversationId, removed: gated.removed.length })
     }
     ownerIntentTools = gated.tools
+  }
+
+  // Production's state router may be shadow-only. A claimed continuation does
+  // not depend on that rollout: inject only the exact bound WorkflowRun's
+  // persisted nextAllowedTools, then let skill/permission/health policy narrow
+  // them normally below.
+  if (!listenMode && sourceCapabilities.requiredToolNames.length > 0) {
+    ownerIntentTools = await supplySourceBoundWorkflowTools(
+      ownerIntentTools,
+      sourceCapabilities.requiredToolNames,
+    )
   }
 
   // SK-4: the pinned skill's allowlist. This is the enforcement that actually
@@ -1429,6 +1550,28 @@ async function* runAlternateProviderTurn(
     }
   }
 
+  // Chrome is a surface explicitly chosen by Boss, not a competing procedure.
+  // Supply the narrow paired-Chrome quartet after the primary skill filter, so
+  // seo-auditing-own-site remains pinned while the audit can use his Chrome.
+  if (explicitChromeModality) {
+    const present = new Set(ownerIntentTools.map((tool) => tool.name))
+    const missing = EXPLICIT_CHROME_MODALITY_TOOLS.filter((name) => !present.has(name))
+    if (missing.length > 0) {
+      const extra = await resolveToolsByName([...missing])
+      ownerIntentTools = [
+        ...ownerIntentTools,
+        ...extra.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          input_schema: tool.input_schema,
+        })),
+      ]
+    }
+    // A prospective-plan turn remains read-only even when the eventual task
+    // needs Chrome. The next execution turn receives the full modality again.
+    if (planTurn) ownerIntentTools = filterToolsForPlanTurn(ownerIntentTools).tools
+  }
+
   // Product capability backstop: production's state router may still be in
   // shadow and the broad skill switch may be off. A strict direct YouTube task
   // nevertheless gets the exact paired-Chrome tools on every head.
@@ -1468,7 +1611,12 @@ async function* runAlternateProviderTurn(
   // `turnDenylist` is what this specific turn withheld for a reason of its own.
   // Both are enforced at the dynamic-load site, so the guarantee survives a
   // search. find_tool itself is never denied — a skill must never be trapped.
-  const turnAllowlist = activeSkills.manifest ? skillAllowlist(activeSkills.manifest) : null
+  const turnAllowlist = directBrowserTask
+    ? new Set(directBrowserTurnAllowedTools)
+    : composeTurnToolAllowlist(
+        activeSkills.manifest ? skillAllowlist(activeSkills.manifest) : null,
+        explicitChromeModality,
+      )
   const turnDenylist = new Set<string>()
 
   // Direct paired-Chrome work must never silently become Terminal/Mac work.
@@ -1510,10 +1658,11 @@ async function* runAlternateProviderTurn(
   // that is the allowlist enforcement, and a hardcoded SEO injection here would
   // hand back tools the pinned skill deliberately does not have (a read-only
   // audit skill being handed the crawl tools is exactly the failure SK-4 exists
-  // to prevent). `seo-fixing-client-site` already declares all three.
+  // to prevent). `seo-fixing-client-site` declares the two audit tools; the
+  // durable server outbox owns artifact persistence and is not a model gate.
   if (!listenMode && !activeSkills.pinned && (ownerRequirements.clientSeo || driveClientSeoBatch)) {
     const present = new Set(ownerIntentTools.map((t) => t.name))
-    const needed = ['run_website_seo_audit', 'check_website_seo_audit', 'save_artifact'].filter((n) => !present.has(n))
+    const needed = ['run_website_seo_audit', 'check_website_seo_audit'].filter((n) => !present.has(n))
     if (needed.length) {
       try {
         const extra = await resolveToolsByName(needed)
@@ -1536,11 +1685,19 @@ async function* runAlternateProviderTurn(
   // both the prompt and the model read the SAME final list.
   // Phase 7 kill switch: AGENT_OWNER_INTENT_GATE=false disables the owner-intent
   // mutation filter (and its note) without a deploy.
-  const intentGateOn = process.env.AGENT_OWNER_INTENT_GATE !== 'false'
-  const selectedTools = filterToolDefsByControls(
-    intentGateOn ? filterToolsForOwnerTurn(ownerIntentTools, turnAuthorization) : [...ownerIntentTools],
+  const selectedTools = filterTurnToolDefinitions(ownerIntentTools, {
+    ownerText: browserOwnerText,
+    turnAllowlist,
+    turnDenylist,
+    turnAuthorization: intentGateOn
+      ? turnAuthorization
+      : { allowMutations: true, reason: 'explicit_action' },
     agentControls,
-  )
+    chatMode,
+    permissionMode,
+    actorRoles: ['owner'],
+    ownerIntentGateEnabled,
+  }).tools
   // xAI hard-caps tool definitions at 200 per request — the owner head carried 201,
   // so EVERY Grok-4.20 turn 400'd ("Maximum tools limit reached") and silently fell
   // back to DeepSeek (2026-07-13 outage, diagnosed via error.metadata.raw).
@@ -1551,10 +1708,19 @@ async function* runAlternateProviderTurn(
   // packs survive first, never a blind tail slice) and reserves headroom for the
   // schemas find_tool may load later in the turn (Bug B).
   const toolCap = computeHeadToolCap(model)
-  const capKeepNames = [...CORE_PACK, FIND_TOOL_NAME]
-  const capRelevantNames = toolSelection.router === 'state'
+  const capKeepNames = [
+    ...CORE_PACK,
+    FIND_TOOL_NAME,
+    ...sourceCapabilities.requiredToolNames,
+    ...(explicitChromeModality ? EXPLICIT_CHROME_MODALITY_TOOLS : []),
+  ]
+  const capRelevantNames = [
+    ...sourceCapabilities.requiredToolNames,
+    ...(explicitChromeModality ? EXPLICIT_CHROME_MODALITY_TOOLS : []),
+    ...(toolSelection.router === 'state'
     ? toolSelection.tools.map((t) => t.name)
-    : matchIntentPacks(browserOwnerText).flatMap((p) => [...DOMAIN_PACKS[p]])
+    : matchIntentPacks(browserOwnerText).flatMap((p) => [...DOMAIN_PACKS[p]])),
+  ]
   const narrowed = narrowToolsToCap(selectedTools, toolCap, {
     keepNames: capKeepNames,
     relevantNames: capRelevantNames,
@@ -1890,7 +2056,6 @@ async function* runAlternateProviderTurn(
   // 'সরাসরি' loses the planning tools; 'প্ল্যান' loses everything that changes
   // the world, so it can research and propose but not act.
   const { getCapability } = await import('@/agent/tools/capability-manifest')
-  const isReadOnlyTool = (name: string) => getCapability(name)?.mode === 'read'
   // "নিজে থেকে কাজ চালিয়ে যাও — আমাকে জিজ্ঞেস করতে হবে না" is an instruction, not
   // a preference (owner bug 2026-07-26: told exactly that, the head still stopped
   // on an ask card and did nothing). Withhold ask_user for the turn — the same
@@ -1899,27 +2064,18 @@ async function* runAlternateProviderTurn(
   // question-asking.
   const noQuestionsTurn = /(?:জিজ্ঞেস\s*কর(?:তে|ার)?\s*(?:হবে\s*না|দরকার\s*নেই|লাগবে\s*না)|নিজে\s*থেকে(?:ই)?\s*(?:কাজ\s*)?(?:চালিয়ে|শেষ|কর)|do\s+not\s+ask|don'?t\s+ask|without\s+asking)/i
     .test(lastUserText)
-  const modeFiltered = filterToolsForMode(chatMode, anthropicToolsToNeutral(cappedTools), isReadOnlyTool)
-  // PM-2 — the permission mode becomes a GUARANTEE here. Plan mode promises that
-  // nothing changes, and the only way to keep that promise is for the changing
-  // tools not to be in the model's hands at all. (Careful does not withhold: its
-  // answer to a write is a card, and a tool that was never offered cannot be
-  // staged into one.)
-  const permissionFiltered = filterToolsForPermissionMode(permissionMode, modeFiltered, isReadOnlyTool)
-  if (permissionFiltered.removed.length > 0) {
-    console.info('[run-owner-turn] permission mode withheld tools:', {
-      permissionMode,
-      count: permissionFiltered.removed.length,
-    })
-  }
+  // The shared turn policy already applied chat + permission mode while the
+  // authoritative Anthropic-shape definitions were available.
+  const permissionFilteredTools = anthropicToolsToNeutral(cappedTools)
   const neutralTools = listenMode
     ? []
     : noQuestionsTurn
-      ? permissionFiltered.tools.filter((t) => t.name !== 'ask_user')
-      : permissionFiltered.tools
+      ? permissionFilteredTools.filter((t) => t.name !== 'ask_user')
+      : permissionFilteredTools
   // Harness Gap 5 — schemas dynamically loaded by find_tool for the rest of this
   // turn (appended after the base list; execution guards unchanged).
   const dynamicNeutralTools: NeutralTool[] = []
+  const preparedFindToolCandidates = new Map<string, NeutralTool[]>()
   // Phase 3 request controller: parallel tool calls are legal ONLY when the whole
   // pack is pure reads (capability manifest). Any stage/write tool in the pack →
   // sequential, so the provider can never emit two confirm cards / writes chosen
@@ -4160,6 +4316,50 @@ async function* runAlternateProviderTurn(
             ? { ...elevationGrant, families: remaining }
             : null
         }
+
+        // Discovery is policy-filtered at the handler boundary. Nothing below
+        // this point (toolRecord, timeline, tool_end preview, transcript) may
+        // observe a raw match the current turn cannot actually load.
+        if (call.name === FIND_TOOL_NAME && result.success) {
+          const raw = result as FindToolResultLike
+          const query = String(call.input.query ?? '').trim()
+          const already = new Set<string>([
+            ...neutralTools.map((tool) => tool.name),
+            ...dynamicNeutralTools.map((tool) => tool.name),
+          ])
+          const prepared = await prepareFindToolResultForTurn({
+            result: raw,
+            query,
+            already,
+            max: MAX_DYNAMIC_TOOLS_PER_TURN - dynamicNeutralTools.length,
+            policy: {
+              ownerText: currentOwnerInstructions,
+              turnAllowlist,
+              turnDenylist,
+              turnAuthorization,
+              agentControls,
+              chatMode,
+              permissionMode,
+              actorRoles: ['owner'],
+              ownerIntentGateEnabled,
+            },
+          })
+          const { refused } = prepared
+          if (refused.length > 0) {
+            console.info('[find-tool] refused before visibility', {
+              conversationId,
+              count: refused.length,
+            })
+          }
+          preparedFindToolCandidates.set(
+            call.id,
+            prepared.tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description ?? '',
+              schema: tool.input_schema as object,
+            })),
+          )
+        }
         const durationMs = Date.now() - started
         // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).
         runPostToolHooks({
@@ -4277,12 +4477,10 @@ async function* runAlternateProviderTurn(
         // A tool filed a document as a conversation artifact (save_artifact, SEO
         // report…) → surface it as a FILE CARD in the reply flow, Claude-style.
         const cardRaw = result.success ? (result.data as Record<string, unknown> | undefined)?.artifactCard : undefined
-        if (cardRaw && typeof cardRaw === 'object') {
-          const card = cardRaw as { id?: unknown; title?: unknown; type?: unknown }
-          if (typeof card.id === 'string' && typeof card.title === 'string') {
-            timeline.push({ t: 'file', id: card.id, name: card.title, kind: typeof card.type === 'string' ? card.type : 'markdown' })
-            yield { type: 'artifact_saved', id: card.id, title: card.title, artifactType: typeof card.type === 'string' ? card.type : 'markdown' }
-          }
+        const card = liveArtifactCard(cardRaw)
+        if (card) {
+          timeline.push({ t: 'file', id: card.id, name: card.title, kind: card.type })
+          yield { type: 'artifact_saved', id: card.id, title: card.title, artifactType: card.type }
         }
 
         if (result.success && !personalMode) {
@@ -4411,39 +4609,17 @@ async function* runAlternateProviderTurn(
         })
       }
 
-      // Harness Gap 5 — after a find_tool round, expose the matched tools'
-      // schemas for the remaining rounds of THIS turn (any head model).
-      // Execution authority unchanged: loaded tools still pass every guard.
-      //
-      // This block runs BEFORE the exchange is appended to `messages`, because
-      // filterFindToolResultForTurn must edit the very find_tool result the
-      // model reads — a refused match the model can still see is the find_tool
-      // → membership_gate deadlock (see the function's doc, conv 8b7b482e).
+      // The handler-boundary block above already sanitized the result and
+      // prepared authoritative, permission-aware schemas. Only publish those
+      // pre-vetted definitions for the next model round.
       for (const call of calls) {
         if (call.name !== FIND_TOOL_NAME) continue
-        const res = toolResults.find((r) => r.id === call.id)?.result as
-          | FindToolResultLike
-          | undefined
-        const already = new Set<string>([
-          ...neutralTools.map((t) => t.name),
-          ...dynamicNeutralTools.map((t) => t.name),
-        ])
-        const { permitted, refused } = filterFindToolResultForTurn(res, {
-          already,
-          turnDenylist,
-          turnAllowlist,
-        })
-        if (permitted.length === 0 && refused.length === 0) continue
-        if (refused.length > 0) {
-          console.info('[find-tool] refused outside this turn’s permissions', { conversationId, refused })
-        }
-        for (const tool of await resolveToolsByName(permitted)) {
+        const prepared = preparedFindToolCandidates.get(call.id) ?? []
+        for (const tool of prepared) {
           if (dynamicNeutralTools.length >= MAX_DYNAMIC_TOOLS_PER_TURN) break
-          dynamicNeutralTools.push({
-            name: tool.name,
-            description: tool.description,
-            schema: tool.input_schema as object,
-          })
+          if (!dynamicNeutralTools.some((loaded) => loaded.name === tool.name)) {
+            dynamicNeutralTools.push(tool)
+          }
         }
         // Phase 4 (Bug B) — the provider cap was computed over the STATIC list
         // only, so dynamic loads could push a capped head (xAI: 200) back over
@@ -5093,17 +5269,21 @@ async function* runAlternateProviderTurn(
     // claim that can be false, instead of a sentence the model may emit at will.
     // It appends rather than rewrites: Boss keeps the work, and gains the truth
     // about what is still outstanding.
-    if (activeSkills.manifest?.done?.length && claimsCompletion(finalText)) {
-      const misses = skillDoneMisses(
-        activeSkills.manifest,
-        // `input` rides along so a `done` condition can name the STEP that
-        // finishes the job (`run_mac_command` with `gh workflow run`) and not
-        // merely the tool that runs every step — including the read-only one
-        // these skills open with.
-        toolRecords.map((r) => ({ toolName: r.toolName, status: r.status, input: r.input })),
-      )
-      if (misses.length > 0) {
-        const gate = `\n\n${doneGateMessage(activeSkills.pinned?.skill ?? activeSkills.manifest.name, misses)}`
+    if (activeSkills.manifest?.done?.length) {
+      const gate = skillDoneGateForClaim({
+        manifest: activeSkills.manifest,
+        skill: activeSkills.pinned?.skill ?? activeSkills.manifest.name,
+        text: finalText,
+        // Input names the finishing step; output carries stable code-owned
+        // verifier receipts such as SEO action/artifact/message delivery.
+        records: toolRecords.map((r) => ({
+          toolName: r.toolName,
+          status: r.status,
+          input: r.input,
+          output: r.output,
+        })),
+      })
+      if (gate) {
         finalText += gate
         yield { type: 'text_delta', delta: gate }
       }
@@ -5140,20 +5320,10 @@ async function* runAlternateProviderTurn(
 
     let selfContinueWake: { scheduled: boolean; hops: number; reason?: string } | null = null
     if (taskUnfinished) {
-      const doneWork = toolRecords
-        .filter((r) => r.status === 'success')
-        .slice(-8)
-        .map((r) => r.toolName)
       const { scheduleSelfContinue } = await import('@/agent/lib/self-continue')
       const wake = await scheduleSelfContinue({
         conversationId,
-        summary:
-          `মূল কাজ: ${(lastUserText || '').slice(0, 300)}\n`
-          + `এই টার্নে যা হয়েছে: ${doneWork.join(' · ') || 'কিছু না'}\n`
-          + `শেষ অবস্থা: ${finalText.slice(-400)}\n`
-          + (planCompletionDecision?.action === 'continue'
-            ? completionContinuationNote(planCompletionDecision)
-            : ''),
+        sourceTurnId: turnId ?? '',
       })
       selfContinueWake = wake
       if (wake.scheduled) {
@@ -5387,9 +5557,7 @@ async function* runAlternateProviderTurn(
         const { scheduleSelfContinue } = await import('@/agent/lib/self-continue')
         recoveryWake = await scheduleSelfContinue({
           conversationId,
-          summary:
-            `মূল কাজ: ${(lastUserText || '').slice(0, 300)}\n`
-            + 'Final delivery evidence did not close durably; reload the plan and finish the remaining row.',
+          sourceTurnId: turnId ?? '',
         })
       } catch {
         recoveryWake = { scheduled: false, hops: 0, reason: 'projected_delivery_recovery_failed' }
@@ -5925,7 +6093,8 @@ async function* runAlternateProviderTurn(
       toolRecords,
       hasAskCard: emittedAskCards.length > 0,
     })
-    if (headTier === 'explicit' && canRestartHead) {
+    const explicitOwnerPin = isExplicitOwnerProtocolPin({ tier: headTier, via: headVia })
+    if (explicitOwnerPin && canRestartHead) {
       if (sameModelAttempt === 0) {
         console.warn(
           `[run-owner-turn] pinned head ${model.id} failed pre-answer → same-model retry:`,
@@ -5978,6 +6147,41 @@ async function* runAlternateProviderTurn(
       }
       return
     }
+    // A content-protocol failure may only cross to a DIFFERENT provider, and
+    // only while a whole-turn restart is still safe. The canonical normalizer
+    // never turns DSML prose into executable calls. Explicit owner pins took the
+    // same-model/error branch above and are therefore never silently switched.
+    const protocolFailure = isProviderContentProtocolError(err)
+    if (
+      protocolFailure
+      && canRestartHead
+      && !headVia.includes('protocol_fallback')
+    ) {
+      const rescue = runtimeProtocolFallback(model)
+      if (rescue) {
+        await captureAgentError(err, 'agent.head.protocol_fallback', {
+          conversationId,
+          modelId: model.id,
+        })
+        yield {
+          type: 'model_info',
+          modelId: rescue.id,
+          label: rescue.label,
+          displayName: modelDisplayName(rescue.id),
+          variant: modelVariant(rescue),
+          tier: headTier ?? 'light',
+        }
+        yield* runAlternateProviderTurn(
+          conversationId,
+          rescue.id,
+          options,
+          headTier,
+          0,
+          'protocol_fallback',
+        )
+        return
+      }
+    }
     // Rule 3 — head fallback: if a non-cheap head (e.g. Qwen) crashes BEFORE
     // producing any answer text, retry once on the cheap head (DeepSeek) instead of
     // surfacing an error — a surfaced error makes the owner's NEXT message triage UP
@@ -5993,7 +6197,7 @@ async function* runAlternateProviderTurn(
     const rescueId = model.id === cheapId
       ? (process.env.HEAVY_HEAD_MODEL_ID?.trim() || DEFAULT_HEAD_MODEL_ID)
       : cheapId
-    if (canRestartHead && model.id !== rescueId && isKnownModelId(rescueId)) {
+    if (!protocolFailure && canRestartHead && model.id !== rescueId && isKnownModelId(rescueId)) {
       const cheap = getModel(rescueId)
       if (cheap.provider !== 'anthropic' && cheap.supportsTools) {
         console.warn(
@@ -6083,6 +6287,32 @@ async function loadLastUserTextForTriage(conversationId: string): Promise<string
   }
 }
 
+async function persistServerRoutingBlocker(
+  conversationId: string,
+  text: string,
+  model: 'continuation-binding-guard' | 'owner-input-binding-guard',
+): Promise<string> {
+  const db = prisma as any
+  const saved = await db.agentMessage.create({
+    data: {
+      conversationId,
+      role: 'assistant',
+      content: [{ type: 'text', text }],
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: 0,
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        model: `server-${model}`,
+        provider: 'server',
+      },
+    },
+  })
+  await touchConversationActivity(conversationId)
+  return String(saved.id)
+}
+
 /** Map a registry model to the loading-animation identity shown in the UI. */
 function modelVariant(model: ReturnType<typeof getModel>): 'claude' | 'qwen' | 'deepseek' | 'default' {
   if (model.provider === 'anthropic') return 'claude'
@@ -6104,8 +6334,47 @@ export async function* runOwnerTurn(
     : normalizeBusinessId(options.businessId)
   const turnOwnerInput = options.turnOwnerInput
     ?? await loadTurnOwnerInputBinding(conversationId, options.turnId)
-  if (options.turnOwnerInput === undefined) options = { ...options, turnOwnerInput }
-  const lastUserText = turnOwnerInput.state === 'bound'
+  const continuationBinding = options.continuationBinding
+    ?? (options.continuation
+      ? await loadContinuationBindingForTurn(conversationId, options.turnId)
+      : { state: 'absent' as const })
+  if (options.turnOwnerInput === undefined || options.continuationBinding === undefined) {
+    options = { ...options, turnOwnerInput, continuationBinding }
+  }
+  const sourceContinuation = continuationBinding.state === 'bound'
+    ? continuationBinding.binding
+    : null
+  const authorityBlocker = continuationBindingBlockerForTurn(
+    options.continuation === true,
+    continuationBinding,
+  ) ?? (
+    turnOwnerInput.state === 'unavailable' && !sourceContinuation
+      ? OWNER_INPUT_BINDING_BLOCKER
+      : null
+  )
+  if (authorityBlocker) {
+    const messageId = await persistServerRoutingBlocker(
+      conversationId,
+      authorityBlocker,
+      authorityBlocker === CONTINUATION_BINDING_BLOCKER
+        ? 'continuation-binding-guard'
+        : 'owner-input-binding-guard',
+    )
+    yield { type: 'text_delta', delta: authorityBlocker }
+    yield {
+      type: 'done',
+      messageId,
+      tokensIn: 0,
+      tokensOut: 0,
+      cacheCreation: 0,
+      cacheRead: 0,
+      costUsd: 0,
+    }
+    return
+  }
+  const lastUserText = sourceContinuation
+    ? ''
+    : turnOwnerInput.state === 'bound'
     ? turnOwnerInput.text
     : turnOwnerInput.state === 'unavailable'
       ? ''
@@ -6117,7 +6386,8 @@ export async function* runOwnerTurn(
   // or model prose. The resolver repeats this fail-closed rule for callers that
   // invoke an individual head directly.
   if (
-    lastUserText
+    !sourceContinuation
+    && lastUserText
     && isPotentialYouTubeComputerUseMutation(lastUserText)
     && !isDirectYouTubeBrowserTask(lastUserText)
   ) {
@@ -6192,6 +6462,23 @@ export async function* runOwnerTurn(
       decision.via = `${decision.via}+disabled_fallback`
     }
   } catch { /* fail-open: enabled-map glitch must never block the turn */ }
+
+  // Recorded provider-protocol quarantine. Auto routing can move to an isolated
+  // provider/API before any provider bytes or tools run. A model the owner
+  // explicitly selected (including the marketing-head special tier) remains
+  // pinned; if it emits DSML, the boundary quarantines it and the pinned-head
+  // error policy applies instead of a silent switch.
+  const protocolFallback = protocolSafeFallback(getModel(decision.modelId), {
+    explicitOwnerPin: isExplicitOwnerProtocolPin(decision),
+  })
+  if (protocolFallback) {
+    const note =
+      `⚙️ Boss, **${protocolFallback.from.label}**-এর content/tool protocol production fixture-এ quarantine হয়েছে — `
+      + `এই মেসেজটা আলাদা provider-এর **${protocolFallback.to.label}** দিয়ে চালাচ্ছি।\n\n`
+    disabledSwitchNote = `${disabledSwitchNote ?? ''}${note}`
+    decision.modelId = protocolFallback.to.id
+    decision.via = `${decision.via}+protocol_conformance_fallback`
+  }
 
 
   // P0-4: capture a correction the moment it arrives, so it governs THIS turn
@@ -6375,7 +6662,11 @@ export async function* runOwnerTurn(
   // twice for every behavior fix — Phase 4's missing WorkflowRun hooks were
   // found exactly there. Kill switch: AGENT_NATIVE_ANTHROPIC_LOOP=true restores
   // the native loop instantly (no deploy semantics change for other providers).
-  if (model.provider === 'anthropic' && process.env.AGENT_NATIVE_ANTHROPIC_LOOP === 'true') {
+  if (
+    model.provider === 'anthropic'
+    && process.env.AGENT_NATIVE_ANTHROPIC_LOOP === 'true'
+    && !sourceContinuation
+  ) {
     yield* runAgentTurn(conversationId, {
       ...options,
       modelId: model.id,

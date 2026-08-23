@@ -56,6 +56,42 @@ describe('A2 — enqueue payload (buildTurnJobData)', () => {
     expect(bad?.askCardId).toBeNull()
   })
 
+  it('builds a source-bound internal job from references only and drops free-form authority', () => {
+    expect(buildTurnJobData('turn_1', 'conv_1', {
+      message: 'caller text must not ride the queue',
+      internalControl: true,
+      continuationRequestId: 'continuation:v1:job_result:pending_action:action-1:artifact_delivered',
+    })).toEqual({
+      turnId: 'turn_1',
+      conversationId: 'conv_1',
+      message: '',
+      files: [],
+      projectId: null,
+      personalMode: false,
+      clientRequestId: null,
+      askCardId: null,
+      internalControl: true,
+      continuationRequestId: 'continuation:v1:job_result:pending_action:action-1:artifact_delivered',
+      agentProseProtocol: 1,
+    })
+  })
+
+  it('rejects an internal reference without a deterministic continuation request id', () => {
+    expect(buildTurnJobData('turn_1', 'conv_1', {
+      message: '',
+      internalControl: true,
+      continuationRequestId: 'not a safe key',
+    })).toBeNull()
+  })
+
+  it('accepts one validated persisted subidentity segment', () => {
+    const requestId = 'continuation:v1:specialist:pending_action:action-1:specialist_dispatch:brief-0'
+    expect(buildTurnJobData('turn_1', 'conv_1', {
+      internalControl: true,
+      continuationRequestId: requestId,
+    })?.continuationRequestId).toBe(requestId)
+  })
+
   it('refuses to build a job without a turnId, conversation, or message', () => {
     expect(buildTurnJobData(null, 'conv_1', { message: 'hi' })).toBeNull()
     expect(buildTurnJobData('turn_1', null, { message: 'hi' })).toBeNull()

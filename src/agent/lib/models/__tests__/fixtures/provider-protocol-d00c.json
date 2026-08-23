@@ -1,0 +1,55 @@
+{
+  "incident": {
+    "conversationId": "9598d574-4587-4449-abc2-7c6ba47407f2",
+    "turnId": "d00c1a82-5f00-44ee-872b-987ecb656349",
+    "eventRange": "209-212",
+    "commitEvent": 214,
+    "presentationBlock": "p8",
+    "checksum": "202302f5",
+    "provider": "openrouter",
+    "model": "deepseek/deepseek-v4-flash",
+    "api": "chat.completions",
+    "chunks": [
+      "<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"fetch_website_page\">\n<｜DSML｜parameter name=\"path\" string=\"true\">/products/smart-murda-moshari</｜DSML｜parameter>\n</｜DSML｜invoke>\n",
+      "<｜DSML｜invoke name=\"fetch_website_page\">\n<｜DSML｜parameter name=\"path\" string=\"true\">/products/premium-janamaz-mosque-print</｜DSML｜parameter>\n</｜DSML｜invoke>\n",
+      "<｜DSML｜invoke name=\"fetch_website_page\">\n<｜DSML｜parameter name=\"path\" string=\"true\">/products/seagreen-color-panjabi</｜DSML｜parameter>\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"fetch_website_page\">\n",
+      "<｜DSML｜parameter name=\"path\" string=\"true\">/products/product-code-126</｜DSML｜parameter>\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>"
+    ],
+    "structuredToolCalls": [],
+    "expected": "quarantined"
+  },
+  "recordedCases": [
+    {
+      "id": "openrouter-deepseek-dsml-content",
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4-flash",
+      "api": "chat.completions",
+      "fixture": "incident",
+      "state": "quarantined",
+      "reason": "tool protocol committed in content with zero structured tool calls"
+    },
+    {
+      "id": "openai-responses-structured-tool-call",
+      "provider": "openai",
+      "model": "gpt-5.6-luna",
+      "api": "responses",
+      "state": "unknown",
+      "reason": "shape covered by adapter tests; no production fixture in this incident audit"
+    },
+    {
+      "id": "openrouter-mixed-content-and-tool-calls",
+      "provider": "openrouter",
+      "model": "recorded-mixed-fixture",
+      "api": "chat.completions",
+      "state": "verified",
+      "contentChunks": ["Checking the page now."],
+      "structuredToolCalls": [
+        {
+          "id": "call-1",
+          "name": "fetch_website_page",
+          "input": { "path": "/products/example" }
+        }
+      ]
+    }
+  ]
+}

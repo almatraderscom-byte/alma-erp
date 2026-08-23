@@ -796,6 +796,7 @@ struct AgentSSEEvent: Decodable {
     let status: String?         // turn_snapshot
     let lastSeq: Int?           // turn_snapshot
     let assistantMessageId: String? // turn_snapshot
+    let continuationNeeded: Bool? // turn_terminal — status-derived exact-turn control
     let afterSeq: Int?          // replay_continue
     let turnId: String?         // turn_snapshot
     // SK-3 — skill_pinned. The web has shown this since 2026-07-26; the native
@@ -842,6 +843,113 @@ struct AgentSSEEvent: Decodable {
     let replaces: String?           // prose_start — the block this one will stand in for
     let checksum: String?           // prose_commit — fnv1a of the committed text
     let agentProseProtocol: Int?    // turn_protocol + turn_snapshot
+}
+
+/// Status-derived terminal control emitted by the durable stream after it has
+/// caught up every readable event row. Unlike the historical `done`/`error`
+/// payloads, this control always carries the exact turn + conversation identity.
+struct AgentTurnTerminal: Equatable, Sendable {
+    let turnId: String
+    let conversationId: String
+    let status: String
+    let lastSeq: Int
+    let assistantMessageId: String?
+    let continuationNeeded: Bool
+}
+
+/// Pure exact-turn recovery rules shared by the VM and XCTest. Keeping these
+/// decisions out of mutable UI state makes the two dangerous cases explicit:
+/// a newer turn in the same conversation is never adopted, and a `done` turn's
+/// descriptor is not retired until its named assistant row is mounted.
+enum DurableTurnRecoveryContract {
+    static func terminal(from event: AgentSSEEvent) -> AgentTurnTerminal? {
+        guard event.type == "turn_terminal",
+              let turnId = event.turnId, !turnId.isEmpty,
+              let conversationId = event.conversationId, !conversationId.isEmpty,
+              let status = event.status,
+              ["done", "error", "canceled"].contains(status) else { return nil }
+        return AgentTurnTerminal(
+            turnId: turnId,
+            conversationId: conversationId,
+            status: status,
+            lastSeq: max(-1, event.lastSeq ?? -1),
+            assistantMessageId: event.assistantMessageId?.isEmpty == false
+                ? event.assistantMessageId : nil,
+            continuationNeeded: status == "done" && event.continuationNeeded == true)
+    }
+
+    static func matches(_ terminal: AgentTurnTerminal,
+                        expectedTurnId: String,
+                        expectedConversationId: String) -> Bool {
+        terminal.turnId == expectedTurnId
+            && terminal.conversationId == expectedConversationId
+    }
+
+    /// Fail closed before an exact-turn stream event enters the UI buffer. A
+    /// mismatched hello must abort the connection; merely ignoring that one
+    /// switch case would let later rows from the newer turn mutate this screen.
+    static func acceptsExactStreamEvent(
+        _ event: AgentTurnEvent,
+        expectedTurnId: String,
+        expectedConversationId: String
+    ) -> Bool {
+        switch event {
+        case .turnId(let turnId):
+            return turnId == expectedTurnId
+        case .conversationId(let conversationId):
+            return conversationId == expectedConversationId
+        case .turnSnapshot(let turnId, let conversationId, _, _, _, _):
+            return turnId == expectedTurnId && conversationId == expectedConversationId
+        case .turnTerminal(let terminal):
+            return matches(
+                terminal,
+                expectedTurnId: expectedTurnId,
+                expectedConversationId: expectedConversationId)
+        default:
+            return true
+        }
+    }
+
+    static func advancedCursor(persisted: Int, observed: Int) -> Int {
+        max(-1, max(persisted, observed))
+    }
+
+    /// A process-global in-memory cursor is useful only when it belongs to the
+    /// same exact turn. On conversation switches/cold recovery the persisted
+    /// descriptor wins outright; a larger cursor from another turn would skip
+    /// this turn's unread rows.
+    static func boundCursor(cachedTurnId: String?, cached: Int,
+                            expectedTurnId: String, persisted: Int) -> Int {
+        guard cachedTurnId == expectedTurnId else { return max(-1, persisted) }
+        return advancedCursor(persisted: persisted, observed: cached)
+    }
+
+    /// A clean EOF (including a platform's 300-second response ceiling) is only
+    /// transport state. Re-open the same GET with the persisted cursor until an
+    /// exact terminal control or exact-URL legacy done/error is accepted.
+    static func reconnectAfterEOF(acceptedTerminal: Bool) -> Bool {
+        !acceptedTerminal
+    }
+
+    static func reconnectDelay(attempt: Int) -> TimeInterval {
+        min(3, 0.25 * pow(2, Double(max(0, min(attempt, 4)))))
+    }
+
+    static func canClearDescriptor(
+        terminal: AgentTurnTerminal,
+        expectedTurnId: String,
+        expectedConversationId: String,
+        reconciledAssistantIds: Set<String>
+    ) -> Bool {
+        guard matches(terminal, expectedTurnId: expectedTurnId,
+                      expectedConversationId: expectedConversationId) else { return false }
+        if let assistantMessageId = terminal.assistantMessageId {
+            return reconciledAssistantIds.contains(assistantMessageId)
+        }
+        // A successful turn must name and reconcile its persisted assistant row.
+        // Error/cancel can truthfully have no assistant row to reconcile.
+        return terminal.status == "error" || terminal.status == "canceled"
+    }
 }
 
 /// Roadmap 2.1 — the typed native event contract. Mirrors `src/agent/lib/core.ts`
@@ -915,9 +1023,16 @@ enum AgentTurnEvent: Sendable {
     /// `messageId` = the assistant row the server salvaged before failing
     /// (partial work + warning) — bound exactly like `done.messageId`.
     case turnError(message: String, messageId: String? = nil)
+    /// The exact stream could not read its snapshot/replay page. This is a
+    /// retryable transport-control failure, not evidence that the agent turn
+    /// itself entered terminal `error`.
+    case recoveryUnavailable(String)
     /// Durable-stream hello (roadmap 3.5/PR 5): current turn state on (re)connect.
     case turnSnapshot(turnId: String?, conversationId: String?, status: String?, lastSeq: Int?,
                       agentProseProtocol: Int? = nil, assistantMessageId: String? = nil)
+    /// Exact status-derived terminal. It is unsequenced, but `lastSeq` states the
+    /// durable cursor through which the server caught up before closing.
+    case turnTerminal(AgentTurnTerminal)
     /// Page-capped replay ended early — reconnect from this cursor.
     case replayContinue(afterSeq: Int)
     case unknown(type: String)
@@ -936,11 +1051,12 @@ enum AgentTurnEvent: Sendable {
     var isReplayContent: Bool {
         switch self {
         case .conversationId, .turnId, .personalMode, .modelInfo, .turnSnapshot,
+             .turnTerminal,
              .turnProtocol, .replayContinue, .unknown,
              // A terminal on its own is not content: a replay whose rows are
              // missing (`error: turn_replay_unavailable`) or a log holding only
              // `done` must settle the frozen partial, not blank it (Codex P1 #838).
-             .done, .turnError:
+             .done, .turnError, .recoveryUnavailable:
             return false
         default:
             return true
@@ -1053,13 +1169,22 @@ enum AgentTurnEvent: Sendable {
                          cacheCreation: ev.cacheCreation, cacheRead: ev.cacheRead,
                          roundCostsUsd: ev.roundCostsUsd)
         case "error":
-            self = .turnError(message: ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন",
-                              messageId: ev.messageId)
+            let message = ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন"
+            if message == "turn_snapshot_unavailable"
+                || message == "turn_replay_unavailable" {
+                self = .recoveryUnavailable(message)
+            } else {
+                self = .turnError(message: message, messageId: ev.messageId)
+            }
         case "turn_snapshot":
             self = .turnSnapshot(turnId: ev.turnId, conversationId: ev.conversationId,
                                  status: ev.status, lastSeq: ev.lastSeq,
                                  agentProseProtocol: ev.agentProseProtocol,
                                  assistantMessageId: ev.assistantMessageId)
+        case "turn_terminal":
+            self = DurableTurnRecoveryContract.terminal(from: ev)
+                .map(AgentTurnEvent.turnTerminal)
+                ?? .unknown(type: "turn_terminal/invalid")
         case "replay_continue":
             self = .replayContinue(afterSeq: ev.afterSeq ?? -1)
         default:
@@ -1116,6 +1241,7 @@ struct AlmaSSEParser {
 /// fragment. Tool/card/control events still land immediately.
 actor AgentEventBuffer {
     private var batch: [AgentTurnEvent] = []
+    private var batchHighSeq: Int?
     /// Owner-facing prose held back for the typewriter cadence (owner ask
     /// 2026-08-15: replies should stream smooth-and-slow like Claude Code, not
     /// land in sentence-sized chunks). Text deltas queue HERE; every flush tick
@@ -1127,7 +1253,12 @@ actor AgentEventBuffer {
     /// another event.
     /// Prose lifecycle v2: deltas of DIFFERENT blocks never merge — each
     /// backlog chunk carries the block it belongs to (nil on legacy turns).
-    private struct ProseChunk { var blockId: String?; var text: String }
+    private struct ProseChunk {
+        var blockId: String?
+        var text: String
+        /// Cursor is acknowledged only when this entire wire event was applied.
+        var sequence: Int?
+    }
     private var proseBacklog: [ProseChunk] = []
     private var proseBacklogCount: Int { proseBacklog.reduce(0) { $0 + $1.text.count } }
     private var flushScheduled = false
@@ -1149,24 +1280,41 @@ actor AgentEventBuffer {
     private static let proseCatchUpDivisor = 14
 
     private let apply: @MainActor ([AgentTurnEvent]) -> Void
+    private var onAppliedSeq: (@MainActor (Int) -> Void)?
 
-    init(apply: @escaping @MainActor ([AgentTurnEvent]) -> Void) {
+    init(
+        apply: @escaping @MainActor ([AgentTurnEvent]) -> Void,
+        onAppliedSeq: (@MainActor (Int) -> Void)? = nil
+    ) {
         self.apply = apply
+        self.onAppliedSeq = onAppliedSeq
     }
 
-    func push(_ ev: AgentTurnEvent) async {
+    func setOnAppliedSeq(_ observer: (@MainActor (Int) -> Void)?) {
+        onAppliedSeq = observer
+    }
+
+    private func recordAppliedSequence(_ sequence: Int?) {
+        guard let sequence else { return }
+        batchHighSeq = max(batchHighSeq ?? sequence, sequence)
+    }
+
+    func push(_ ev: AgentTurnEvent, sequence: Int? = nil) async {
         if ev.isControl {
             drainProseIntoBatch()
             batch.append(ev)
+            recordAppliedSequence(sequence)
             await flushNow()                       // deltas before it already queued in order
             return
         }
         switch ev {
         case .textDelta(let d, let blockId):
-            if !proseBacklog.isEmpty, proseBacklog[proseBacklog.count - 1].blockId == blockId {
+            if !proseBacklog.isEmpty,
+               proseBacklog[proseBacklog.count - 1].blockId == blockId,
+               proseBacklog[proseBacklog.count - 1].sequence == sequence {
                 proseBacklog[proseBacklog.count - 1].text += d
             } else {
-                proseBacklog.append(ProseChunk(blockId: blockId, text: d))
+                proseBacklog.append(ProseChunk(blockId: blockId, text: d, sequence: sequence))
             }
         case .thinkingDelta(let d):
             drainProseIntoBatch()                  // keep prose→thinking order exact
@@ -1175,9 +1323,11 @@ actor AgentEventBuffer {
             } else {
                 batch.append(.thinkingDelta(d))
             }
+            recordAppliedSequence(sequence)
         default:
             drainProseIntoBatch()
             batch.append(ev)
+            recordAppliedSequence(sequence)
         }
         scheduleFlush()
     }
@@ -1197,6 +1347,7 @@ actor AgentEventBuffer {
         } else {
             batch.append(.textDelta(chunk.text, blockId: chunk.blockId))
         }
+        recordAppliedSequence(chunk.sequence)
     }
 
     /// One paced slice of the backlog per tick. Small when the model is keeping
@@ -1209,8 +1360,9 @@ actor AgentEventBuffer {
                                   offsetBy: min(target, head.text.count))
         let slice = String(head.text[..<idx])
         head.text = String(head.text[idx...])
+        let completedSequence = head.text.isEmpty ? head.sequence : nil
         if head.text.isEmpty { proseBacklog.removeFirst() } else { proseBacklog[0] = head }
-        return ProseChunk(blockId: head.blockId, text: slice)
+        return ProseChunk(blockId: head.blockId, text: slice, sequence: completedSequence)
     }
 
     private func scheduleFlush() {
@@ -1246,12 +1398,15 @@ actor AgentEventBuffer {
         if !proseBacklog.isEmpty { scheduleFlush() }
         guard !batch.isEmpty else { return }
         let out = batch
+        let appliedHighSeq = batchHighSeq
         batch = []
+        batchHighSeq = nil
         flushCount += 1
         if flushCount == 1 || flushCount % 25 == 0 {
             AlmaTurnLog.event("stream.bufferFlush", "n=\(flushCount) batch=\(out.count)")
         }
         await apply(out)
+        if let appliedHighSeq { await onAppliedSeq?(appliedHighSeq) }
     }
 
     /// Stream closed — deliver whatever is left.
@@ -1263,6 +1418,9 @@ actor AgentEventBuffer {
 /// Streaming + multipart companion to AlmaAPI (which is JSON-only). Shares the
 /// same cookie bridge: HTTPCookieStorage.shared, refreshed via AlmaAPI.syncCookies().
 enum AssistantNet {
+    enum ExactStreamError: Error {
+        case identityMismatch
+    }
     /// Computed, not captured: signing in with a demo account switches the backend
     /// mid-session, and a `static let` would pin chat, uploads and TTS to whichever
     /// deployment happened to be current when the assistant was first opened.
@@ -1358,7 +1516,8 @@ enum AssistantNet {
     static func streamEvents(request: URLRequest,
                              buffer: AgentEventBuffer,
                              firstEvent: EventFlag? = nil,
-                             onSeq: (@Sendable (Int) -> Void)? = nil) async throws {
+                             expectedTurnId: String? = nil,
+                             expectedConversationId: String? = nil) async throws {
         let (bytes, resp) = try await streamSession.bytes(for: request)
         guard let http = resp as? HTTPURLResponse else { throw AlmaAPIError.transport(URLError(.badServerResponse)) }
         if http.statusCode == 401 || http.statusCode == 403 || (300..<400).contains(http.statusCode) {
@@ -1378,16 +1537,23 @@ enum AssistantNet {
         var parser = AlmaSSEParser()
         let decoder = JSONDecoder()
 
-        func dispatch(_ payload: String) async {
+        func dispatch(_ payload: String, sequence: Int?) async throws {
             guard let d = payload.data(using: .utf8) else { return }
             guard let dto = try? decoder.decode(AgentSSEEvent.self, from: d) else {
                 AlmaTurnLog.event("stream.malformedEvent", String(payload.prefix(80)))
                 return                                   // one bad frame never kills the rest
             }
-            firstEvent?.raise()
             let ev = AgentTurnEvent(dto: dto)
+            if let expectedTurnId, let expectedConversationId,
+               !DurableTurnRecoveryContract.acceptsExactStreamEvent(
+                ev,
+                expectedTurnId: expectedTurnId,
+                expectedConversationId: expectedConversationId) {
+                throw ExactStreamError.identityMismatch
+            }
+            firstEvent?.raise()
             if case .unknown(let t) = ev { AlmaTurnLog.event("stream.unknownEvent", t) }
-            await buffer.push(ev)
+            await buffer.push(ev, sequence: sequence)
         }
 
         var lineBuf: [UInt8] = []
@@ -1398,8 +1564,7 @@ enum AssistantNet {
                 lineBuf.removeAll(keepingCapacity: true)
                 try Task.checkCancellation()
                 if let payload = parser.consume(line: line) {
-                    await dispatch(payload)
-                    if let onSeq, let idStr = parser.lastEventId, let seq = Int(idStr) { onSeq(seq) }
+                    try await dispatch(payload, sequence: parser.lastEventId.flatMap(Int.init))
                 }
             } else {
                 lineBuf.append(byte)
@@ -1407,9 +1572,11 @@ enum AssistantNet {
         }
         // Trailing event without the final blank line (roadmap 2.2).
         if !lineBuf.isEmpty, let p = parser.consume(line: String(decoding: lineBuf, as: UTF8.self)) {
-            await dispatch(p)
+            try await dispatch(p, sequence: parser.lastEventId.flatMap(Int.init))
         }
-        if let p = parser.flushTrailing() { await dispatch(p) }
+        if let p = parser.flushTrailing() {
+            try await dispatch(p, sequence: parser.lastEventId.flatMap(Int.init))
+        }
         await buffer.finish()
     }
 

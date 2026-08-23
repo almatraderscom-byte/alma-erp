@@ -5,7 +5,11 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createAgentGraphRunner } from '../agent-graph-run.mjs'
+import { readFileSync } from 'node:fs'
+import {
+  createAgentGraphRunner,
+  runSourceBoundSpecialistBrief,
+} from '../agent-graph-run.mjs'
 
 function makeDeps(overrides = {}) {
   const state = { progress: null, heartbeats: 0, ran: [] }
@@ -25,6 +29,13 @@ function makeDeps(overrides = {}) {
 
 const briefs = (n) => Array.from({ length: n }, (_, i) => ({ id: i, role: 'researcher', task: `t${i}` }))
 
+test('worker wiring has no free-form specialist internalControl authority', () => {
+  const workerSource = readFileSync(new URL('../index.mjs', import.meta.url), 'utf8')
+  assert.match(workerSource, /runSourceBoundSpecialistBrief/)
+  assert.doesNotMatch(workerSource, /message:\s*`\[INTERNAL SPECIALIST BRIEF/)
+  assert.match(workerSource, /attempts:\s*8,\s*backoff:\s*\{ type: 'exponential', delay: 5000 \}/)
+})
+
 test('runs every brief, checkpoints after each, reports done', async () => {
   const { deps, state } = makeDeps()
   const run = createAgentGraphRunner(deps)
@@ -35,6 +46,24 @@ test('runs every brief, checkpoints after each, reports done', async () => {
   assert.equal(state.heartbeats, 3)
   assert.deepEqual(state.progress.completed, [0, 1, 2])
   assert.equal(state.progress.status, 'done')
+})
+
+test('passes the exact persisted brief index to the source-bound dispatcher', async () => {
+  const seen = []
+  const { deps } = makeDeps({
+    runBrief: async (brief, index) => {
+      seen.push({ id: brief.id, index })
+      return { success: true, summary: `ok:${brief.id}` }
+    },
+  })
+
+  await createAgentGraphRunner(deps)({ briefs: briefs(3) })
+
+  assert.deepEqual(seen, [
+    { id: 0, index: 0 },
+    { id: 1, index: 1 },
+    { id: 2, index: 2 },
+  ])
 })
 
 test('crash/retry resumes WITHOUT duplicating completed work', async () => {
@@ -119,4 +148,81 @@ test('a failed brief is visible and does not erase sibling findings', async () =
   const failed = out.findings.find((f) => f.index === 1)
   assert.equal(failed.success, false)
   assert.equal(failed.error, 'provider_500')
+})
+
+test('specialist transport sends only persisted source identity, never brief prose', async () => {
+  let posted
+  const result = await runSourceBoundSpecialistBrief({
+    pendingActionId: 'action-1',
+    briefIndex: 2,
+    appUrl: 'https://app.invalid',
+    token: 'test-token',
+    fetchImpl: async (_url, init) => {
+      posted = JSON.parse(init.body)
+      return new Response(JSON.stringify({ reply: 'persisted specialist result' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+
+  assert.deepEqual(posted, {
+    internalControl: true,
+    continuationSource: {
+      kind: 'specialist_brief', pendingActionId: 'action-1', briefIndex: 2,
+    },
+  })
+  assert.equal('message' in posted, false)
+  assert.equal('conversationId' in posted, false)
+  assert.deepEqual(result, { success: true, summary: 'persisted specialist result' })
+})
+
+test('duplicate terminal observe reuses the exact linked assistant text', async () => {
+  const result = await runSourceBoundSpecialistBrief({
+    pendingActionId: 'action-1', briefIndex: 1,
+    appUrl: 'https://app.invalid', token: 'test-token',
+    fetchImpl: async () => new Response(JSON.stringify({
+      observe: true, status: 'done', assistantMessageId: 'message-1', text: 'durable exact result',
+    }), {
+      status: 202,
+      headers: { 'content-type': 'application/json', 'x-agent-continuation-observe': '1' },
+    }),
+  })
+
+  assert.deepEqual(result, { success: true, summary: 'durable exact result' })
+})
+
+test('running or empty terminal observe remains retryable and is not checkpointed complete', async () => {
+  const fetchImpl = async () => new Response(JSON.stringify({
+    observe: true, status: 'running', assistantMessageId: null, text: '',
+  }), {
+    status: 202,
+    headers: { 'content-type': 'application/json', 'x-agent-continuation-observe': '1' },
+  })
+  const { deps, state } = makeDeps({
+    runBrief: async (_brief, index) => runSourceBoundSpecialistBrief({
+      pendingActionId: 'action-1', briefIndex: index,
+      appUrl: 'https://app.invalid', token: 'test-token', fetchImpl,
+    }),
+  })
+
+  await assert.rejects(
+    () => createAgentGraphRunner(deps)({ briefs: briefs(1) }),
+    (error) => error?.retryable === true && error?.message === 'specialist_continuation_running',
+  )
+  assert.equal(state.progress, null)
+})
+
+test('non-retryable specialist admission failure stays visible as a failed finding', async () => {
+  const result = await runSourceBoundSpecialistBrief({
+    pendingActionId: 'action-1', briefIndex: 0,
+    appUrl: 'https://app.invalid', token: 'test-token',
+    fetchImpl: async () => new Response(JSON.stringify({ error: 'continuation_source_status_mismatch' }), {
+      status: 409, headers: { 'content-type': 'application/json' },
+    }),
+  })
+
+  assert.deepEqual(result, {
+    success: false, summary: '', error: 'specialist_chat_http_409',
+  })
 })

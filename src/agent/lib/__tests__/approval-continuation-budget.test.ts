@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   enqueueTurnJob: vi.fn(),
   runOwnerTurn: vi.fn(),
   trace: vi.fn(),
+  bind: vi.fn(),
 }))
 
 vi.mock('@/lib/prisma', () => ({
@@ -33,6 +34,14 @@ vi.mock('@/agent/lib/turn-queue', () => ({
 }))
 vi.mock('@/agent/lib/turn-stage-trace', () => ({ traceTurnStage: mocks.trace }))
 vi.mock('@/agent/lib/models/run-owner-turn', () => ({ runOwnerTurn: mocks.runOwnerTurn }))
+vi.mock('@/agent/lib/continuation-binding', async (loadOriginal) => {
+  const original = await loadOriginal<typeof import('@/agent/lib/continuation-binding')>()
+  return {
+    ...original,
+    sourceBoundContinuationsEnabled: () => true,
+    bindContinuationTurn: mocks.bind,
+  }
+})
 
 import {
   enqueueApprovedActionContinuation,
@@ -50,12 +59,19 @@ beforeEach(() => {
     summary: 'Run approved Mac command',
     type: 'mac_command',
     result: { ok: true },
+    workflowRunId: null,
+  })
+  mocks.bind.mockResolvedValue({
+    turnId: 'progress-turn',
+    requestId: 'continuation:v1:approval:pending_action:mac-action:action_executed',
+    status: 'running',
+    created: true,
   })
   mocks.actionCount.mockResolvedValue(0)
 })
 
 describe('approval continuation route budget', () => {
-  it('terminalizes a long-Mac progress turn with durable continuation eligibility when worker is unavailable', async () => {
+  it('leaves a pre-claim bound turn retryable when the caller lacks inline budget', async () => {
     const now = Date.now()
     await enqueueApprovedActionContinuation('mac-action', 'progress-turn', {
       inlineDeadlineAtMs: now + 12_000,
@@ -66,9 +82,7 @@ describe('approval continuation route budget', () => {
     expect(mocks.trace).toHaveBeenCalledWith(
       'progress-turn', 'continuation_enqueued', 'client_budget',
     )
-    expect(mocks.finalizeTurn).toHaveBeenCalledWith(
-      'progress-turn', 'done', { continuationNeeded: true },
-    )
+    expect(mocks.finalizeTurn).not.toHaveBeenCalled()
   })
 
   it('requires the whole inline execution and terminal-write budget', () => {

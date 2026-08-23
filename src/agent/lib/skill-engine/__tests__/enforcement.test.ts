@@ -2,11 +2,14 @@
  * SK-4 — the enforcement layer, tested against the failures it exists for.
  */
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   ALWAYS_ALLOWED,
   dependencyBlockMessage,
   doneGateMessage,
   filterToolsForSkill,
+  skillDoneGateForClaim,
   skillAllowlist,
   skillDependencyGaps,
   skillDoneMisses,
@@ -155,6 +158,92 @@ describe('the done gate — "হয়ে গেছে" must be earned', () => {
       ).toEqual([])
     })
   })
+})
+
+describe.each(['native', 'alternate'] as const)(
+  'SEO durable-delivery done gate — %s enforcement path',
+  (runtime) => {
+    const manifest = {
+      done: [{ tool: 'check_website_seo_audit', check: 'seo_artifact_delivered' }],
+    }
+    const gate = (data: Record<string, unknown>) => skillDoneGateForClaim({
+      manifest,
+      skill: 'seo-auditing-own-site',
+      text: 'SEO audit completed.',
+      records: [{
+        toolName: 'check_website_seo_audit',
+        status: 'success',
+        output: { data },
+      }],
+    })
+
+    it('does not accept a successful poll while the approved action is still running', () => {
+      expect(gate({ status: 'approved', result: null })).toContain('শর্ত এখনো পূরণ হয়নি')
+    })
+
+    it('does not accept executed output with only a partially delivered artifact', () => {
+      expect(gate({
+        status: 'executed',
+        result: {
+          __delivery: {
+            state: 'pending',
+            via: 'artifact_outbox',
+            artifactId: 'artifact-1',
+          },
+        },
+        artifactCard: {
+          id: 'artifact-1',
+          title: 'SEO report',
+          canonicalMessageDelivered: false,
+        },
+      })).toContain('শর্ত এখনো পূরণ হয়নি')
+    })
+
+    it('accepts only the executed result whose linked artifact and canonical card message are delivered', () => {
+      expect(gate({
+        status: 'executed',
+        result: {
+          __delivery: {
+            state: 'delivered',
+            via: 'artifact_outbox',
+            artifactId: 'artifact-1',
+            messageId: 'message-1',
+          },
+        },
+        artifactCard: {
+          id: 'artifact-1',
+          title: 'SEO report',
+          canonicalMessageDelivered: true,
+          canonicalMessageId: 'message-1',
+        },
+      })).toBe('')
+    })
+
+    it(`wires ${runtime} runner records, including tool output, through the shared gate`, () => {
+      const file = runtime === 'native'
+        ? 'src/agent/lib/core.ts'
+        : 'src/agent/lib/models/run-owner-turn.ts'
+      const source = readFileSync(join(process.cwd(), file), 'utf8')
+      const callStart = source.indexOf('skillDoneGateForClaim({')
+      expect(callStart, `${file} must call the shared done gate`).toBeGreaterThanOrEqual(0)
+      expect(source.slice(callStart, callStart + 900), `${file} must pass the real tool result`).toContain('output: r.output')
+    })
+  },
+)
+
+describe('SEO manifests bind completion to durable delivery, not a successful poll', () => {
+  for (const name of ['seo-auditing-own-site', 'seo-fixing-client-site']) {
+    it(`${name} requires the durable artifact check`, () => {
+      const manifest = JSON.parse(readFileSync(
+        join(process.cwd(), 'src/agent/skills', name, 'manifest.json'),
+        'utf8',
+      )) as { done?: Array<Record<string, unknown>> }
+      expect(manifest.done).toContainEqual({
+        tool: 'check_website_seo_audit',
+        check: 'seo_artifact_delivered',
+      })
+    })
+  }
 })
 
 describe('Mac tools survive skill isolation (live-hit 2026-08-01)', () => {

@@ -19,6 +19,15 @@
  */
 import { createSeqDeduper, isTerminalEventType, type TurnEvent } from '@/agent/lib/turn-events'
 
+export interface TurnTailStatusSnapshot {
+  turnId: string
+  conversationId: string | null
+  status: string
+  lastSeq: number | null
+  assistantMessageId: string | null
+  continuationNeeded: boolean
+}
+
 export interface TurnTailIO {
   /** Durable rows newer than `afterSeq`, oldest first, at most `limit`. */
   getReplay(afterSeq: number, limit?: number): Promise<TurnEvent[]>
@@ -29,6 +38,8 @@ export interface TurnTailIO {
    * `.then(close)` on the pending promise would never run (Codex P1 #836 r4).
    */
   subscribe(onEvent: (evt: TurnEvent) => void, signal?: AbortSignal): Promise<{ close: () => Promise<void> } | null>
+  /** Exact lifecycle snapshot for THIS turn (never conversation-latest). */
+  getStatus(): Promise<TurnTailStatusSnapshot | null>
   /** Database polling fallback when there is no live channel. */
   poll(afterSeq: number, onEvent: (evt: TurnEvent) => void): { close: () => Promise<void> }
   /** Emit one accepted event to the client. */
@@ -47,6 +58,9 @@ export interface TurnTailOptions {
   /** Snapshot facts the endpoint already fetched. */
   snapshotLastSeq: number | null
   snapshotStatus: string | null
+  snapshotConversationId?: string | null
+  snapshotAssistantMessageId?: string | null
+  snapshotContinuationNeeded?: boolean
   replayPageSize?: number
   /** Delay before the single catch-up retry (tests shorten it). */
   catchupRetryDelayMs?: number
@@ -56,6 +70,12 @@ export interface TurnTailOptions {
    * back the durable replay and the polling fallback (Codex P1 #836).
    */
   subscribeTimeoutMs?: number
+  /** Exact-turn lifecycle cadence; runs even while Redis live-tail is healthy. */
+  statusPollIntervalMs?: number
+  /** One consistency retry when terminal.lastSeq is ahead of readable rows. */
+  terminalCatchupRetryDelayMs?: number
+  /** Bound for a permanently missing durable row before status-only settlement. */
+  terminalCatchupMaxChecks?: number
 }
 
 export interface TurnTailHandle {
@@ -75,11 +95,18 @@ export function runTurnTail(io: TurnTailIO, opts: TurnTailOptions): TurnTailHand
   let subscribeTimedOut = false
   const buffered: TurnEvent[] = []
   let chain: Promise<void> = Promise.resolve()
+  let statusChain: Promise<void> = Promise.resolve()
+  let statusTimer: ReturnType<typeof setInterval> | null = null
+  let terminalLagChecks = 0
   const log = io.log ?? (() => {})
 
   const finish = () => {
     if (closed) return
     closed = true
+    if (statusTimer) {
+      clearInterval(statusTimer)
+      statusTimer = null
+    }
     io.finish()
     void sub?.close()
   }
@@ -163,6 +190,111 @@ export function runTurnTail(io: TurnTailIO, opts: TurnTailOptions): TurnTailHand
     applyLive(evt)
   }
 
+  const isTerminalStatus = (status: string | null | undefined) =>
+    status === 'done' || status === 'error' || status === 'canceled'
+
+  /**
+   * A lifecycle row may become terminal before the worker's mirrored terminal
+   * event reaches the durable log. Read every currently durable row first; if
+   * status.lastSeq says a row is still missing, retry that read once. Only then
+   * emit the unsequenced status control and close.
+   */
+  const settleFromStatus = async (status: TurnTailStatusSnapshot): Promise<boolean> => {
+    if (closed || !isTerminalStatus(status.status)) return closed
+    if (status.turnId !== opts.turnId) {
+      log('status_turn_mismatch', {
+        turnId: opts.turnId,
+        receivedTurnId: status.turnId,
+      })
+      return false
+    }
+
+    const targetLastSeq = Number.isFinite(status.lastSeq) ? Number(status.lastSeq) : -1
+    let consistencyRetryUsed = false
+    while (!closed) {
+      let rows: TurnEvent[]
+      try {
+        rows = await io.getReplay(dedup.lastSeq, pageSize)
+      } catch (err) {
+        log('terminal_catchup_failed', {
+          turnId: opts.turnId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        break
+      }
+      for (const evt of rows) {
+        if (accept(evt)) return true
+      }
+      if (rows.length >= pageSize) continue
+      if (dedup.lastSeq < targetLastSeq && !consistencyRetryUsed) {
+        consistencyRetryUsed = true
+        await new Promise((resolve) => setTimeout(
+          resolve,
+          opts.terminalCatchupRetryDelayMs ?? 100,
+        ))
+        continue
+      }
+      break
+    }
+    if (closed) return true
+
+    if (dedup.lastSeq < targetLastSeq) {
+      terminalLagChecks += 1
+      log('terminal_catchup_pending', {
+        turnId: opts.turnId,
+        expectedThroughSeq: targetLastSeq,
+        observedSeq: dedup.lastSeq,
+        check: terminalLagChecks,
+      })
+      // Keep this exact-turn stream open for another status tick while a row
+      // the lifecycle snapshot says exists is still unreadable. If the durable
+      // hole persists, settle from DB status without advancing the client cursor
+      // past data it never saw; an exact-cursor reconnect can still request it.
+      if (terminalLagChecks < (opts.terminalCatchupMaxChecks ?? 3)) return false
+    } else {
+      terminalLagChecks = 0
+    }
+
+    io.control({
+      type: 'turn_terminal',
+      turnId: status.turnId,
+      conversationId: status.conversationId,
+      status: status.status,
+      lastSeq: dedup.lastSeq,
+      assistantMessageId: status.assistantMessageId,
+      continuationNeeded: status.status === 'done' && status.continuationNeeded === true,
+    })
+    finish()
+    return true
+  }
+
+  const scheduleStatusCheck = () => {
+    statusChain = statusChain
+      .then(async () => {
+        if (closed) return
+        let status: TurnTailStatusSnapshot | null = null
+        try {
+          status = await io.getStatus()
+        } catch (err) {
+          log('status_poll_failed', {
+            turnId: opts.turnId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          return
+        }
+        if (!status || !isTerminalStatus(status.status)) return
+        chain = chain.then(async () => { await settleFromStatus(status!) })
+        await chain
+      })
+      .catch((err) => {
+        log('status_apply_failed', {
+          turnId: opts.turnId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      })
+    return statusChain
+  }
+
   const ready = (async () => {
     // 1) Subscribe FIRST so nothing published during the replay query is lost —
     //    but never wait on it longer than the deadline: already-persisted rows
@@ -236,26 +368,50 @@ export function runTurnTail(io: TurnTailIO, opts: TurnTailOptions): TurnTailHand
     await chain
     if (closed) return
 
+    // A terminal connection snapshot is already exact-turn DB truth. It still
+    // goes through terminal catch-up so durable rows precede the control frame.
+    if (isTerminalStatus(opts.snapshotStatus)) {
+      await settleFromStatus({
+        turnId: opts.turnId,
+        conversationId: opts.snapshotConversationId ?? null,
+        status: opts.snapshotStatus!,
+        lastSeq: opts.snapshotLastSeq,
+        assistantMessageId: opts.snapshotAssistantMessageId ?? null,
+        continuationNeeded: opts.snapshotContinuationNeeded === true,
+      })
+      if (closed) return
+    }
+
     if (!sub) {
       // No live channel: the durable log is written BEFORE each publish, so
-      // poll it instead (~1s) — but only for a turn that is still running.
-      if (opts.snapshotStatus !== 'running') {
-        io.control({ type: 'error', message: 'turn_stream_unavailable' })
-        finish()
-        return
-      }
+      // poll it instead (~1s). Exact status polling below is independent: a
+      // zero-event terminal turn must close even when no event row ever lands.
       sub = io.poll(dedup.lastSeq, (evt) => {
         if (closed) return
         accept(evt)
       })
     }
+
+    // Status is authoritative lifecycle truth and is polled even with a healthy
+    // Redis subscription: a terminal transition can legitimately have zero
+    // event rows (or a lost terminal publish).
+    await scheduleStatusCheck()
+    if (closed) return
+    statusTimer = setInterval(
+      () => { void scheduleStatusCheck() },
+      opts.statusPollIntervalMs ?? 1000,
+    )
   })()
 
   return {
     ready,
-    flush: () => chain.catch(() => {}),
+    flush: async () => {
+      await statusChain.catch(() => {})
+      await chain.catch(() => {})
+    },
     close: async () => {
       finish()
+      await statusChain.catch(() => {})
       await chain.catch(() => {})
     },
   }

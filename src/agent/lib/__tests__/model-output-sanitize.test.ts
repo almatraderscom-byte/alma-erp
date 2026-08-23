@@ -10,8 +10,27 @@
  */
 import { describe, expect, it } from 'vitest'
 import { createMarkupStreamFilter, dropRepeatedBlocks, stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
+import fixture from '@/agent/lib/models/__tests__/fixtures/provider-protocol-d00c.json'
 
 describe('tool-call markup never reaches the owner', () => {
+  it('quarantines the exact d00c events 209-212 payload as one committed block', () => {
+    expect(stripToolCallMarkup(fixture.incident.chunks.join(''))).toBe('')
+  })
+
+  it('quarantines both ASCII and full-width DSML tags', () => {
+    const fullWidth = fixture.incident.chunks.join('')
+    const ascii = fullWidth.replaceAll('｜', '|')
+    expect(stripToolCallMarkup(fullWidth)).toBe('')
+    expect(stripToolCallMarkup(ascii)).toBe('')
+  })
+
+  it('quarantines DeepSeek sentinel envelopes including bare tool_sep payloads', () => {
+    const ascii = '<|tool_calls_begin|><|tool_call_begin|>functions.fetch_website_page:0<|tool_sep|>{"path":"/products/example"}<|tool_call_end|><|tool_calls_end|>'
+    const fullWidth = '<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>functions.fetch_website_page:0<｜tool▁sep｜>{"path":"/products/example"}<｜tool▁call▁end｜><｜tool▁calls▁end｜>'
+    expect(stripToolCallMarkup(ascii)).toBe('')
+    expect(stripToolCallMarkup(fullWidth)).toBe('')
+  })
+
   it('removes the exact leak from his screen', () => {
     const seen =
       'প্রথমে catalog দেখে নিই কতগুলো product আছে, তারপর audit চালাবো।\n\n'
@@ -219,6 +238,37 @@ describe('the STREAMING case — his screen, live, 2026-07-28', () => {
     const f = createMarkupStreamFilter()
     return deltas.map((d) => f.push(d)).join('') + f.flush()
   }
+
+  it('quarantines the exact incident payload at every two-way boundary', () => {
+    const raw = fixture.incident.chunks.join('')
+    for (let split = 0; split <= raw.length; split++) {
+      expect(run([raw.slice(0, split), raw.slice(split)]), `split=${split}`).toBe('')
+    }
+  })
+
+  it('quarantines the exact four production chunk boundaries verbatim', () => {
+    expect(run([...fixture.incident.chunks])).toBe('')
+  })
+
+  it('quarantines the exact incident payload one code point at a time', () => {
+    expect(run(Array.from(fixture.incident.chunks.join('')))).toBe('')
+  })
+
+  it('quarantines every three-way split of short ASCII/full-width DSML + tool_sep envelopes', () => {
+    for (const sample of [
+      '<｜DSML｜tool_calls><｜DSML｜invoke name="x">payload</｜DSML｜invoke></｜DSML｜tool_calls>',
+      '<|DSML|tool_calls><|DSML|invoke name="x">payload</|DSML|invoke></|DSML|tool_calls>',
+      '<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>functions.x:0<｜tool▁sep｜>{}</｜tool▁call▁end｜><｜tool▁calls▁end｜>',
+      '<|tool_calls_begin|><|tool_call_begin|>functions.x:0<|tool_sep|>{}<|tool_call_end|><|tool_calls_end|>',
+    ]) {
+      for (let a = 0; a <= sample.length; a++) {
+        for (let b = a; b <= sample.length; b++) {
+          const chunks = [sample.slice(0, a), sample.slice(a, b), sample.slice(b)]
+          expect(run(chunks), `${a},${b}: ${sample}`).toBe('')
+        }
+      }
+    }
+  })
 
   it('never shows markup that arrives split across deltas', () => {
     // How it actually came off the wire: the tag spans four deltas.

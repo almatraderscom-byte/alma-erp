@@ -43,6 +43,12 @@ import {
 } from '@/agent/lib/presentation/prose-lifecycle'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
+import {
+  claimContinuationExecution,
+  createOrReuseSpecialistBriefContinuation,
+  ContinuationBindingError,
+  sourceBoundContinuationsEnabled,
+} from '@/agent/lib/continuation-binding'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
 import {
@@ -157,6 +163,14 @@ interface ChatBody {
   autoContinueFromTurnId?: string
   /** Server/worker continuation note. Control context, never owner-authored chat. */
   internalControl?: boolean
+  /** Deterministic AgentTurn.requestId for source-bound internal authority. */
+  continuationRequestId?: string
+  /** Identity-only worker admission; server derives conversation/turn/directive. */
+  continuationSource?: {
+    kind?: unknown
+    pendingActionId?: unknown
+    briefIndex?: unknown
+  }
   /**
    * Model-upgrade approval resume: the previous turn paused on a
    * `model_switch_required` card. This re-runs the SAME turn (no new user message)
@@ -282,15 +296,61 @@ export async function POST(req: NextRequest) {
       ? body.clientRequestId.trim()
       : null
 
-  const message = typeof body.message === 'string' ? body.message.trim() : ''
   const internalControl = isInternalCall && body.internalControl === true
+  if (internalControl && !sourceBoundContinuationsEnabled()) {
+    return Response.json({ error: 'source_bound_continuations_disabled' }, { status: 503 })
+  }
+  let continuationRequestId = internalControl && typeof body.continuationRequestId === 'string'
+    ? body.continuationRequestId.trim()
+    : ''
+  const continuationSource = internalControl ? body.continuationSource : null
+  if (continuationSource !== undefined && continuationSource !== null) {
+    if (
+      continuationRequestId
+      || typeof body.turnId === 'string'
+      || continuationSource.kind !== 'specialist_brief'
+      || typeof continuationSource.pendingActionId !== 'string'
+      || !Number.isInteger(continuationSource.briefIndex)
+      || Number(continuationSource.briefIndex) < 0
+    ) {
+      return Response.json({ error: 'continuation_source_invalid' }, { status: 422 })
+    }
+    try {
+      const specialist = await createOrReuseSpecialistBriefContinuation({
+        pendingActionId: continuationSource.pendingActionId,
+        briefIndex: Number(continuationSource.briefIndex),
+      })
+      body.conversationId = specialist.conversationId
+      body.turnId = specialist.turnId
+      continuationRequestId = specialist.requestId
+    } catch (error) {
+      const code = error instanceof ContinuationBindingError
+        ? error.code
+        : 'continuation_binding_unavailable'
+      return Response.json({ error: code }, { status: 409 })
+    }
+  }
+  const boundContinuationRef = Boolean(
+    internalControl
+    && continuationRequestId
+    && typeof body.turnId === 'string'
+    && body.turnId.trim(),
+  )
+  // A source-bound call deliberately ignores any body prose. Authority is
+  // reloaded from the immutable AgentTurn binding after the execution CAS.
+  const message = boundContinuationRef
+    ? ''
+    : typeof body.message === 'string' ? body.message.trim() : ''
+  if (internalControl && !boundContinuationRef) {
+    return Response.json({ error: 'continuation_binding_required' }, { status: 422 })
+  }
   // Attached files (image/PDF) make a caption-less turn valid — Claude.ai lets you
   // send an image with no text. Parse them up-front so the guard allows an
   // image-only message instead of rejecting it as `message_required`.
   const files: FileRef[] = Array.isArray(body.files)
     ? body.files.filter((f) => f && typeof f.path === 'string' && typeof f.mediaType === 'string')
     : []
-  if (!message && !resume && !autoContinueFromTurnId && files.length === 0) {
+  if (!message && !boundContinuationRef && !resume && !autoContinueFromTurnId && files.length === 0) {
     return Response.json({ error: 'message_required' }, { status: 400 })
   }
 
@@ -457,7 +517,8 @@ export async function POST(req: NextRequest) {
         // proves authorization by presenting the turnId the enqueue route created.
         const workerTurnOk =
           typeof body.turnId === 'string'
-          && (await isRunningTurnForConversation(body.turnId, conversationId))
+          && (boundContinuationRef
+            || (await isRunningTurnForConversation(body.turnId, conversationId)))
         if (!workerTurnOk) {
           return Response.json({ error: 'forbidden_conversation' }, { status: 403 })
         }
@@ -711,6 +772,61 @@ export async function POST(req: NextRequest) {
   const turnAbort = new AbortController()
   const turnCapTimer = setTimeout(() => turnAbort.abort(), TURN_HARD_CAP_MS)
 
+  // Source-bound internal calls win execution exactly once before a model/tool
+  // can run. The queue/body supplies only identities; this DB claim revalidates
+  // the source and returns the server-rendered directive. A duplicate observes
+  // the original turn and exits without synthesizing another stream terminal.
+  let boundContinuationDirective: string | null = null
+  if (internalControl) {
+    try {
+      const claim = await claimContinuationExecution({
+        conversationId: conversationId!,
+        turnId: body.turnId!.trim(),
+        requestId: continuationRequestId,
+      })
+      if (claim.outcome === 'observe') {
+        clearTimeout(turnCapTimer)
+        const snapshot = await getTurnSnapshot(body.turnId!.trim())
+        let observedText = ''
+        if (snapshot?.assistantMessageId) {
+          const assistant = await prisma.agentMessage.findUnique({
+            where: { id: snapshot.assistantMessageId },
+            select: { content: true },
+          })
+          const blocks = Array.isArray(assistant?.content)
+            ? assistant.content as Array<Record<string, unknown>>
+            : []
+          observedText = blocks
+            .filter((block) => block.type === 'text' && typeof block.text === 'string')
+            .map((block) => String(block.text))
+            .join('\n')
+            .trim()
+        }
+        return Response.json({
+          duplicate: true,
+          observe: true,
+          turnId: body.turnId,
+          conversationId,
+          status: claim.status,
+          lastSeq: snapshot?.lastSeq ?? 0,
+          assistantMessageId: snapshot?.assistantMessageId ?? null,
+          text: observedText,
+        }, {
+          status: 202,
+          headers: { 'x-agent-continuation-observe': '1' },
+        })
+      }
+      boundContinuationDirective = claim.directive
+    } catch (error) {
+      clearTimeout(turnCapTimer)
+      await finalizeTurnIfRunning(body.turnId ?? null, 'error')
+      const code = error instanceof ContinuationBindingError
+        ? error.code
+        : 'continuation_binding_unavailable'
+      return Response.json({ error: code }, { status: 409 })
+    }
+  }
+
   // Durable turn row: lets the client re-sync after backgrounding and gives the
   // Stop button a cross-instance cancel target. Fail-open (null id) if it can't write.
   // A2: a worker-run turn reuses the row the enqueue route already created, so the
@@ -826,7 +942,7 @@ export async function POST(req: NextRequest) {
       [
         projectSystemInstructions,
         internalControl
-          ? `[INTERNAL WORKFLOW CONTINUATION — this is server control state, NOT a new Boss/user message; never quote it as if Boss wrote it.]\n${message}`
+          ? boundContinuationDirective
           : null,
         body.voice === true ? VOICE_TURN_INSTRUCTION : null,
         autoContinueFromTurnId ? AUTO_CONTINUE_INSTRUCTION : null,
@@ -992,7 +1108,13 @@ export async function POST(req: NextRequest) {
     // v2 deltas are block-addressed (no paragraph separators on the wire): the
     // tracker's committed blocks are the truthful reply text, not the raw join.
     if (proseLifecycle.protocol === 2) finalText = proseLifecycle.ownerVisibleText() || finalText
-    if (turnId && conversationId && convSource === 'web' && !continuationNeeded) {
+    if (
+      turnId
+      && conversationId
+      && convSource === 'web'
+      && !continuationNeeded
+      && body.continuationSource?.kind !== 'specialist_brief'
+    ) {
       try {
         const deliveryId = await enqueueTurnCompletionNotification({
           turnId,
@@ -1175,12 +1297,22 @@ export async function POST(req: NextRequest) {
             // endpoint now rejects this finished turn, so anything claimed here
             // is the complete last-moment set. Resume automatically; never lose
             // it and never require Boss to send the same instruction again.
-            if (conversationId) {
+            if (turnId && conversationId) {
               const lastMomentSteering = await claimTurnSteeringMessages(turnId, conversationId, new Set())
               if (lastMomentSteering.length > 0) {
                 await enqueueAgentContinuation({
                   conversationId,
-                  message: lastMomentSteering.map((item) => item.prompt).join('\n\n'),
+                  binding: {
+                    v: 1,
+                    origin: 'steering',
+                    source: { kind: 'turn', id: turnId },
+                    conversationId,
+                    domain: 'generic',
+                    event: 'steering_applied',
+                    directive: { kind: 'owner_steering', version: 1 },
+                    expected: { sourceStatus: ['done'] },
+                    steeringMessageIds: lastMomentSteering.map((item) => item.id),
+                  },
                   force: true,
                   // This IS Boss speaking (his last-moment steer), so the
                   // awaiting-answer gate must not swallow it.

@@ -6,7 +6,7 @@
  *   • a progress placeholder ("⏳ … কাজ চলমান") does NOT;
  *   • silence retries the continuation twice, then the server posts the result.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterAll, describe, it, expect, vi, beforeEach } from 'vitest'
 
 type ActionRow = {
   id: string
@@ -17,6 +17,7 @@ type ActionRow = {
   payload: Record<string, unknown>
   result: Record<string, unknown> | null
   resolvedAt: Date | null
+  workflowRunId?: string | null
 }
 type MessageRow = { conversationId: string; role: string; content: unknown; createdAt: Date }
 type AskCardRow = { id: string; conversationId: string; status: string }
@@ -24,7 +25,12 @@ type AskCardRow = { id: string; conversationId: string; status: string }
 const askCards: AskCardRow[] = []
 const actions: ActionRow[] = []
 const messages: MessageRow[] = []
-const continuations: Array<{ conversationId: string; force?: boolean; message: string }> = []
+const continuations: Array<{
+  conversationId: string
+  force?: boolean
+  message?: string
+  binding?: Record<string, unknown>
+}> = []
 const telegram: string[] = []
 
 vi.mock('@/lib/prisma', () => ({
@@ -72,8 +78,14 @@ vi.mock('@/lib/prisma', () => ({
 }))
 
 vi.mock('@/agent/lib/approval-continuation', () => ({
-  enqueueAgentContinuation: async (opts: { conversationId: string; force?: boolean; message: string }) => {
+  enqueueAgentContinuation: async (opts: {
+    conversationId: string
+    force?: boolean
+    message?: string
+    binding?: Record<string, unknown>
+  }) => {
     continuations.push(opts)
+    return { outcome: 'queued', turnId: 'turn-delivery', requestId: 'request-delivery', status: 'running' }
   },
 }))
 
@@ -92,6 +104,7 @@ const {
 } = await import('@/agent/lib/job-delivery')
 
 const MINUTES = 60 * 1000
+const ORIGINAL_ARTIFACT_OUTBOX_FLAG = process.env.AGENT_ARTIFACT_OUTBOX
 
 function seedAudit(overrides: Partial<ActionRow> = {}): ActionRow {
   const row: ActionRow = {
@@ -109,6 +122,7 @@ function seedAudit(overrides: Partial<ActionRow> = {}): ActionRow {
       __delivery: { state: 'pending', attempts: 0, since: new Date(Date.now() - 20 * MINUTES).toISOString() },
     },
     resolvedAt: new Date(Date.now() - 20 * MINUTES),
+    workflowRunId: 'workflow-seo-1',
     ...overrides,
   }
   actions.push(row)
@@ -121,6 +135,14 @@ beforeEach(() => {
   continuations.length = 0
   telegram.length = 0
   askCards.length = 0
+  // This suite proves the rollback/generic delivery path. The durable SEO
+  // outbox has its own crash/replay integration suite.
+  process.env.AGENT_ARTIFACT_OUTBOX = 'false'
+})
+
+afterAll(() => {
+  if (ORIGINAL_ARTIFACT_OUTBOX_FLAG === undefined) delete process.env.AGENT_ARTIFACT_OUTBOX
+  else process.env.AGENT_ARTIFACT_OUTBOX = ORIGINAL_ARTIFACT_OUTBOX_FLAG
 })
 
 describe('job delivery sweep', () => {
@@ -152,7 +174,18 @@ describe('job delivery sweep', () => {
     expect(out.alreadyDelivered).toBe(0)
     expect(out.retried).toBe(1)
     expect(continuations[0].force).toBe(true)
-    expect(continuations[0].message).toMatch(/present it IN THIS REPLY/)
+    expect(continuations[0].message).toBeUndefined()
+    expect(continuations[0].binding).toEqual({
+      v: 1,
+      origin: 'job_delivery',
+      source: { kind: 'pending_action', id: 'act-1' },
+      conversationId: 'conv-1',
+      domain: 'seo',
+      event: 'delivery_retry',
+      workflowRunId: 'workflow-seo-1',
+      directive: { kind: 'job_delivery_retry', version: 1 },
+      expected: { sourceStatus: ['executed'], sourceType: 'seo_audit' },
+    })
   })
 
   it('after two silent retries the server posts the result itself', async () => {

@@ -104,7 +104,8 @@ describe('SK-6 — the knowledge actually landed in the skill', () => {
     )
     // per-target ordering, and "prose is not delivery"
     expect(body).toContain('একটা শেষ করে তবেই পরেরটা')
-    expect(body).toContain('save_artifact')
+    expect(body).toContain('artifactCard')
+    expect(body).toContain('আলাদা `save_artifact` ডাকা নিষেধ')
     expect(body).toContain('ডেলিভারি **নয়**')
     // the live-Chrome depth rule, in the skill's own words
     expect(body).toContain('৫-৮টা পেজ')

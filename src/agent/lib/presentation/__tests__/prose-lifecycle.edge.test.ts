@@ -14,6 +14,7 @@ import {
   visibleProseBlocks,
   type LiveProseState,
 } from '../live-prose-reducer'
+import fixture from '@/agent/lib/models/__tests__/fixtures/provider-protocol-d00c.json'
 
 const T = 'turn-edge'
 const text = (delta: string): WireEvent => ({ type: 'text_delta', delta })
@@ -36,6 +37,14 @@ function drive(events: WireEvent[], protocol: 1 | 2 = 2) {
 }
 
 describe('tracker edge cases', () => {
+  it('never persists the exact incident DSML in presentationV2 p8', () => {
+    const tracker = new ProseLifecycleTracker({ protocol: 2, turnId: 'd00c1a82' })
+    for (const delta of fixture.incident.chunks) tracker.process(text(delta))
+    tracker.process(done)
+    const doc = tracker.document('message-d00c')
+    expect(doc.blocks.flatMap((block) => block.text.match(/DSML|fetch_website_page/g) ?? [])).toEqual([])
+    expect(ownerVisibleTextFromDocument(doc)).toBe('')
+  })
   it('tool_start never touches committed prose; tool_end ends the continuation window', () => {
     const r = drive([text('P1'), tool('a'), text(' tail'), tool('a'), toolEnd('a'), text('P2'), tool('b')])
     expect(r.visible).toEqual(['progress:P1 tail', 'progress:P2'])

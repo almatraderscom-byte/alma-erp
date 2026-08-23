@@ -8,15 +8,15 @@
  *   • approval_pending — a confirm card still awaiting the owner's decision
  *
  * Collapsed: a small glowing pill "🔄 N কাজ বাকি". Tap → expands to a detail list.
- * Per chat_followup: Continue (resumes that exact work in the same chat via the
- * self-contained note) + Cancel. Per approval_pending: a pointer to its inline
+ * Per chat_followup: Continue (resumes that exact server-bound work in the same
+ * chat by id) + Cancel. Per approval_pending: a pointer to its inline
  * card (Approve/Reject lives there — never duplicated here).
  *
  * Live: polls the conversation-scoped endpoint and refreshes on the global
  * `alma:open-tasks-changed` event so it updates the moment a task is tracked or
  * resolved.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 const BN = '০১২৩৪৫৬৭৮৯'
@@ -29,6 +29,79 @@ export type OpenTaskItem = {
   note: string
   pendingActionId?: string
   ageMinutes: number
+}
+
+/** Exact durable turn returned after the server atomically binds an open task.
+ * No resume prose crosses this boundary: the client only knows source identity
+ * and the stream cursor it must attach to. */
+export type OpenTaskContinuation = {
+  openTaskId: string
+  conversationId: string
+  turnId: string
+  lastSeq: -1
+  status: string
+}
+
+export type PendingOpenTaskContinuation = {
+  openTaskId: string
+  conversationId: string
+}
+
+type OpenTaskStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+const PENDING_OPEN_TASK_KEY = 'alma:pending-open-task:v1'
+
+export function loadPendingOpenTaskContinuation(
+  storage: OpenTaskStorage,
+): PendingOpenTaskContinuation | null {
+  try {
+    const parsed = JSON.parse(storage.getItem(PENDING_OPEN_TASK_KEY) ?? 'null') as Record<string, unknown> | null
+    if (!parsed) return null
+    const openTaskId = typeof parsed.openTaskId === 'string' ? parsed.openTaskId.trim() : ''
+    const conversationId = typeof parsed.conversationId === 'string' ? parsed.conversationId.trim() : ''
+    return openTaskId && conversationId ? { openTaskId, conversationId } : null
+  } catch {
+    return null
+  }
+}
+
+export function savePendingOpenTaskContinuation(
+  storage: OpenTaskStorage,
+  pending: PendingOpenTaskContinuation,
+) {
+  try {
+    storage.setItem(PENDING_OPEN_TASK_KEY, JSON.stringify(pending))
+  } catch { /* active request still works when storage is unavailable */ }
+}
+
+export function clearPendingOpenTaskContinuation(
+  storage: OpenTaskStorage,
+  exactOpenTaskId: string,
+) {
+  try {
+    if (loadPendingOpenTaskContinuation(storage)?.openTaskId !== exactOpenTaskId) return
+    storage.removeItem(PENDING_OPEN_TASK_KEY)
+  } catch { /* best-effort recovery hint */ }
+}
+
+export function parseOpenTaskContinuation(
+  value: unknown,
+  expectedConversationId: string,
+  openTaskId: string,
+): OpenTaskContinuation | null {
+  if (!value || typeof value !== 'object') return null
+  const row = value as Record<string, unknown>
+  if (row.ok !== true || row.action !== 'continue') return null
+  const conversationId = typeof row.conversationId === 'string' ? row.conversationId.trim() : ''
+  const turnId = typeof row.turnId === 'string' ? row.turnId.trim() : ''
+  const status = typeof row.status === 'string' ? row.status.trim() : ''
+  const lastSeq = row.lastSeq
+  const terminalOrRunning = status === 'running' || status === 'done'
+    || status === 'error' || status === 'canceled'
+  if (
+    !conversationId || conversationId !== expectedConversationId
+    || !turnId || !terminalOrRunning || lastSeq !== -1
+  ) return null
+  return { openTaskId, conversationId, turnId, lastSeq: -1, status }
 }
 
 export function notifyOpenTasksChanged() {
@@ -47,12 +120,13 @@ export default function AgentOpenTasksChip({
   onContinue,
 }: {
   conversationId: string | null
-  /** Resume the work in the same chat — sends the self-contained note as a turn. */
-  onContinue: (resumeNote: string) => void
+  /** Attach the exact durable turn the server bound to this open task. */
+  onContinue: (continuation: OpenTaskContinuation) => boolean | Promise<boolean>
 }) {
   const [tasks, setTasks] = useState<OpenTaskItem[]>([])
   const [open, setOpen] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const coldRetryAttemptedRef = useRef<string | null>(null)
 
   const load = useCallback(async () => {
     if (!conversationId) {
@@ -81,26 +155,71 @@ export default function AgentOpenTasksChip({
     }
   }, [load])
 
-  const handleContinue = useCallback(
-    async (task: OpenTaskItem) => {
-      setBusyId(task.id)
+  const continueExactSource = useCallback(
+    async (openTaskId: string, persistBeforeRequest: boolean) => {
+      if (!conversationId) return
+      setBusyId(openTaskId)
+      if (persistBeforeRequest) {
+        savePendingOpenTaskContinuation(window.localStorage, {
+          openTaskId,
+          conversationId,
+        })
+      }
       try {
         const res = await fetch('/api/assistant/open-tasks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: task.id, action: 'continue' }),
+          body: JSON.stringify({ id: openTaskId, action: 'continue' }),
         })
-        const data = (await res.json().catch(() => ({}))) as { resumeNote?: string }
-        const note = data.resumeNote || task.note
+        if (!res.ok) {
+          // Claimed/lost responses replay as 2xx. A definitive client error is
+          // not transport ambiguity and must not cold-loop forever.
+          if (res.status >= 400 && res.status < 500) {
+            clearPendingOpenTaskContinuation(window.localStorage, openTaskId)
+          }
+          await load()
+          return
+        }
+        const data = await res.json().catch(() => null)
+        const continuation = parseOpenTaskContinuation(data, conversationId, openTaskId)
+        if (!continuation) {
+          await load()
+          return
+        }
         setOpen(false)
+        // Attach first: AgentApp persists the exact turn/cursor synchronously
+        // before starting recovery. A kill immediately after this POST response
+        // must not lose the descriptor while an unrelated list refresh waits.
+        const attached = await onContinue(continuation)
+        if (attached) {
+          clearPendingOpenTaskContinuation(window.localStorage, openTaskId)
+        }
         await load()
-        if (note) onContinue(note)
+      } catch {
+        // The source stays open until the server has an execution claim. A lost
+        // response is therefore safe to retry from this exact chip id.
+        await load()
       } finally {
         setBusyId(null)
       }
     },
-    [load, onContinue],
+    [conversationId, load, onContinue],
   )
+
+  const handleContinue = useCallback(
+    async (task: OpenTaskItem) => continueExactSource(task.id, true),
+    [continueExactSource],
+  )
+
+  useEffect(() => {
+    if (!conversationId) return
+    const pending = loadPendingOpenTaskContinuation(window.localStorage)
+    if (!pending || pending.conversationId !== conversationId) return
+    const identity = `${pending.conversationId}:${pending.openTaskId}`
+    if (coldRetryAttemptedRef.current === identity) return
+    coldRetryAttemptedRef.current = identity
+    void continueExactSource(pending.openTaskId, false)
+  }, [conversationId, continueExactSource])
 
   const handleCancel = useCallback(
     async (task: OpenTaskItem) => {

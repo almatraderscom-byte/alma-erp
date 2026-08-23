@@ -25,6 +25,7 @@ import {
 } from '@/agent/lib/mac-agent/screenshot-share'
 import { verifyUiOutcome, type UiOutcomeCheck } from '@/agent/lib/mac-agent/ui-postcondition'
 import { prisma } from '@/lib/prisma'
+import { continuationDomainForPendingActionType } from '@/agent/lib/continuation-binding'
 
 export const VISUAL_PROOF_UI_ACTIONS = new Set(['ui_click', 'ui_type', 'ui_key', 'ui_new_chat'])
 
@@ -277,7 +278,13 @@ export async function deliverDeferredUiAfterProof(input: {
   if (existing?.value === 'done_resumed') return true
   const action = await db.agentPendingAction.findUnique({
     where: { id: pendingActionId },
-    select: { conversationId: true, result: true },
+    select: {
+      conversationId: true,
+      status: true,
+      type: true,
+      workflowRunId: true,
+      result: true,
+    },
   }).catch(() => null)
   const conversationId = action?.conversationId as string | null
   if (!conversationId) return false
@@ -291,13 +298,27 @@ export async function deliverDeferredUiAfterProof(input: {
       return
     }
     const { enqueueAgentContinuation } = await import('@/agent/lib/approval-continuation')
-    const detail = (sourceAction?.error || sourceAction?.stderr || sourceAction?.status || 'action_result_missing').slice(0, 500)
-    await enqueueAgentContinuation({
+    const actionStatus = String(action.status ?? '').trim()
+    const actionType = String(action.type ?? '').trim()
+    if (!actionStatus || !actionType) throw new Error('mac_proof_continuation_source_incomplete')
+    const enqueued = await enqueueAgentContinuation({
       conversationId,
       ignoreAwaitingOwner: true,
-      message: '[সিস্টেম নোট — approved Mac action ব্যর্থ হয়েছে] AFTER screenshot এসেছে, কিন্তু আসল action সফল হয়নি। ' +
-        `Failure: ${detail}। কাজটি complete দাবি কোরো না; Boss-কে ব্যর্থতার কারণ জানিয়ে নিরাপদ পরের পদক্ষেপ নাও।`,
+      binding: {
+        v: 1,
+        origin: 'mac_proof',
+        source: { kind: 'pending_action', id: pendingActionId },
+        conversationId,
+        domain: continuationDomainForPendingActionType(actionType),
+        event: 'visual_proof_ready',
+        ...(action.workflowRunId ? { workflowRunId: String(action.workflowRunId) } : {}),
+        directive: { kind: 'mac_visual_proof', version: 1 },
+        expected: { sourceStatus: [actionStatus], sourceType: actionType },
+      },
     })
+    if (enqueued && !['queued', 'completed', 'observe', 'deferred'].includes(enqueued.outcome)) {
+      throw new Error(`mac_proof_continuation_${enqueued.status || enqueued.outcome}`)
+    }
   }
   // `done` was written by the pre-fix implementation after delivering proof
   // but before deferred workflows knew how to resume. Upgrade that durable
@@ -323,6 +344,27 @@ export async function deliverDeferredUiAfterProof(input: {
     beforeUrl ? `**আগে — ${actionLabel}**\n\n![আগে — ${actionLabel}](${beforeUrl})` : '',
     `**পরে — ${actionLabel}**\n\n![পরে — ${actionLabel}](${shared.imageUrl})`,
   ].filter(Boolean).join('\n\n')
+  try {
+    await db.agentPendingAction.update({
+      where: { id: pendingActionId },
+      data: {
+        result: {
+          ...((action.result && typeof action.result === 'object') ? action.result : {}),
+          visualProofComplete: true,
+          beforeImageUrl: beforeUrl,
+          afterImageUrl: shared.imageUrl,
+          afterCommandId: input.commandId,
+          sourceActionCommandId: sourceActionCommandId || null,
+          sourceActionStatus: sourceAction?.status ?? 'missing',
+          sourceActionSucceeded: actionSucceeded,
+        },
+      },
+    })
+  } catch {
+    // The pending-action result is the source-bound renderer's authority. A
+    // screenshot message alone may never authorize or describe a continuation.
+    return false
+  }
   const { appendAssistantNote } = await import('@/agent/lib/conversation-note')
   await appendAssistantNote(
     conversationId,
@@ -330,21 +372,6 @@ export async function deliverDeferredUiAfterProof(input: {
       ? `✅ Mac action-এর deferred AFTER proof এসে গেছে — marked pair এখন complete।\n\n${pair}`
       : `⚠️ Mac action-এর deferred AFTER proof এসেছে, কিন্তু আসল action সফল হয়নি (${sourceAction?.error ?? sourceAction?.status ?? 'unknown'})। কাজটি complete নয়।\n\n${pair}`,
   )
-  await db.agentPendingAction.update({
-    where: { id: pendingActionId },
-    data: {
-      result: {
-        ...((action.result && typeof action.result === 'object') ? action.result : {}),
-        visualProofComplete: true,
-        beforeImageUrl: beforeUrl,
-        afterImageUrl: shared.imageUrl,
-        afterCommandId: input.commandId,
-        sourceActionCommandId: sourceActionCommandId || null,
-        sourceActionStatus: sourceAction?.status ?? 'missing',
-        sourceActionSucceeded: actionSucceeded,
-      },
-    },
-  }).catch(() => {})
   // The approval route deliberately did not resume while AFTER proof was still
   // queued. Now that the marked pair is durable, continue the same workflow.
   // This call is before the idempotency marker so a transient enqueue failure

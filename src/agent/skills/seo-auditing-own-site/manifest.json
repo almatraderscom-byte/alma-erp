@@ -18,8 +18,7 @@
     "fetch_website_page",
     "get_search_console_performance",
     "get_indexing_status",
-    "get_ga4_report",
-    "save_artifact"
+    "get_ga4_report"
   ],
   "dependencies": {
     "env": [
@@ -42,10 +41,8 @@
   ],
   "done": [
     {
-      "tool": "check_website_seo_audit"
-    },
-    {
-      "tool": "save_artifact"
+      "tool": "check_website_seo_audit",
+      "check": "seo_artifact_delivered"
     }
   ],
   "networkPolicy": "allowlist",

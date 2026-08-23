@@ -84,6 +84,30 @@ export async function searchToolInventory(query: string, limit = 8): Promise<Too
     .map((s) => s.match)
 }
 
+/** Keyword-first discovery with a bounded semantic fallback for true misses. */
+export async function searchToolInventoryWithSemanticFallback(
+  query: string,
+  limit = 8,
+): Promise<ToolSearchMatch[]> {
+  const keywordMatches = await searchToolInventory(query, limit)
+  if (keywordMatches.length > 0) return keywordMatches
+  try {
+    const { semanticFallbackToolDefinitions } = await import(
+      '@/agent/tools/selection/turn-capability-context'
+    )
+    const semantic = await semanticFallbackToolDefinitions(query, { max: limit })
+    return semantic.tools.map((tool) => ({
+      name: tool.name,
+      description: (tool.description ?? '').slice(0, 160),
+      // The semantic router selected the group; the exact group label is not an
+      // authority boundary and the turn policy rechecks the actual tool below.
+      groups: [],
+    }))
+  } catch {
+    return []
+  }
+}
+
 /** Resolve full AgentTool objects (with handlers) for dynamic loading. */
 export async function resolveToolsByName(names: string[]): Promise<AgentTool[]> {
   const map = await allToolsUnique()
@@ -119,7 +143,7 @@ export const find_tool: AgentTool = {
   handler: async (input) => {
     const query = String(input.query ?? '').trim()
     if (!query) return { success: false, error: 'query is required' }
-    const matches = await searchToolInventory(query, MAX_DYNAMIC_TOOLS_PER_TURN)
+    const matches = await searchToolInventoryWithSemanticFallback(query, MAX_DYNAMIC_TOOLS_PER_TURN)
     if (matches.length === 0) {
       return {
         success: true,

@@ -53,6 +53,86 @@ function turnEventChannel(turnId) {
 }
 
 /**
+ * Incrementally parse a fetch response body as Server-Sent Events and yield
+ * JSON values carried by `data:` fields.
+ *
+ * The chat route normally writes one JSON object per event, but a compliant
+ * parser still has to tolerate CRLF, metadata/comment fields, multiline data,
+ * UTF-8 code points split across chunks, and EOF without a final blank line.
+ * Invalid/empty JSON payloads are ignored, matching the previous worker
+ * behavior.
+ *
+ * @param {AsyncIterable<Uint8Array>} body
+ */
+export async function* parseSseJsonEvents(body) {
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let dataLines = []
+  const ready = []
+
+  const dispatch = () => {
+    if (dataLines.length === 0) return
+    const raw = dataLines.join('\n')
+    dataLines = []
+    if (!raw.trim()) return
+    try {
+      ready.push(JSON.parse(raw))
+    } catch {
+      // Preserve the old parser's tolerance of malformed upstream frames.
+    }
+  }
+
+  const consumeLine = (line) => {
+    if (line === '') {
+      dispatch()
+      return
+    }
+    if (line.startsWith(':')) return
+
+    const colon = line.indexOf(':')
+    const field = colon === -1 ? line : line.slice(0, colon)
+    if (field !== 'data') return
+    let value = colon === -1 ? '' : line.slice(colon + 1)
+    // The SSE grammar removes at most one optional ASCII space after `:`.
+    if (value.startsWith(' ')) value = value.slice(1)
+    dataLines.push(value)
+  }
+
+  const drainLines = (eof = false) => {
+    while (buffer.length > 0) {
+      const lf = buffer.indexOf('\n')
+      const cr = buffer.indexOf('\r')
+      const lineEnd = lf === -1 ? cr : cr === -1 ? lf : Math.min(lf, cr)
+      if (lineEnd === -1) break
+      // A CR at the chunk boundary may be the first half of CRLF.
+      if (!eof && buffer[lineEnd] === '\r' && lineEnd === buffer.length - 1) break
+
+      consumeLine(buffer.slice(0, lineEnd))
+      const delimiterLength = buffer[lineEnd] === '\r' && buffer[lineEnd + 1] === '\n' ? 2 : 1
+      buffer = buffer.slice(lineEnd + delimiterLength)
+    }
+
+    if (eof) {
+      if (buffer.length > 0) consumeLine(buffer)
+      buffer = ''
+      // Fetch EOF is authoritative for this finite worker-to-route stream. A
+      // missing final blank line must not discard the route's terminal event.
+      dispatch()
+    }
+  }
+
+  for await (const chunk of body) {
+    buffer += decoder.decode(chunk, { stream: true })
+    drainLines()
+    while (ready.length > 0) yield ready.shift()
+  }
+
+  buffer += decoder.decode()
+  drainLines(true)
+  while (ready.length > 0) yield ready.shift()
+}
+
+/**
  * @param {object} args
  * @param {import('@supabase/supabase-js').SupabaseClient} args.supabase
  * @param {object} args.job                BullMQ job; job.data carries the turn payload
@@ -62,9 +142,24 @@ function turnEventChannel(turnId) {
  *        Test seams only — production passes nothing and gets the real Redis/fetch.
  */
 export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, deps = {} }) {
-  const { turnId, conversationId, message, files, projectId, personalMode, clientRequestId, askCardId, internalControl, agentProseProtocol } = job.data ?? {}
-  if (!turnId || !conversationId || !message) {
-    console.warn(`[worker] streamed-turn ${job?.id} — missing turnId/conversationId/message`)
+  const {
+    turnId,
+    conversationId,
+    message,
+    files,
+    projectId,
+    personalMode,
+    clientRequestId,
+    askCardId,
+    internalControl,
+    agentProseProtocol,
+    continuationRequestId,
+  } = job.data ?? {}
+  const boundContinuation = internalControl === true
+    && typeof continuationRequestId === 'string'
+    && /^continuation:v1:[a-z_]+:[a-z_]+:[A-Za-z0-9._-]+:[a-z_]+(?::[A-Za-z0-9._-]+)?$/.test(continuationRequestId)
+  if (!turnId || !conversationId || (!message && !boundContinuation)) {
+    console.warn(`[worker] streamed-turn ${job?.id} — missing turnId/conversationId/execution authority`)
     return
   }
 
@@ -194,53 +289,46 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
   }
 
   try {
+    const requestBody = boundContinuation
+      ? { conversationId, turnId, internalControl: true, continuationRequestId }
+      : { conversationId, message, files, projectId, personalMode, turnId, clientRequestId, askCardId, internalControl, agentProseProtocol }
     const res = await fetchImpl(`${getAppUrl()}/api/assistant/chat?stream=true`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${getInternalToken()}`,
       },
-      body: JSON.stringify({ conversationId, message, files, projectId, personalMode, turnId, clientRequestId, askCardId, internalControl, agentProseProtocol }),
+      body: JSON.stringify(requestBody),
       // Generous cap for genuinely long turns — this is the whole point of A2.
       signal: AbortSignal.timeout(25 * 60 * 1000),
     })
+    if (
+      boundContinuation
+      && res.status === 202
+      && res.headers?.get?.('x-agent-continuation-observe') === '1'
+    ) {
+      console.log(`[worker] streamed-turn ${turnId} — duplicate source-bound continuation observed`)
+      return
+    }
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => 'no body')
       throw new Error(`chat API ${res.status}: ${String(text).slice(0, 200)}`)
     }
 
-    // Parse the SSE byte stream into discrete `data:` events.
-    const decoder = new TextDecoder()
-    let buffer = ''
-    for await (const chunk of res.body) {
-      buffer += decoder.decode(chunk, { stream: true })
-      let nl
-      while ((nl = buffer.indexOf('\n\n')) !== -1) {
-        const frame = buffer.slice(0, nl)
-        buffer = buffer.slice(nl + 2)
-        for (const line of frame.split('\n')) {
-          if (!line.startsWith('data:')) continue // skip ": ping" keepalives
-          const json = line.slice(5).trim()
-          if (!json) continue
-          let event
-          try {
-            event = JSON.parse(json)
-          } catch {
-            continue
-          }
-          const stored = await emit(event)
-          // A terminal counts only once it is durable (Codex P1 #837): an
-          // unstored `done`/`error` must not let this job resolve while the
-          // tailing client waits forever for a terminal that never reached
-          // the log.
-          if (stored) {
-            if (event?.type === 'done') sawDone = true
-            else if (event?.type === 'error') sawError = event.message || 'turn_error'
-          } else if (event?.type === 'done' || event?.type === 'error') {
-            terminalLost = event.type
-            lostTerminalEvent = event
-          }
-        }
+    // Parse the SSE byte stream into discrete JSON events. The parser owns
+    // framing only; durable-before-publish ordering remains here unchanged.
+    for await (const event of parseSseJsonEvents(res.body)) {
+      const stored = await emit(event)
+      // A terminal counts only once it is durable (Codex P1 #837): an
+      // unstored `done`/`error` must not let this job resolve while the
+      // tailing client waits forever for a terminal that never reached
+      // the log.
+      if (stored) {
+        if (event?.type === 'done') sawDone = true
+        else if (event?.type === 'error') sawError = event.message || 'turn_error'
+      } else if (event?.type === 'done' || event?.type === 'error') {
+        terminalLost = event.type
+        lostTerminalEvent = event
       }
     }
 

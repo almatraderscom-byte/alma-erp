@@ -95,6 +95,9 @@ const prismaMock = vi.hoisted(() => ({
 vi.mock('@/lib/prisma', () => ({ prisma: prismaMock }))
 
 import {
+  CONTINUATION_BINDING_BLOCKER,
+  continuationBindingBlockerForTurn,
+  directBrowserOwnerInputForTurn,
   isTurnOwnerContinuationCurrent,
   isTurnOwnerExecutionCurrent,
   loadTurnOwnerInputBinding,
@@ -200,6 +203,72 @@ describe('turn-linked owner input', () => {
       authoritativeText: '',
       blockerOwnerText: 'continue',
     })
+  })
+
+  it('never turns unavailable historical text into direct YouTube authority', () => {
+    for (const historyText of ['continue', 'Play Fix You on YouTube']) {
+      const scoped = turnScopedOwnerInput({ state: 'unavailable' }, historyText)
+      expect(directBrowserOwnerInputForTurn(scoped, { state: 'absent' })).toEqual({ state: 'none' })
+    }
+  })
+
+  it('lets only the exact current owner input enter the durable YouTube resolver', () => {
+    const scoped = turnScopedOwnerInput({
+      state: 'bound',
+      messageId: 'msg-b',
+      createdAt: new Date('2026-08-21T12:00:00.002Z'),
+      text: 'continue',
+      askCardId: null,
+    }, 'historical text is irrelevant')
+
+    expect(directBrowserOwnerInputForTurn(scoped, { state: 'absent' })).toEqual({
+      state: 'resolve',
+      ownerRequest: 'continue',
+      askCardId: null,
+    })
+  })
+
+  it('gives an exact source-bound SEO continuation precedence over historical owner text', () => {
+    const scoped = turnScopedOwnerInput({
+      state: 'bound',
+      messageId: 'msg-b',
+      createdAt: new Date('2026-08-21T12:00:00.002Z'),
+      text: 'continue',
+      askCardId: null,
+    }, 'continue')
+
+    expect(directBrowserOwnerInputForTurn(scoped, {
+      state: 'bound',
+      binding: { domain: 'seo' },
+    })).toEqual({ state: 'none' })
+  })
+
+  it('fails closed when a continuation binding is invalid', () => {
+    const scoped = turnScopedOwnerInput({
+      state: 'bound',
+      messageId: 'msg-b',
+      createdAt: new Date('2026-08-21T12:00:00.002Z'),
+      text: 'continue',
+      askCardId: null,
+    }, 'continue')
+
+    expect(directBrowserOwnerInputForTurn(scoped, { state: 'invalid' })).toEqual({ state: 'none' })
+  })
+
+  it('strict rollout blocks missing/invalid source bindings before history or tools', () => {
+    expect(continuationBindingBlockerForTurn(true, { state: 'absent' }))
+      .toBe(CONTINUATION_BINDING_BLOCKER)
+    expect(continuationBindingBlockerForTurn(true, { state: 'invalid' }))
+      .toBe(CONTINUATION_BINDING_BLOCKER)
+    expect(continuationBindingBlockerForTurn(true, {
+      state: 'bound', binding: { domain: 'seo' },
+    })).toBeNull()
+  })
+
+  it('never lets an internal continuation use history as a feature-flag fallback', () => {
+    expect(continuationBindingBlockerForTurn(true, { state: 'absent' }))
+      .toBe(CONTINUATION_BINDING_BLOCKER)
+    expect(continuationBindingBlockerForTurn(false, { state: 'invalid' })).toBeNull()
   })
 
   it('cuts a delayed provider transcript at the exact linked owner message', () => {

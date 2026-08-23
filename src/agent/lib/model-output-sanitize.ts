@@ -66,6 +66,39 @@ const FUNCTION_CALLS_BLOCK =
 const INVOKE_BLOCK = /<invoke\b[\s\S]*?(?:<\/invoke>|$)/gi
 
 /**
+ * DeepSeek/OpenRouter DSML content protocol. Production incident d00c1a82
+ * committed this exact family as assistant prose (events 209–214) instead of
+ * returning structured `tool_calls`:
+ *
+ *   <｜DSML｜tool_calls>
+ *   <｜DSML｜invoke name="fetch_website_page">…</｜DSML｜invoke>
+ *   </｜DSML｜tool_calls>
+ *
+ * OpenRouter can surface either the ASCII-bar or full-width-bar spelling. The
+ * body is quarantined as an opaque block. It is deliberately NEVER parsed into
+ * a tool call: content is an untrusted prose channel, not an execution channel.
+ */
+const DSML_TOOL_CALLS_BLOCK =
+  /<([|｜])DSML\1tool_calls>[\s\S]*?(?:<\/\1DSML\1tool_calls>|$)/gi
+const DSML_INVOKE_BLOCK =
+  /<([|｜])DSML\1invoke\b[^>]*>[\s\S]*?(?:<\/\1DSML\1invoke>|$)/gi
+const DSML_PARAMETER_BLOCK =
+  /<([|｜])DSML\1parameter\b[^>]*>[\s\S]*?(?:<\/\1DSML\1parameter>|$)/gi
+const DSML_STRAY_MARKERS =
+  /<\/?([|｜])DSML\1(?:tool_calls|invoke|parameter)\b[^>]*>/gi
+const DSML_STREAMING_SAFE_MARKERS =
+  /<\/([|｜])DSML\1(?:tool_calls|invoke|parameter)\b[^>]*>/gi
+
+/** DeepSeek's other documented/observed sentinel dialect. `tool_sep` is a
+ * separator inside the quarantined envelope, never a cue to execute its JSON. */
+const SENTINEL_TOOL_CALLS_BLOCK =
+  /<([|｜])tool(?:[_▁])calls(?:[_▁])begin\1>[\s\S]*?<\1tool(?:[_▁])calls(?:[_▁])end\1>/gi
+const SENTINEL_TOOL_CALL_BLOCK =
+  /<([|｜])tool(?:[_▁])call(?:[_▁])begin\1>[\s\S]*?<\1tool(?:[_▁])call(?:[_▁])end\1>/gi
+const SENTINEL_TOOL_MARKERS =
+  /<([|｜])tool(?:[_▁]calls?)?[_▁](?:begin|end|sep)\1>/gi
+
+/**
  * The FIFTH shape, seen live 2026-07-28 while testing the newly promoted skills.
  * Two different leaks in two consecutive turns, both from Qwen, both wrapped in
  * a markdown fence the UI then labelled "TOOL":
@@ -123,11 +156,11 @@ const FENCED_TOOL_JSON =
  * push-time strip or its body leaks (see createMarkupStreamFilter).
  */
 const STREAMING_SAFE_MARKERS =
-  /<\/tool_call>|<\/arg_key>|<\/arg_value>|<\/function_(?:calls|results)>|<\/invoke>|<\/parameter>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
+  /<\/tool_call>|<\/arg_key>|<\/arg_value>|<\/function_(?:calls|results)>|<\/invoke>|<\/parameter>|<([|｜])tool(?:[_▁]calls?)?[_▁](?:end|sep)\1>/gi
 
 /** Leftovers when a stream is cut mid-call, plus the DeepSeek/Qwen sentinels. */
 const STRAY_MARKERS =
-  /<\/?tool_call>|<\/?arg_key>|<\/?arg_value>|<\/?function_(?:calls|results)>|<\/?invoke\b[^>]*>|<\/?parameter\b[^>]*>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
+  /<\/?tool_call>|<\/?arg_key>|<\/?arg_value>|<\/?function_(?:calls|results)>|<\/?invoke\b[^>]*>|<\/?parameter\b[^>]*>|<([|｜])tool(?:[_▁]calls?)?[_▁](?:begin|end|sep)\1>/gi
 
 /**
  * Cheap guard: the overwhelming majority of rounds carry none of this, and
@@ -139,7 +172,7 @@ const STRAY_MARKERS =
  * runs first. Any pattern added above must have its opening marker added here.
  */
 const HAS_TOOL_MARKUP =
-  /<tool_call|<arg_key|<parameter\b|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|```[^\n]*(?:tool|function)[ _-]?calls?|```[^\n]*\r?\n\s*\{\s*"name"\s*:|"type"\s*:\s*"tool_(?:use|call)"|\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|input|parameters)"\s*:/i
+  /<tool_call|<arg_key|<parameter\b|<function_(?:calls|results)|<invoke\b|<([|｜])DSML\1|<([|｜])tool(?:[_▁]calls?)?[_▁](?:begin|end|sep)\2>|```[^\n]*(?:tool|function)[ _-]?calls?|```[^\n]*\r?\n\s*\{\s*"name"\s*:|"type"\s*:\s*"tool_(?:use|call)"|\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|input|parameters)"\s*:/i
 
 /**
  * Complete-block variants of the `$`-tailed patterns above, for STREAMING use.
@@ -162,6 +195,24 @@ const FENCED_TOOL_CALL_COMPLETE =
   /```[ \t]*(?:[a-z0-9_-]*[ \t]*)?(?:tool|function)[ _-]?calls?[a-z0-9_ \t-]*\r?\n[\s\S]*?```/gi
 const FENCED_TOOL_JSON_COMPLETE =
   /```[a-z0-9_ \t-]*\r?\n\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"(?:arguments|input|parameters)"\s*:[\s\S]*?\}\s*\r?\n?```/gi
+const DSML_TOOL_CALLS_BLOCK_COMPLETE =
+  /<([|｜])DSML\1tool_calls>[\s\S]*?<\/\1DSML\1tool_calls>/gi
+const DSML_INVOKE_BLOCK_COMPLETE =
+  /<([|｜])DSML\1invoke\b[^>]*>[\s\S]*?<\/\1DSML\1invoke>/gi
+const DSML_PARAMETER_BLOCK_COMPLETE =
+  /<([|｜])DSML\1parameter\b[^>]*>[\s\S]*?<\/\1DSML\1parameter>/gi
+const SENTINEL_TOOL_CALLS_BLOCK_COMPLETE =
+  /<([|｜])tool(?:[_▁])calls(?:[_▁])begin\1>[\s\S]*?<\1tool(?:[_▁])calls(?:[_▁])end\1>/gi
+const SENTINEL_TOOL_CALL_BLOCK_COMPLETE =
+  /<([|｜])tool(?:[_▁])call(?:[_▁])begin\1>[\s\S]*?<\1tool(?:[_▁])call(?:[_▁])end\1>/gi
+
+/** True only for provider tool-protocol syntax, not generic HTML/code. Exported
+ * for the provider boundary so it can classify a quarantined content response
+ * without retaining or logging the incident payload. */
+export function containsProviderToolProtocolSyntax(text: string): boolean {
+  return /<([|｜])DSML\1(?:tool_calls|invoke|parameter)\b/i.test(text)
+    || /<([|｜])tool(?:[_▁]calls?)?[_▁](?:begin|end|sep)\1>/i.test(text)
+}
 
 export function stripToolCallMarkup(
   text: string,
@@ -171,6 +222,13 @@ export function stripToolCallMarkup(
   if (!HAS_TOOL_MARKUP.test(text)) return text
   const streaming = opts?.streaming === true
   const cleaned = text
+    // Provider DSML first and as one opaque envelope: its function names and
+    // argument JSON are content, never executable tool input.
+    .replace(streaming ? DSML_TOOL_CALLS_BLOCK_COMPLETE : DSML_TOOL_CALLS_BLOCK, '')
+    .replace(streaming ? SENTINEL_TOOL_CALLS_BLOCK_COMPLETE : SENTINEL_TOOL_CALLS_BLOCK, '')
+    .replace(streaming ? SENTINEL_TOOL_CALL_BLOCK_COMPLETE : SENTINEL_TOOL_CALL_BLOCK, '')
+    .replace(streaming ? DSML_INVOKE_BLOCK_COMPLETE : DSML_INVOKE_BLOCK, '')
+    .replace(streaming ? DSML_PARAMETER_BLOCK_COMPLETE : DSML_PARAMETER_BLOCK, '')
     // Fences first: the block is removed WITH its contents, so a stripped call
     // cannot leave an empty ``` card behind.
     .replace(streaming ? FENCED_TOOL_BLOCK_COMPLETE : FENCED_TOOL_BLOCK, '')
@@ -183,6 +241,11 @@ export function stripToolCallMarkup(
     .replace(streaming ? PARAMETER_BLOCK_COMPLETE : PARAMETER_BLOCK, '')
     .replace(streaming ? TOOL_CALL_BLOCK_COMPLETE : TOOL_CALL_BLOCK, '')
     .replace(NAMED_TOOL_ARGS, '')
+    // Opening markers must survive in streaming mode until the COMPLETE outer
+    // envelope arrives. Deleting them here releases the body one chunk at a
+    // time (the exact d00c failure under character-wise replay).
+    .replace(streaming ? DSML_STREAMING_SAFE_MARKERS : DSML_STRAY_MARKERS, '')
+    .replace(streaming ? STREAMING_SAFE_MARKERS : SENTINEL_TOOL_MARKERS, '')
     // The full STRAY_MARKERS never runs in streaming mode: `<\/?tool_call>`
     // matches the OPENING tag too, so it deleted a held opener out from under
     // `holdFrom` and the block's body then streamed through as prose (live
@@ -315,7 +378,15 @@ function toolishOpenerAt(s: string): number {
  * (flush() drops an unclosed block).
  */
 const CONFIRMED_TOOL_OPENER =
-  /^(?:<tool_call>|<function_(?:calls|results)>|<invoke\b|<parameter\b|```[ \t]*(?:tool|tool_call|tool_code|function_calls?)\b|```[ \t]*(?:[a-z0-9_-]*[ \t]*)?(?:tool|function)[ _-]?calls?\b)/i
+  /^(?:<tool_call>|<function_(?:calls|results)>|<invoke\b|<parameter\b|<([|｜])DSML\1(?:tool_calls|invoke|parameter)\b|<([|｜])tool(?:[_▁]calls?)[_▁]begin\2>|```[ \t]*(?:tool|tool_call|tool_code|function_calls?)\b|```[ \t]*(?:[a-z0-9_-]*[ \t]*)?(?:tool|function)[ _-]?calls?\b)/i
+
+/** Full-width DSML tags are not ordinary XML names, so toolishOpenerAt cannot
+ * see them. Find canonical provider openers separately; unlike a generic '<'
+ * they remain held beyond MAX_HOLD until their closing marker arrives. */
+function providerProtocolOpenerAt(s: string): number {
+  const match = /<([|｜])DSML\1(?:tool_calls|invoke|parameter)\b|<([|｜])tool(?:[_▁]calls?)[_▁]begin\2>/i.exec(s)
+  return match?.index ?? -1
+}
 
 
 /**
@@ -328,6 +399,8 @@ const CONFIRMED_TOOL_OPENER =
  * "is there an opener here that has not closed yet".
  */
 function holdFrom(s: string): number {
+  const providerOpener = providerProtocolOpenerAt(s)
+  if (providerOpener !== -1) return providerOpener
   // The EARLIEST toolish opener wins over the latest bare '<': a held
   // `<tool_call>` whose body has begun must keep holding even when the body
   // itself contains a new partial tag (`…xyz</tool_c`) — returning the later
@@ -459,6 +532,11 @@ export function typedToolCallsInsteadOfCalling(input: {
 export function countTypedToolCalls(text: string): number {
   if (!text) return 0
   const patterns = [
+    DSML_TOOL_CALLS_BLOCK,
+    SENTINEL_TOOL_CALLS_BLOCK,
+    SENTINEL_TOOL_CALL_BLOCK,
+    DSML_INVOKE_BLOCK,
+    DSML_PARAMETER_BLOCK,
     FENCED_TOOL_BLOCK,
     FENCED_TOOL_CALL,
     FENCED_TOOL_JSON,
