@@ -50,7 +50,10 @@ export default async function ProfessionalReportPreviewPage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-[calc(100dvh-5rem)] w-full max-w-3xl flex-col px-4 pb-24 pt-8 sm:px-8 sm:pt-12">
+    <div
+      data-report-preview-scroll
+      className="relative z-10 mx-auto flex h-[100dvh] w-full max-w-3xl flex-col overflow-y-auto px-4 pb-24 pt-8 sm:px-8 sm:pt-12"
+    >
       <header className="mb-5 flex items-center justify-between gap-4">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#81B29A]">
