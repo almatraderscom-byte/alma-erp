@@ -216,6 +216,14 @@ import { adapterFor } from '@/agent/lib/models/adapters'
 import { logRouteSpan, logToolEvent } from '@/agent/lib/tool-telemetry'
 import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 import { isRoutineGraphEnabled, runRoutineTurnGraph, type RoutineGraphResult } from '@/agent/lib/graph/routine-turn-graph'
+import {
+  extractAgentEntityLinks,
+  extractAgentEntityLinksFromRecords,
+  linkifyAgentEntityText,
+} from '@/agent/lib/entity-links'
+import {
+  buildSavedSalvageEventSequence,
+} from '@/agent/lib/models/salvage-contract'
 import { isActionGraphEnabled, stageExpenseActionGraph, type StageExpenseResult } from '@/agent/lib/graph/action-turn-graph'
 import { runTurnGraphShadow } from '@/agent/lib/graph/turn-graph-shadow'
 import { resolveConversationContinuity } from '@/agent/lib/continuity-resolver'
@@ -2176,6 +2184,7 @@ async function* runAlternateProviderTurn(
     errorCode?: string
   }
   const toolRecords: ToolRecord[] = []
+  const verifiedEntityLinks = () => extractAgentEntityLinksFromRecords(toolRecords, { businessId })
   // Dead-path guard state (2026-07-16): consecutive-failure streaks per tool
   // and per exact tool+args signature within THIS turn; a success clears the
   // tool's streak. One nudge per tool per turn — the point is a change of
@@ -2411,7 +2420,7 @@ async function* runAlternateProviderTurn(
     timeline.push({ t: 'tool', name: record.toolName, ok: true, input: record.input, result: preview })
     yield { type: 'tool_start', id: record.id, name: record.toolName, input: record.input }
     yield { type: 'tool_end', id: record.id, name: record.toolName, success: true, resultPreview: preview }
-    finalText = g.replyText
+    finalText = linkifyAgentEntityText(g.replyText, verifiedEntityLinks(), { appendUnmentioned: true })
     pushTextEntry({ t: 'text', text: finalText })
     yield { type: 'text_delta', delta: finalText }
   }
@@ -3044,6 +3053,14 @@ async function* runAlternateProviderTurn(
           model: model.id,
         })
       }
+      // URLs are harness-owned, never model-authored: only exact identities from
+      // successful allowlisted tool outputs can become ALMA detail links. This
+      // runs at every provider's common convergence point. If prose already
+      // streamed, reconcileStreamedProse below uses the existing replacement
+      // event so the live view and persisted Markdown remain identical.
+      iterationText = linkifyAgentEntityText(iterationText, verifiedEntityLinks(), {
+        appendUnmentioned: calls.length === 0,
+      })
       // Qwen, on the owner's marketing turn 2026-07-27: seven calls TYPED as
       // ```tool call fences and two actually made. Stripping the markup fixes
       // what he sees and hides what went wrong — a round that narrates its calls
@@ -3741,6 +3758,12 @@ async function* runAlternateProviderTurn(
           // the model fill that wait with unrelated prose.
           iterationText = contractStatusOrDraft(batchStatus.facts, iterationText)
         }
+        // A server-side requirement contract may have replaced the model draft
+        // after the first pass above. Re-apply the same verified-only transform
+        // before recording either the timeline or final emit.
+        iterationText = linkifyAgentEntityText(iterationText, verifiedEntityLinks(), {
+          appendUnmentioned: true,
+        })
         // The contract replaced the model's draft → keep the persisted timeline
         // truthful too: mark the draft superseded (same presentation as verify
         // retries) and record what was actually said instead.
@@ -4155,11 +4178,14 @@ async function* runAlternateProviderTurn(
           })
         }
 
+        const resultEntityLinks = extractAgentEntityLinks(call.name, { data: result.data }, { businessId })
         const toolRecord: ToolRecord = {
           id: call.id,
           toolName: call.name,
           input: call.input,
-          output: result.data !== undefined ? { data: result.data } : null,
+          output: result.data !== undefined
+            ? { data: result.data, ...(resultEntityLinks.length ? { entityLinks: resultEntityLinks } : {}) }
+            : null,
           status: result.success ? 'success' : 'error',
           durationMs,
           error: result.error ?? null,
@@ -5208,6 +5234,22 @@ async function* runAlternateProviderTurn(
       } catch { /* best-effort — the saved reply already carries the progress */ }
     }
 
+    // Last convergence guard for early-break paths (contract failure,
+    // delegation, deadline salvage). Normal and routine replies are already
+    // linked before their emit; this keeps every other path live + durable too.
+    const entityLinks = verifiedEntityLinks()
+    const linkedFinalText = linkifyAgentEntityText(finalText, entityLinks, {
+      appendUnmentioned: true,
+      // At this late point iOS preserves the lead prose when applying a
+      // replacement event. An inline rewrite of the whole message would repeat
+      // that lead, so this guard is intentionally append-only.
+      linkMentions: false,
+    })
+    if (linkedFinalText !== finalText) {
+      yield { type: 'text_delta', delta: linkedFinalText.slice(finalText.length) }
+      finalText = linkedFinalText
+    }
+
     // Prefer OpenRouter's actual billed cost; fall back to the local estimate only
     // when the provider didn't report one (native Gemini/Anthropic).
     // Bill reasoning tokens ONLY for xai-direct, where a live turn proved they
@@ -5276,7 +5318,7 @@ async function* runAlternateProviderTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload. The GET messages route surfaces
         // it as `thinking`/`thinkingMs`; history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider,
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider, entityLinks: entityLinks.length > 0 ? entityLinks : undefined,
           // P1-9: WHY this head ran, not just which one. Until now `via` lived
           // only in code and cost logs, so a surprising model choice had no
           // answer Boss could be shown ("routine_kw" / "task_pin" / "deny_kw").
@@ -5423,11 +5465,11 @@ async function* runAlternateProviderTurn(
     // classifier confirm live in maybeCacheQaPair — fire-and-forget, never blocks.
     if (finalText.trim() && lastUserText) {
       void import('@/agent/lib/answer-gate')
-        .then(({ maybeCacheQaPair }) =>
+        .then(({ maybeCacheQaPair, answerGateScopeForContext }) =>
           maybeCacheQaPair({
             question: lastUserText,
             answer: finalText,
-            scope: personalMode ? 'personal' : 'business',
+            scope: answerGateScopeForContext(personalMode, businessId),
             sourceModelId: model.id,
             usedTools: toolRecords.length > 0,
             // Confirm cards are always staged BY a tool call, so usedTools already
@@ -5683,6 +5725,15 @@ async function* runAlternateProviderTurn(
               needContinue = false
             }
           }
+          // Verified entity links + actual cost ride the persisted salvage too.
+          const entityLinks = verifiedEntityLinks()
+          salvageText = linkifyAgentEntityText(salvageText, entityLinks, {
+            appendUnmentioned: true,
+            linkMentions: false,
+          })
+          const salvageCostUsd = totalActualCostUsd != null
+            ? roundUsd(totalActualCostUsd)
+            : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens, reasoningTokens: model.provider === 'xai' ? totalReasoningTokens : 0 })
           if (playbackGate.replaced) {
             for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
             timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
@@ -5717,13 +5768,25 @@ async function* runAlternateProviderTurn(
               conversationId, role: 'assistant',
               content: [{ type: 'text', text: salvageText }, ...emittedAskCards],
               tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
-              costUsd: totalActualCostUsd != null
-                ? roundUsd(totalActualCostUsd)
-                : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens, reasoningTokens: model.provider === 'xai' ? totalReasoningTokens : 0 }),
-              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
+              costUsd: salvageCostUsd,
+              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
             },
           })
-          yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: 0, needContinue }
+          // The provider may have thrown after an arbitrary chunk. Reset every
+          // live draft/buffer only AFTER the canonical row exists, then `done`
+          // atomically commits exactly that persisted salvage on web and native.
+          const doneEvent: AgentEvent = { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvageCostUsd, needContinue, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode }
+          if (proseLifecycle?.protocol === 2) {
+            // v2: the exact persisted blocks already reached the live reducers
+            // above (salvage + drainQueued); a v1-style draft reset here would
+            // reopen a settled transcript. `done` commits what the document holds.
+            yield doneEvent
+          } else {
+            for (const event of buildSavedSalvageEventSequence(
+              { persistedText: salvageText, preambleText },
+              doneEvent,
+            )) yield event
+          }
         } catch { /* best-effort — worst case matches the old silent return */ }
       }
       return
@@ -5731,10 +5794,18 @@ async function* runAlternateProviderTurn(
     // Model-error salvage (owner report 2026-07-15: an Alibaba content-filter
     // error at minute 6 threw away 44 steps of live-browser work because ONLY
     // the deadline-abort path persisted partial progress). If real work already
-    // streamed, persist it BEFORE surfacing a terminal error — a provider error
-    // makes the work no less real. Fail-open: worst case matches old behavior.
-    const salvagePartialWorkOnError = async (): Promise<string | null> => {
+    // streamed, persist it before settling the turn — a provider error makes the
+    // work no less real. A durable salvage ends with `done`; only a failed save
+    // may surface `error`. Fail-open: worst case matches the old behavior.
+    const salvagePartialWorkOnError = async (): Promise<{
+      messageId: string
+      persistedText: string
+      costUsd: number
+    } | null> => {
       if (canceled || (!finalText.trim() && toolRecords.length === 0)) return null
+      let savedMsg: { id: string }
+      let text = ''
+      let salvageCostUsd = 0
       try {
         const okSteps = toolRecords.filter((r) => r.status === 'success').length
         const suffix =
@@ -5742,7 +5813,7 @@ async function* runAlternateProviderTurn(
           'Boss, "continue" বললে ঠিক এখান থেকে চালিয়ে যাব।'
         const gate = hardGateUnavailableDirectYouTubeLane(directBrowserLane)
           ?? hardGateMediaPlaybackFinalText(browserOwnerText, finalText, toolRecords)
-        let text = directBrowserLane?.state === 'unavailable'
+        text = directBrowserLane?.state === 'unavailable'
           ? gate.text
           : [gate.text.trim(), suffix].filter(Boolean).join('\n\n')
         if (directBrowserLane?.state === 'ready') {
@@ -5787,6 +5858,14 @@ async function* runAlternateProviderTurn(
             text = DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER
           }
         }
+        const entityLinks = verifiedEntityLinks()
+        text = linkifyAgentEntityText(text, entityLinks, {
+          appendUnmentioned: true,
+          linkMentions: false,
+        })
+        salvageCostUsd = totalActualCostUsd != null
+          ? roundUsd(totalActualCostUsd)
+          : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens, reasoningTokens: model.provider === 'xai' ? totalReasoningTokens : 0 })
         // Codex P1 #834 r3: the v2 document is read-time authoritative over
         // `content` — it must carry this salvage text (the warning, or a gate's
         // replacement), or the cold view shows the partial work as a success.
@@ -5794,31 +5873,46 @@ async function* runAlternateProviderTurn(
         const salvageMessageId = randomUUID()
         const salvageTimeline = compactTimelineWithIndexMap(timeline)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const savedMsg = await (prisma as any).agentMessage.create({
+        savedMsg = await (prisma as any).agentMessage.create({
           data: {
             id: salvageMessageId,
             conversationId, role: 'assistant',
             content: [{ type: 'text', text }, ...emittedAskCards],
             tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
-            costUsd: totalActualCostUsd != null
-              ? roundUsd(totalActualCostUsd)
-              : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens, reasoningTokens: model.provider === 'xai' ? totalReasoningTokens : 0 }),
-            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
+            costUsd: salvageCostUsd,
+            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
           },
         })
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (toolRecords.length > 0) {
+      } catch {
+        return null
+      }
+
+      // The assistant row is already durable. Auxiliary tool-call persistence
+      // must never downgrade that successful save into a terminal error.
+      if (toolRecords.length > 0) {
+        try {
+          // Do not hold the terminal `done` behind an auxiliary write after the
+          // canonical assistant row already exists; a slow/failing audit insert
+          // must not strand clients with an unterminated verification buffer.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (prisma as any).agentToolCall.createMany({
+          void (prisma as any).agentToolCall.createMany({
             data: toolRecords.map((r) => ({
               messageId: savedMsg.id, toolName: r.toolName, input: r.input,
               output: r.output, status: r.status, durationMs: r.durationMs, error: r.error,
             })),
+          }).catch((toolCallErr: unknown) => {
+            console.warn('[run-owner-turn] salvage tool-call persistence failed open:', toolCallErr instanceof Error ? toolCallErr.message : toolCallErr)
           })
+        } catch (toolCallErr) {
+          console.warn('[run-owner-turn] salvage tool-call persistence failed open:', toolCallErr instanceof Error ? toolCallErr.message : toolCallErr)
         }
-        return savedMsg.id as string
-      } catch { /* best-effort */ }
-      return null
+      }
+
+      return {
+        messageId: String(savedMsg.id),
+        persistedText: text,
+        costUsd: salvageCostUsd,
+      }
     }
     // Phase 3 — PINNED-head identity guard (roadmap: "Grok identity never changes
     // silently"): when the owner explicitly pinned this model on the conversation
@@ -5857,16 +5951,26 @@ async function* runAlternateProviderTurn(
         pushTextEntry({ t: 'text', text: playbackGate.text })
         yield { type: 'text_delta', delta: finalText }
       }
-      const salvagedId = await salvagePartialWorkOnError()
-      // The salvage committed prose (settle + warning block): the live reducers
-      // must see it BEFORE the terminal error — this path yields the error
-      // itself, so the route's drain never runs here (Codex P1 #834 r5).
-      for (const evt of proseLifecycle?.drainQueued() ?? []) yield evt as AgentEvent
+      const salvage = await salvagePartialWorkOnError()
+      if (salvage) {
+        const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode }
+        if (proseLifecycle?.protocol === 2) {
+          // v2: the salvage committed the exact persisted blocks (settle + the
+          // warning block) — deliver them to the live reducers, then `done`
+          // commits what the document holds (Codex P1 #834 r5 + #835 contract).
+          for (const evt of proseLifecycle.drainQueued()) yield evt as AgentEvent
+          yield doneEvent
+        } else {
+          for (const event of buildSavedSalvageEventSequence(
+            { persistedText: salvage.persistedText, preambleText },
+            doneEvent,
+          )) yield event
+        }
+        return
+      }
       const msg = err instanceof Error ? err.message : String(err)
       yield {
         type: 'error',
-        // The salvaged row's id: clients pair the tail by identity (#839 r5).
-        ...(salvagedId ? { messageId: salvagedId } : {}),
         message:
           `⚠️ Boss, এই চ্যাটটা **${model.label}**-এ পিন করা, কিন্তু মডেলটা এখন সাড়া দিচ্ছে না — ` +
           `২ বার চেষ্টা করেছি, আর আপনার অনুমতি ছাড়া চুপচাপ অন্য মডেলে যাইনি। ` +
@@ -5931,12 +6035,26 @@ async function* runAlternateProviderTurn(
       pushTextEntry({ t: 'text', text: playbackGate.text })
       yield { type: 'text_delta', delta: finalText }
     }
-    const salvagedId = await salvagePartialWorkOnError()
-    for (const evt of proseLifecycle?.drainQueued() ?? []) yield evt as AgentEvent
+    const salvage = await salvagePartialWorkOnError()
+    if (salvage) {
+      const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode }
+      if (proseLifecycle?.protocol === 2) {
+        // v2: the salvage committed the exact persisted blocks (settle + the
+        // warning block) — deliver them to the live reducers, then `done`
+        // commits what the document holds (Codex P1 #834 r5 + #835 contract).
+        for (const evt of proseLifecycle.drainQueued()) yield evt as AgentEvent
+        yield doneEvent
+      } else {
+        for (const event of buildSavedSalvageEventSequence(
+          { persistedText: salvage.persistedText, preambleText },
+          doneEvent,
+        )) yield event
+      }
+      return
+    }
     const msg = err instanceof Error ? err.message : String(err)
     yield {
       type: 'error',
-      ...(salvagedId ? { messageId: salvagedId } : {}),
       message: `Model error (${model.label}): ${msg}`,
     }
   }
@@ -6113,9 +6231,12 @@ export async function* runOwnerTurn(
     && !isDirectYouTubeBrowserTask(lastUserText)
   ) {
     try {
-      const { ANSWER_GATE_ENABLED, isExpensiveHead, tryAnswerGate, recordGateServe } = await import('@/agent/lib/answer-gate')
+      const { ANSWER_GATE_ENABLED, isExpensiveHead, tryAnswerGate, recordGateServe, answerGateScopeForContext } = await import('@/agent/lib/answer-gate')
       if (ANSWER_GATE_ENABLED && isExpensiveHead(model)) {
-        const hit = await tryAnswerGate(lastUserText, personalMode ? 'personal' : 'business')
+        const hit = await tryAnswerGate(
+          lastUserText,
+          answerGateScopeForContext(personalMode, businessId),
+        )
         if (hit) {
           const savedDate = new Date(hit.verifiedAt ?? hit.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
           const answerText = `${hit.answer}\n\n💾 _সেভ করা verified উত্তর (${savedDate}) — নতুন করে যাচাই চাইলে বলুন "fresh করে দেখো"।_`

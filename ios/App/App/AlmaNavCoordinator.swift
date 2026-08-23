@@ -31,7 +31,15 @@ enum AlmaNavCoordinator {
         case tabRoot(Int)
         case web(reason: String)
         case unknown
+        /// The signed-in role may not open this page (web: proxy.ts redirect /
+        /// ActorContext bounce). Checked BEFORE classification so a denied route
+        /// is never even instantiated.
+        case denied
     }
+
+    /// The role-gated bar's live tab roots (href → index), set by the shell on
+    /// every (re)build. Falls back to `tabRootIndex` before the first build.
+    static var liveTabRoots: [String: Int] = [:]
 
     // MARK: - Contract allowlists (mirror ios/route-contract.json — checker-enforced)
 
@@ -40,12 +48,37 @@ enum AlmaNavCoordinator {
     static let temporaryWebRoutes: Set<String> = [
         // NP-1: /agent/live-watch NATIVE (Monitor → Agents tab, AG-08).
         // NP-4: /portal/wallet, /forgot-password, /reset-password NATIVE.
-        "/agent/creative-studio-demo" // NP-8: retire (web-page removal rides the merge — this branch must not trigger Vercel builds)
+        "/agent/creative-studio-demo", // NP-8: retire (web-page removal rides the merge — this branch must not trigger Vercel builds)
+        // IOSP-9: owner-only agent console pages shipped web-first (PBX phone
+        // console, Mac control, media studio) — embedded web until native lands.
+        "/agent/mac",
+        "/agent/media",
+        "/agent/phone",
+        "/agent/phone-console",
+        "/agent/phone-console/calls",
+        "/agent/phone-console/extensions",
+        "/agent/phone-console/line",
+        "/agent/phone-console/live",
+        "/agent/phone-console/quality",
+        "/agent/phone-console/recordings",
+        "/agent/phone-console/routing",
+        "/agent/phone-console/routing/outbound",
+        "/agent/phone-console/routing/preview",
+        "/agent/phone-console/settings",
+        "/agent/phone-console/settings/blocklist",
+        "/agent/phone-console/settings/history",
+        "/agent/phone-console/settings/hold",
+        "/agent/phone-console/settings/hours",
+        "/agent/phone-console/settings/limits",
+        "/agent/phone-console/settings/provider",
     ]
 
     /// NP-4 (AU-02): typed QUERY routes — these native screens accept their query
     /// string (reset token), so a query no longer forces the web page for them.
     static let queryCapableRoutes: Set<String> = [
+        // An order entity link carries its exact id as /orders?focus=<id>.
+        // OrdersScreen consumes the query and opens the native detail sheet.
+        "/orders",
         "/reset-password",
         // A Meta Ads push taps through as /agent/growth?rec=<id>. The native
         // Growth screen now reads that id and opens on that recommendation, so
@@ -84,23 +117,44 @@ enum AlmaNavCoordinator {
         let bare = path.split(separator: "?").first.map(String.init) ?? path
         let hasQuery = path.dropFirst(bare.count).count > 1 // "?" alone isn't a query
 
-        if let index = tabRootIndex[bare], !hasQuery {
+        // Role × business gate first (AlmaSession = the web's roles.ts port).
+        // Public pages (share links, privacy) are not ERP routes and pass.
+        // The FULL path goes to the gate: a canonical entity link carries its
+        // verified business_id selector and is evaluated under that business.
+        if !publicWebRoutes.contains(bare),
+           !publicWebPrefixes.contains(where: { bare.hasPrefix($0) }),
+           !AlmaSession.shared.canSee(path) {
+            return .denied
+        }
+
+        let roots = liveTabRoots.isEmpty ? tabRootIndex : liveTabRoots
+        if let index = roots[bare], !hasQuery {
             return .tabRoot(index)
         }
 
-        // Query-carrying links: native screens don't receive query context —
-        // /orders?focus=…, /attendance?review=… only work on the web page. Until a
+        // Query-carrying links: most native screens don't receive query context —
+        // /attendance?review=… only works on the web page. Until a
         // native screen accepts the parameter (typed path routes like
         // /employees/{id} already do), the query keeps its web page — but as an
         // EXPLICIT, telemetry-logged decision, not a silent fallthrough.
         if hasQuery {
+            // Canonical Agent entity links carry a server-stamped business_id.
+            // Resolve the full path so the native router can validate the route/
+            // business pairing before constructing a screen. A bad pairing must
+            // never fall through to web or fetch another business's record.
+            if isBusinessScopedEntityLink(path: path, bare: bare) {
+                if let native = AlmaNativeRouter.screen(for: path, openWebForced: openWebForced) {
+                    return .native(native)
+                }
+                return .unknown
+            }
             // NP-4: typed query routes go native WITH their query (reset token).
             if queryCapableRoutes.contains(bare),
                let native = AlmaNativeRouter.screen(for: path, openWebForced: openWebForced) {
                 return .native(native)
             }
             if AlmaNativeRouter.screen(for: bare, openWebForced: { _, _ in }) != nil
-                || tabRootIndex[bare] != nil {
+                || roots[bare] != nil {
                 return .web(reason: "query-context")
             }
             // fall through to allowlist / unknown below using the bare path
@@ -119,5 +173,28 @@ enum AlmaNavCoordinator {
             return .web(reason: "public-web")
         }
         return .unknown
+    }
+
+    private static func isBusinessScopedEntityLink(path: String, bare: String) -> Bool {
+        guard queryValue(path, name: "business_id") != nil else { return false }
+        if bare == "/orders" {
+            return !(queryValue(path, name: "focus") ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return hasOnePathParam(bare, after: "/orders/")
+            || hasOnePathParam(bare, after: "/employees/")
+            || hasOnePathParam(bare, after: "/trading/accounts/")
+    }
+
+    private static func hasOnePathParam(_ path: String, after prefix: String) -> Bool {
+        guard path.hasPrefix(prefix) else { return false }
+        let remainder = path.dropFirst(prefix.count)
+        return !remainder.isEmpty && !remainder.contains("/")
+    }
+
+    private static func queryValue(_ path: String, name: String) -> String? {
+        guard let query = path.split(separator: "?").dropFirst().first else { return nil }
+        return URLComponents(string: "https://x/?\(query)")?
+            .queryItems?.first { $0.name == name }?.value
     }
 }
