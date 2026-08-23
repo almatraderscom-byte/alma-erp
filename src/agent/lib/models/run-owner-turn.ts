@@ -362,7 +362,14 @@ export function sourceBoundContinuationCapabilities(
   }
 }
 
-type SourceBoundToolDefinition = Pick<AgentTool, 'name' | 'description' | 'input_schema'>
+// The model-facing tool shape. `description` is optional on purpose: the
+// provider `Tool` type the turn loop carries allows an undefined description,
+// and narrowing it here would reject the very list this helper widens.
+type SourceBoundToolDefinition = {
+  name: AgentTool['name']
+  description?: AgentTool['description']
+  input_schema: AgentTool['input_schema']
+}
 
 export async function supplySourceBoundWorkflowTools<T extends SourceBoundToolDefinition>(
   tools: readonly T[],
