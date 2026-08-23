@@ -27,7 +27,7 @@ function sseBody(events) {
   }
 }
 
-function fakeSupabase({ existingSeqs = [], existingLastType = 'text_delta', existingRows = null, upsertErrorsBySeq = {}, selectError = null } = {}) {
+function fakeSupabase({ existingSeqs = [], existingLastType = 'text_delta', existingRows = null, upsertErrorsBySeq = {}, selectError = null, selectErrorsRemaining = null, lastSeqUpdateError = null } = {}) {
   const rows = []
   const lastSeqUpdates = []
   const upsertAttempts = []
@@ -64,6 +64,10 @@ function fakeSupabase({ existingSeqs = [], existingLastType = 'text_delta', exis
               in(col, values) { filters.push((r) => values.includes(r[col])); return builder },
               order(_col, { ascending = true } = {}) { descending = !ascending; return builder },
               async limit(n) {
+                if (selectErrorsRemaining != null && selectErrorsRemaining > 0) {
+                  selectErrorsRemaining -= 1
+                  return { data: null, error: { message: 'transient select failure' } }
+                }
                 if (selectError) return { data: null, error: selectError }
                 const matched = allRows().filter((r) => filters.every((f) => f(r)))
                   .sort((a, b) => (descending ? b.seq - a.seq : a.seq - b.seq))
@@ -79,6 +83,7 @@ function fakeSupabase({ existingSeqs = [], existingLastType = 'text_delta', exis
           update(patch) {
             return {
               async eq(_col, id) {
+                if (lastSeqUpdateError) return { data: null, error: lastSeqUpdateError }
                 lastSeqUpdates.push({ id, last_seq: patch.last_seq })
                 return { data: null, error: null }
               },
@@ -355,4 +360,45 @@ test('a repair that cannot write reports failure — never a silent success (Cod
   assert.equal(result.outcome, 'failed')
   assert.match(result.error, /injected failure seq 3/)
   assert.deepEqual(publisher.published, [])
+})
+
+test('a durable seq lookup that keeps failing fails the delivery — never starts at 0 blind (Codex P1 #837 r6)', async () => {
+  const supabase = fakeSupabase({ existingSeqs: [0, 1, 2], selectError: { message: 'postgrest down' } })
+  const publisher = fakePublisher()
+  let fetched = 0
+  await assert.rejects(
+    runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: async () => { fetched += 1; throw new Error('must not be called') }, publisher, sleep: noSleep } }),
+    /durable seq lookup failed/,
+  )
+  assert.equal(fetched, 0, 'the chat route is never called')
+  assert.deepEqual(supabase.rows, [], 'no row was written at seq 0')
+})
+
+test('a transient seq lookup failure is retried and the sequence resumes after the durable max', async () => {
+  const supabase = fakeSupabase({ existingSeqs: [0, 1, 2, 3, 4], selectErrorsRemaining: 2 })
+  const publisher = fakePublisher()
+  const events = [{ type: 'conversation_id', id: 'c' }, { type: 'done', messageId: 'm' }]
+  await runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: fakeFetch(events), publisher, sleep: noSleep } })
+  assert.deepEqual(publisher.published.map((p) => p.seq), [5, 6])
+})
+
+test('a repair whose last_seq update fails is reported as failure (Codex P1 #837 r6)', async () => {
+  const supabase = fakeSupabase({ existingSeqs: [0, 1, 2], lastSeqUpdateError: { message: 'postgrest down' } })
+  const publisher = fakePublisher()
+  const result = await repairMissingTerminal({ supabase, turnId: 'turn-1', status: 'done', terminal: { type: 'done', messageId: 'm' }, publisher, sleep: noSleep })
+  assert.equal(result.outcome, 'failed')
+  assert.match(result.error, /last_seq update failed/)
+  assert.deepEqual(publisher.published, [], 'not declared complete')
+})
+
+test('an existing terminal also re-stamps last_seq to the true max before republishing', async () => {
+  const supabase = fakeSupabase({ existingRows: [
+    { seq: 0, type: 'text_delta', payload: { type: 'text_delta', delta: 'x' } },
+    { seq: 1, type: 'done', payload: { type: 'done', messageId: 'm' } },
+    { seq: 2, type: 'conversation_compacted', payload: { type: 'conversation_compacted' } },
+  ] })
+  const publisher = fakePublisher()
+  const result = await repairMissingTerminal({ supabase, turnId: 'turn-1', status: 'done', publisher, sleep: noSleep })
+  assert.deepEqual(result, { outcome: 'already_terminal', seq: 1 })
+  assert.deepEqual(supabase.lastSeqUpdates, [{ id: 'turn-1', last_seq: 2 }])
 })

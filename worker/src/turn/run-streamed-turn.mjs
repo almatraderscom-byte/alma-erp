@@ -37,6 +37,9 @@ const DURABLE_RETRY_DELAYS_MS = [50, 200, 600]
 const TERMINAL_WRITE_ATTEMPTS = 8
 /** Repair-job enqueue after a lost terminal: the last durable retry path. */
 const REPAIR_ENQUEUE_ATTEMPTS = 3
+/** Durable max-seq lookup before streaming: a redelivered turn must never start at 0 blind. */
+const SEQ_LOOKUP_ATTEMPTS = 3
+const SEQ_LOOKUP_DELAYS_MS = [200, 600]
 const REPAIR_ENQUEUE_DELAYS_MS = [1000, 3000]
 const TERMINAL_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 16000]
 
@@ -109,19 +112,35 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
   // previous attempt already wrote (upsert with update:{} would keep the old
   // payload under the new event's seq — a corrupted replay).
   let seq = 0
-  try {
-    const { data, error } = await supabase
-      .from('agent_turn_events')
-      .select('seq')
-      .eq('turn_id', turnId)
-      .order('seq', { ascending: false })
-      .limit(1)
-    if (error) throw error
-    const maxSeq = Array.isArray(data) && data.length > 0 && typeof data[0]?.seq === 'number' ? data[0].seq : -1
-    seq = maxSeq + 1
-    if (seq > 0) console.warn(`[worker] streamed-turn ${turnId} — resuming durable seq at ${seq}`)
-  } catch (err) {
-    console.warn(`[worker] streamed-turn ${turnId} — durable seq lookup failed (starting at 0):`, err?.message ?? err)
+  {
+    let resolved = false
+    let lastError = null
+    for (let attempt = 0; attempt < SEQ_LOOKUP_ATTEMPTS && !resolved; attempt++) {
+      try {
+        const { data, error } = await supabase
+          .from('agent_turn_events')
+          .select('seq')
+          .eq('turn_id', turnId)
+          .order('seq', { ascending: false })
+          .limit(1)
+        if (error) throw error
+        const maxSeq = Array.isArray(data) && data.length > 0 && typeof data[0]?.seq === 'number' ? data[0].seq : -1
+        seq = maxSeq + 1
+        resolved = true
+        if (seq > 0) console.warn(`[worker] streamed-turn ${turnId} — resuming durable seq at ${seq}`)
+      } catch (err) {
+        lastError = err
+        if (attempt < SEQ_LOOKUP_ATTEMPTS - 1) await sleep(SEQ_LOOKUP_DELAYS_MS[attempt] ?? 500)
+      }
+    }
+    if (!resolved) {
+      // Codex P1 #837 r6: starting at 0 on a redelivered turn would upsert over
+      // the earlier attempt's rows (same turn_id,seq keys) — a corrupted replay.
+      // Nothing has been streamed yet: fail the delivery instead.
+      console.error(`[worker] streamed-turn ${turnId} — durable seq lookup FAILED after ${SEQ_LOOKUP_ATTEMPTS} attempts; not starting at 0:`, lastError?.message ?? lastError)
+      try { await publisher.quit() } catch { publisher.disconnect?.() }
+      throw new Error(`streamed-turn ${turnId}: durable seq lookup failed — refusing to start at seq 0`)
+    }
   }
 
   async function storeDurably(row, { terminal = false } = {}) {
@@ -338,14 +357,6 @@ export async function repairMissingTerminal({ supabase, turnId, status, terminal
       .limit(1)
     if (terminalError) throw terminalError
     const existing = Array.isArray(terminals) && terminals.length > 0 ? terminals[0] : null
-    if (existing) {
-      // Idempotent for the log — but a retry after a failed publish must still
-      // reach the subscribed tails, so the existing terminal is (re)published;
-      // tails dedupe by seq.
-      const published = await publishRepairedTerminal({ turnId, row: existing, publisher, redisUrl, sleep, publishTimeoutMs })
-      if (!published) return { outcome: 'failed', seq: existing.seq, error: 'terminal present but not published' }
-      return { outcome: 'already_terminal', seq: existing.seq }
-    }
     const { data, error } = await supabase
       .from('agent_turn_events')
       .select('seq,type')
@@ -354,7 +365,24 @@ export async function repairMissingTerminal({ supabase, turnId, status, terminal
       .limit(1)
     if (error) throw error
     const last = Array.isArray(data) && data.length > 0 ? data[0] : null
-    const seq = last && typeof last.seq === 'number' ? last.seq + 1 : 0
+    const maxSeq = last && typeof last.seq === 'number' ? last.seq : -1
+    // The snapshot's lastSeq drives replay paging (`replay_continue`): a stale
+    // value can leave a reconnect without the terminal's page. The update is
+    // part of the repair — it must land, on both paths (Codex P1 #837 r6).
+    const stampLastSeq = async (value) => {
+      const { error: seqError } = await supabase.from('agent_turns').update({ last_seq: value }).eq('id', turnId)
+      if (seqError) throw new Error(`last_seq update failed: ${seqError.message ?? seqError}`)
+    }
+    if (existing) {
+      // Idempotent for the log — but a retry after a failed publish must still
+      // reach the subscribed tails, so the existing terminal is (re)published;
+      // tails dedupe by seq.
+      await stampLastSeq(Math.max(maxSeq, existing.seq))
+      const published = await publishRepairedTerminal({ turnId, row: existing, publisher, redisUrl, sleep, publishTimeoutMs })
+      if (!published) return { outcome: 'failed', seq: existing.seq, error: 'terminal present but not published' }
+      return { outcome: 'already_terminal', seq: existing.seq }
+    }
+    const seq = maxSeq + 1
     const carried = terminal && (terminal.type === 'done' || terminal.type === 'error') ? terminal : null
     const payload = carried ?? {
       type: 'error',
@@ -363,7 +391,7 @@ export async function repairMissingTerminal({ supabase, turnId, status, terminal
     const row = { id: `${turnId}:${seq}`, turn_id: turnId, seq, type: payload.type, payload }
     const { error: writeError } = await supabase.from('agent_turn_events').upsert(row, { onConflict: 'turn_id,seq' })
     if (writeError) throw writeError
-    await supabase.from('agent_turns').update({ last_seq: seq }).eq('id', turnId)
+    await stampLastSeq(seq)
     console.warn(`[worker] streamed-turn ${turnId} — repaired missing terminal at seq ${seq} (${payload.type})`)
     // The row is durable, but a tail that already subscribed never polls the
     // log: an unpublished repair is NOT complete — report failure so the job
