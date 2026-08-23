@@ -507,9 +507,16 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     outPerM: 0.28,
     cachedInPerM: 0.0028,
     thinking: 'level',
-    // No `effort` entry ON PURPOSE: the catalog lists `reasoning` but NOT
-    // `reasoning_effort` for xiaomi/mimo-v2.5, so the picker offers no dial
-    // rather than one the host may ignore (same rule as xai-grok-4.20).
+    // The catalog lists `reasoning` but not the OpenAI-style `reasoning_effort`
+    // field. The adapter sends OpenRouter's UNIFIED `reasoning: { effort }`
+    // object, and that IS honoured here — probed live from the VPS 2026-08-23:
+    // effort low → 15 reasoning tokens, high → 115 on the same prompt. Without
+    // the dial the first preview turn reasoned for 2m42s and hit the 8192
+    // output cap twice; the owner needs to be able to turn it down.
+    effort: {
+      dialect: 'openrouter_effort',
+      levels: ['low', 'medium', 'high'],
+    },
   },
 ]
 
