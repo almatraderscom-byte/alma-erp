@@ -2005,6 +2005,30 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertFalse(table?.rows.flatMap { $0 }.contains("---") ?? true)
     }
 
+    func testProfessionalReportParagraphKeepsHeadingOrderedAndTaskHierarchy() {
+        let pal = AgentPalette(.dark)
+        let rendered = AgentMarkdownText.attributedParagraph("""
+        # সাপ্তাহিক রিপোর্ট
+        ## নির্বাহী সারাংশ
+        যাচাই করা ফলাফল নিচে দেওয়া হলো।
+        1. বিক্রি review করুন
+        ২. বাংলা সংখ্যা ঠিক রাখুন
+        - [x] stock যাচাই হয়েছে
+        - [ ] reorder approval বাকি
+        """, pal: pal)
+
+        XCTAssertTrue(rendered.string.contains("সাপ্তাহিক রিপোর্ট"))
+        XCTAssertTrue(rendered.string.contains("1.  বিক্রি review করুন"))
+        XCTAssertTrue(rendered.string.contains("২.  বাংলা সংখ্যা ঠিক রাখুন"))
+        XCTAssertTrue(rendered.string.contains("☑  stock যাচাই হয়েছে"))
+        XCTAssertTrue(rendered.string.contains("☐  reorder approval বাকি"))
+
+        let titleFont = rendered.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
+        let bodyLocation = (rendered.string as NSString).range(of: "যাচাই করা ফলাফল").location
+        let bodyFont = rendered.attribute(.font, at: bodyLocation, effectiveRange: nil) as? UIFont
+        XCTAssertGreaterThan(titleFont?.pointSize ?? 0, bodyFont?.pointSize ?? 0)
+    }
+
     func testAskAndOpinionDraftsPersistAcrossRelaunch() {
         let cardId = "fixture-persisted-action"
         let first = AssistantVM()

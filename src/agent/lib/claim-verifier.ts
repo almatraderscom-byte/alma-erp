@@ -1355,10 +1355,53 @@ const EMOJI_IN_REPLY = /\p{Extended_Pictographic}/u
 const READY_COPY_BLOCK = /```(?:copy|caption|post|text)\s*\n[\s\S]*?\S[\s\S]*?\n```/i
 const FENCED_BLOCK = /```[^\n]*\n[\s\S]*?\n```/g
 const COPY_POST_WORK_PROMPT = /(?:[?？]|(?:এখন\s+)?চাইলে|approve|approval|অনুমোদন|বললে|বলুন|বলবেন|জানান|লাগলে|edit|এডিট|tweak|টুইক|আপনার\s+নির্দেশ|paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|campaign)/i
+const EXPLICIT_REPORT_REQUEST = /(?:\b(?:report|audit|review|briefing|analysis)\b|রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|পর্যালোচনা|প্রতিবেদন)/i
+const VOICE_OUTPUT_REQUEST = /(?:\bvoice(?:\s|-)?(?:reply|answer|response)\b|\bspoken\s+(?:reply|answer)\b|ভ[য়য়]েসে|কথা\s+বলে|🎙️)/i
+const REPORT_MIN_CHARACTERS = 700
+
+/**
+ * A long explicit report that arrives as one flat wall of prose is not the
+ * requested deliverable. Keep this deliberately conservative: it only applies
+ * to explicit report/audit/review intent, never to ordinary long-form writing,
+ * copy-only work, voice output, or code-heavy answers.
+ */
+export function detectProfessionalReportStyleViolations(
+  replyText: string,
+  ownerInstructions: string,
+  context: { voiceTurn?: boolean } = {},
+): ClaimViolation[] {
+  if (!AGENT_STYLE_GATE) return []
+  const text = replyText.trim()
+  if (
+    text.length < REPORT_MIN_CHARACTERS
+    || !EXPLICIT_REPORT_REQUEST.test(ownerInstructions)
+    || context.voiceTurn === true
+    || VOICE_OUTPUT_REQUEST.test(ownerInstructions)
+    || isCopyOnlyOwnerRequest(ownerInstructions)
+  ) return []
+
+  const fenced = text.match(FENCED_BLOCK) ?? []
+  const fencedCharacters = fenced.reduce((sum, block) => sum + block.length, 0)
+  if (fencedCharacters > text.length * 0.45) return []
+
+  const prose = text.replace(FENCED_BLOCK, ' ')
+  const headings = prose.match(/^#{1,3}[ \t]+\S.*$/gm) ?? []
+  const hasScannableDetail = /^(?:[-*+]\s+\S|\d+[.)]\s+\S)/m.test(prose)
+    || /^\s*\|?.+\|.+\|\s*$\n\s*\|?\s*:?-{3,}/m.test(prose)
+
+  if (headings.length >= 2 && hasScannableDetail) return []
+  return [{
+    category: 'instruction_mismatch',
+    ruleId: 'professional_report_structure',
+    matchedSnippet: '(দীর্ঘ রিপোর্টটি flat prose; professional sections/list/table অনুপস্থিত)',
+    requiredTools: [],
+  }]
+}
 
 export function detectExplicitInstructionViolations(
   replyText: string,
   ownerInstructions: string,
+  context: { voiceTurn?: boolean } = {},
 ): ClaimViolation[] {
   const violations: ClaimViolation[] = []
 
@@ -1392,6 +1435,8 @@ export function detectExplicitInstructionViolations(
       }
     }
   }
+
+  violations.push(...detectProfessionalReportStyleViolations(replyText, ownerInstructions, context))
 
   return violations
 }
@@ -1510,6 +1555,7 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
   instruction_mismatch:
     'Boss-এর এই turn-এর স্পষ্ট output contract ভাঙা হয়েছে। no-emoji বললে সব emoji বাদ দিন। ' +
     'copy-only বললে সম্পূর্ণ ready-to-use লেখা একটি fenced ```copy block-এ দিন; কাজ হয়ে গেলে আর প্রশ্ন/option/permission চাইবেন না। ' +
+    'দীর্ঘ report/audit/review হলে bottom line আগে দিয়ে meaningful Markdown section, compact findings এবং দরকারি list/table-এ professionalভাবে সাজান। ' +
     'content/count/অন্য instruction বদলাবেন না।',
   fabricated_stat:
     'আপনি লাইভ ডেটা (সংখ্যা/অর্ডার/স্টক/বিক্রি/টাকা/হাজিরা) উল্লেখ করেছেন কিন্তু এই turn-এ কোনো read tool দিয়ে সেটা যাচাই করেননি। ' +

@@ -1838,7 +1838,11 @@ export async function* runAgentTurn(
             ))
           }
           if (finalText && violations.length === 0) {
-            violations.push(...detectExplicitInstructionViolations(finalText, currentOwnerInstructions))
+            violations.push(...detectExplicitInstructionViolations(
+              finalText,
+              currentOwnerInstructions,
+              { voiceTurn },
+            ))
           }
           if (violations.length > 0) {
             verifyRetries++

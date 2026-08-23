@@ -3689,7 +3689,11 @@ async function* runAlternateProviderTurn(
             violations.push(...detectRoboticStyleViolations(iterationText.trim()))
           }
           if (violations.length === 0) {
-            violations.push(...detectExplicitInstructionViolations(iterationText.trim(), currentOwnerInstructions))
+            violations.push(...detectExplicitInstructionViolations(
+              iterationText.trim(),
+              currentOwnerInstructions,
+              { voiceTurn },
+            ))
           }
           if (violations.length > 0) {
             verifyRetries++

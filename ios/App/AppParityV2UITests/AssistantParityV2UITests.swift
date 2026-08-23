@@ -480,6 +480,12 @@ final class AssistantParityV2UITests: XCTestCase {
             NSPredicate(format: "label CONTAINS %@", "সবচেয়ে practical setup")
         ).firstMatch
         XCTAssertTrue(responseText.exists)
+        XCTAssertTrue(app.textViews.matching(
+            NSPredicate(format: "label CONTAINS %@", "Voice API সিদ্ধান্ত রিপোর্ট")
+        ).firstMatch.exists)
+        XCTAssertTrue(app.textViews.matching(
+            NSPredicate(format: "label CONTAINS %@", "ফোনের audio stream")
+        ).firstMatch.exists)
         XCTAssertTrue(app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "Deepgram")
         ).firstMatch.exists)

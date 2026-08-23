@@ -15,7 +15,7 @@ interface AgentMarkdownProps {
   onArtifactDetected?: (content: string, type: 'code' | 'markdown') => void
 }
 
-const MARKDOWN_LINK_CLASS = 'text-[#E07A5F] underline underline-offset-2 hover:text-[#81B29A] [overflow-wrap:anywhere]'
+const MARKDOWN_LINK_CLASS = 'rounded-sm text-[#E07A5F] underline decoration-[#E07A5F]/45 underline-offset-2 transition-colors hover:text-[#81B29A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#E07A5F]/45 [overflow-wrap:anywhere]'
 const subscribeToStableOrigin = () => () => {}
 
 function useCurrentOrigin(): string | undefined {
@@ -63,8 +63,11 @@ function CopyButton({ text }: { text: string }) {
   }, [text])
   return (
     <button
+      type="button"
       onClick={copy}
-      className="absolute right-2 top-2 rounded-full bg-card/82 backdrop-blur-md border border-border px-2.5 py-1 text-[10px] font-semibold text-muted transition-all hover:bg-[#E07A5F]/10 hover:text-[#E07A5F] hover:border-[#E07A5F]/25 active:scale-90"
+      aria-label={copied ? 'কপি হয়েছে' : 'কপি করুন'}
+      aria-live="polite"
+      className="absolute right-2 top-2 rounded-full bg-card/82 backdrop-blur-md border border-border px-2.5 py-1 text-[10px] font-semibold text-muted transition-all hover:bg-[#E07A5F]/10 hover:text-[#E07A5F] hover:border-[#E07A5F]/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#E07A5F]/45 active:scale-90"
     >
       {copied ? '✓' : 'কপি'}
     </button>
@@ -119,9 +122,10 @@ function ImageWithDownload({ src, alt }: { src?: string; alt?: string }) {
         className="block h-auto w-full max-w-full cursor-zoom-in"
       />
       <button
+        type="button"
         onClick={download}
         disabled={busy}
-        className="absolute right-2 top-2 rounded-full bg-card/82 backdrop-blur-md border border-border px-2.5 py-1 text-[10px] font-semibold text-muted transition-all hover:bg-[#E07A5F]/10 hover:text-[#E07A5F] hover:border-[#E07A5F]/25 active:scale-90 disabled:opacity-60"
+        className="absolute right-2 top-2 rounded-full bg-card/82 backdrop-blur-md border border-border px-2.5 py-1 text-[10px] font-semibold text-muted transition-all hover:bg-[#E07A5F]/10 hover:text-[#E07A5F] hover:border-[#E07A5F]/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#E07A5F]/45 active:scale-90 disabled:opacity-60"
       >
         {busy ? '…' : '⬇ ডাউনলোড'}
       </button>
@@ -135,9 +139,10 @@ function ImageWithDownload({ src, alt }: { src?: string; alt?: string }) {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={src} alt={alt ?? ''} className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl" />
           <button
+            type="button"
             onClick={(e) => { e.stopPropagation(); void download() }}
             disabled={busy}
-            className="absolute bottom-6 left-1/2 -translate-x-1/2 rounded-full bg-card/85 backdrop-blur-md border border-border px-4 py-2 text-[12px] font-semibold text-cream transition-all hover:bg-[#E07A5F]/15 hover:text-[#E07A5F] active:scale-95 disabled:opacity-60"
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 rounded-full bg-card/85 backdrop-blur-md border border-border px-4 py-2 text-[12px] font-semibold text-cream transition-all hover:bg-[#E07A5F]/15 hover:text-[#E07A5F] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#E07A5F]/45 active:scale-95 disabled:opacity-60"
           >
             {busy ? '…' : '⬇ ডাউনলোড'}
           </button>
@@ -155,19 +160,29 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
   // syntax even for the seconds before the round closes.
   const safe = React.useMemo(() => stripToolCallMarkup(content), [content])
   return (
-    <div className={cn('prose-agent select-text text-cream break-words [overflow-wrap:anywhere]', className)}>
+    <div className={cn('prose-agent select-text text-[15px] text-cream break-words [overflow-wrap:anywhere]', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
           p({ children }) {
-            return <p className="mb-3 last:mb-0 leading-relaxed text-cream">{children}</p>
+            return <p className="mb-3.5 last:mb-0 leading-[1.75] text-cream">{children}</p>
           },
-          h1({ children }) { return <h1 className="mb-3 mt-5 text-base font-bold text-[#E07A5F] first:mt-0">{children}</h1> },
-          h2({ children }) { return <h2 className="mb-2 mt-4 text-sm font-bold text-[#E07A5F] first:mt-0">{children}</h2> },
-          h3({ children }) { return <h3 className="mb-2 mt-3 text-sm font-semibold text-cream first:mt-0">{children}</h3> },
-          ul({ children }) { return <ul className="mb-3 ml-4 list-disc space-y-1 text-cream">{children}</ul> },
-          ol({ children }) { return <ol className="mb-3 ml-4 list-decimal space-y-1 text-cream">{children}</ol> },
-          li({ children }) { return <li className="leading-relaxed text-cream">{children}</li> },
+          h1({ children }) {
+            return <h1 className="mb-4 mt-7 text-[22px] font-bold leading-tight tracking-[-0.015em] text-[#E07A5F] first:mt-0">{children}</h1>
+          },
+          h2({ children }) {
+            return <h2 className="mb-3 mt-7 border-l-2 border-[#E07A5F]/80 pl-3 text-[18px] font-bold leading-snug tracking-[-0.01em] text-cream first:mt-0">{children}</h2>
+          },
+          h3({ children }) {
+            return <h3 className="mb-2 mt-5 text-[15.5px] font-semibold leading-snug text-[#81B29A] first:mt-0">{children}</h3>
+          },
+          ul({ children }) {
+            return <ul className="mb-4 ml-5 list-disc space-y-1.5 text-cream marker:text-[#E07A5F]">{children}</ul>
+          },
+          ol({ children }) {
+            return <ol className="mb-4 ml-5 list-decimal space-y-1.5 text-cream marker:font-semibold marker:text-[#81B29A]">{children}</ol>
+          },
+          li({ children }) { return <li className="pl-1 leading-[1.65] text-cream [&>p]:mb-1">{children}</li> },
           code({ className: cls, children, ...props }) {
             const isBlock = cls?.startsWith('language-')
             // `children` is undefined for an EMPTY fence, and `String(undefined)`
@@ -221,30 +236,30 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
           },
           table({ children }) {
             return (
-              <div className="my-3 overflow-x-auto rounded-xl border border-border-subtle bg-card/80 shadow-sm">
+              <div className="my-5 overflow-x-auto rounded-xl border border-border-subtle bg-card/80 shadow-sm">
                 <table className="w-full min-w-[280px] text-sm">{children}</table>
               </div>
             )
           },
-          thead({ children }) { return <thead className="border-b border-border-subtle bg-white/[0.04]">{children}</thead> },
+          thead({ children }) { return <thead className="border-b border-border-subtle bg-[#E07A5F]/[0.055]">{children}</thead> },
           tbody({ children }) { return <tbody className="divide-y divide-white/[0.06]">{children}</tbody> },
           tr({ children }) { return <tr className="hover:bg-white/[0.03]">{children}</tr> },
           th({ children }) {
-            return <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-[#E07A5F]">{children}</th>
+            return <th scope="col" className="px-4 py-3 text-left text-[12px] font-bold leading-snug text-[#E07A5F]">{children}</th>
           },
-          td({ children }) { return <td className="px-4 py-2.5 text-[13px] text-cream">{children}</td> },
+          td({ children }) { return <td className="px-4 py-3 text-[13px] leading-relaxed text-cream">{children}</td> },
           blockquote({ children }) {
             return (
-              <blockquote className="my-3 border-l-2 border-[#E07A5F] pl-4 italic text-muted-hi">
+              <blockquote role="note" className="my-5 rounded-r-xl border-l-2 border-[#E07A5F] bg-[#E07A5F]/[0.055] px-4 py-3 text-muted-hi [&>p]:mb-0">
                 {children}
               </blockquote>
             )
           },
-          hr() { return <hr className="my-4 border-border-subtle" /> },
+          hr() { return <hr className="my-6 border-border-subtle" /> },
           a({ href, children }) {
             return <AgentMarkdownLink href={href}>{children}</AgentMarkdownLink>
           },
-          strong({ children }) { return <strong className="font-bold text-cream">{children}</strong> },
+          strong({ children }) { return <strong className="font-bold text-cream decoration-[#E07A5F]/30">{children}</strong> },
           em({ children }) { return <em className="italic text-muted-hi">{children}</em> },
           img({ src, alt }) { return <ImageWithDownload src={typeof src === 'string' ? src : undefined} alt={typeof alt === 'string' ? alt : undefined} /> },
         }}

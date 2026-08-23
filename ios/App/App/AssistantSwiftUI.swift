@@ -9396,9 +9396,15 @@ final class AssistantVM {
         answer.serverId = answer.id
         answer.createdAt = "2026-07-21T06:31:00.000Z"
         let prose = """
-        ## সবচেয়ে practical setup
+        # Voice API সিদ্ধান্ত রিপোর্ট
 
-        Boss, বাংলা voice agent-এর জন্য **Deepgram STT → আপনার agent → Google TTS** সবচেয়ে ভারসাম্যপূর্ণ setup। এতে latency কম থাকে এবং provider বদলালেও conversation state ALMA-তেই থাকে।
+        **Bottom line:** বাংলা voice agent-এর জন্য Deepgram STT → ALMA agent → Google TTS সবচেয়ে practical setup।
+
+        ## নির্বাহী সারাংশ
+
+        এই setup-এ latency কম থাকে এবং provider বদলালেও conversation state ALMA-তেই থাকে। নিচের দামগুলো fixture evidence; production চালুর আগে live dashboard-এ আবার যাচাই করতে হবে।
+
+        ## KPI ও provider snapshot
 
         | API | আনুমানিক মূল্য | সবচেয়ে ভালো ব্যবহার |
         | --- | --- | --- |
@@ -9406,13 +9412,26 @@ final class AssistantVM {
         | Google Cloud TTS | ~$0.000004/character | স্বাভাবিক বাংলা voice |
         | ElevenLabs | ~$0.015/min | premium expressive voice |
 
-        > Live price বদলাতে পারে—production চালুর আগে provider dashboard থেকে আবার যাচাই করব।
+        ## মূল পর্যবেক্ষণ
 
-        **প্রস্তাবিত flow**
+        - Deepgram দ্রুত বাংলা speech-to-text-এর জন্য সেরা balance দেয়
+        - Google TTS কম খরচে স্বাভাবিক বাংলা output দেয়
+        - Conversation state ALMA-তে রাখলে provider lock-in কমে
 
-        - ফোনের audio stream Deepgram-এ যাবে
-        - transcript ALMA agent বুঝে উত্তর তৈরি করবে
-        - Google TTS উত্তরটি স্বাভাবিক বাংলায় বলবে
+        ## ঝুঁকি ও সীমাবদ্ধতা
+
+        > Live price বদলাতে পারে—production চালুর আগে provider dashboard থেকে আবার যাচাই করতে হবে।
+
+        ### প্রস্তাবিত flow
+
+        1. ফোনের audio stream Deepgram-এ যাবে
+        2. transcript ALMA agent বুঝে উত্তর তৈরি করবে
+        3. Google TTS উত্তরটি স্বাভাবিক বাংলায় বলবে
+
+        ### বাস্তবায়ন checklist
+
+        - [x] provider responsibility আলাদা করা
+        - [ ] production price পুনরায় যাচাই করা
 
         ```swift
         let pipeline = VoicePipeline(stt: .deepgram, tts: .google)
@@ -13650,6 +13669,35 @@ struct AgentMarkdownText: View {
     /// Mirror of `plainParagraph`'s per-line styling as ONE NSAttributedString so a
     /// selection can span the whole paragraph: clear headers, lists and quiet body,
     /// resolved bold/italic/code (UITextView doesn't interpret markdown intents).
+    private static func headingLevel(_ line: String) -> Int? {
+        if line.hasPrefix("### ") { return 3 }
+        if line.hasPrefix("## ") { return 2 }
+        if line.hasPrefix("# ") { return 1 }
+        return nil
+    }
+
+    private static func orderedListParts(_ line: String) -> (marker: String, body: String)? {
+        guard let range = line.range(of: #"^[0-9০-৯]+[.)]\s+"#, options: .regularExpression) else {
+            return nil
+        }
+        let marker = String(line[..<range.upperBound]).trimmingCharacters(in: .whitespaces)
+        let body = String(line[range.upperBound...])
+        return body.isEmpty ? nil : (marker, body)
+    }
+
+    private static func taskListParts(_ line: String) -> (checked: Bool, body: String)? {
+        let candidates: [(String, Bool)] = [
+            ("- [ ] ", false), ("* [ ] ", false),
+            ("- [x] ", true), ("- [X] ", true),
+            ("* [x] ", true), ("* [X] ", true),
+        ]
+        for (prefix, checked) in candidates where line.hasPrefix(prefix) {
+            let body = String(line.dropFirst(prefix.count))
+            return body.isEmpty ? nil : (checked, body)
+        }
+        return nil
+    }
+
     static func attributedParagraph(_ s: String, pal: AgentPalette) -> NSAttributedString {
         let body = UIFontMetrics(forTextStyle: .body).scaledFont(
             for: UIFont.systemFont(ofSize: 16.5, weight: .regular))
@@ -13664,17 +13712,35 @@ struct AgentMarkdownText: View {
             if trimmed.isEmpty { continue }
             if !first { out.append(NSAttributedString(string: "\n")) }
             first = false
-            if trimmed.hasPrefix("###") || trimmed.hasPrefix("##") || trimmed.hasPrefix("# ") {
+            if let level = headingLevel(trimmed) {
                 let title = String(trimmed.drop(while: { $0 == "#" || $0 == " " }))
-                let size: CGFloat = trimmed.hasPrefix("# ") ? 18 : 16
-                let heading = UIFontMetrics(forTextStyle: .headline)
-                    .scaledFont(for: UIFont.systemFont(ofSize: size, weight: .semibold))
+                let size: CGFloat = level == 1 ? 22 : (level == 2 ? 19 : 16.5)
+                let weight: UIFont.Weight = level == 3 ? .semibold : .bold
+                let system = UIFont.systemFont(ofSize: size, weight: weight)
+                let descriptor = system.fontDescriptor.withDesign(.serif) ?? system.fontDescriptor
+                let heading = UIFontMetrics(forTextStyle: level == 1 ? .title2 : .headline)
+                    .scaledFont(for: UIFont(descriptor: descriptor, size: size))
+                let color = level == 1
+                    ? UIColor(AgentPalette.coral)
+                    : (level == 3 ? UIColor(AgentPalette.teal) : ink)
                 out.append(NSAttributedString(string: title, attributes: [
                     .font: heading,
-                    .foregroundColor: ink,
+                    .foregroundColor: color,
                 ]))
-            } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("• ") {
-                out.append(NSAttributedString(string: "•  ", attributes: [.font: body, .foregroundColor: UIColor(pal.muted)]))
+            } else if let task = taskListParts(trimmed) {
+                out.append(NSAttributedString(
+                    string: task.checked ? "☑  " : "☐  ",
+                    attributes: [.font: body, .foregroundColor: UIColor(AgentPalette.teal)]))
+                out.append(inlineNS(task.body, baseFont: body, color: ink))
+            } else if let item = orderedListParts(trimmed) {
+                out.append(NSAttributedString(string: "\(item.marker)  ", attributes: [
+                    .font: UIFont.systemFont(ofSize: body.pointSize, weight: .semibold),
+                    .foregroundColor: UIColor(AgentPalette.teal),
+                ]))
+                out.append(inlineNS(item.body, baseFont: body, color: ink))
+            } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") || trimmed.hasPrefix("• ") {
+                out.append(NSAttributedString(string: "•  ", attributes: [
+                    .font: body, .foregroundColor: UIColor(AgentPalette.coral.opacity(0.85))]))
                 out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: ink))
             } else if trimmed.hasPrefix("> ") {
                 out.append(NSAttributedString(string: "│  ", attributes: [
@@ -13724,28 +13790,64 @@ struct AgentMarkdownText: View {
     }
 
     @ViewBuilder private func plainParagraph(_ s: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(s.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 if trimmed.isEmpty {
                     EmptyView()
-                } else if trimmed.hasPrefix("###") || trimmed.hasPrefix("##") || trimmed.hasPrefix("# ") {
-                    Text(trimmed.drop(while: { $0 == "#" || $0 == " " }))
-                        .font(.system(trimmed.hasPrefix("# ") ? .title3 : .headline, weight: .semibold))
-                        .foregroundStyle(pal.ink)
-                        .padding(.top, 2)
-                } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("• ") {
+                } else if let level = Self.headingLevel(trimmed) {
+                    let title = String(trimmed.drop(while: { $0 == "#" || $0 == " " }))
+                    let font: Font = level == 1
+                        ? .system(.title2, design: .serif, weight: .bold)
+                        : (level == 2
+                            ? .system(.title3, design: .serif, weight: .bold)
+                            : .system(.headline, design: .default, weight: .semibold))
+                    let color = level == 1 ? AgentPalette.coral : (level == 3 ? AgentPalette.teal : pal.ink)
+                    HStack(alignment: .firstTextBaseline, spacing: 9) {
+                        if level == 2 {
+                            Capsule().fill(AgentPalette.coral.opacity(0.8)).frame(width: 3, height: 20)
+                        }
+                        Text(title)
+                            .font(font)
+                            .foregroundStyle(color)
+                    }
+                    .padding(.top, level == 1 ? 8 : 5)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isHeader)
+                } else if let task = Self.taskListParts(trimmed) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: task.checked ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(AgentPalette.teal)
+                            .accessibilityHidden(true)
+                        inline(task.body).lineSpacing(4)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(Text(
+                        task.checked ? "সম্পন্ন, \(task.body)" : "অসম্পন্ন, \(task.body)"))
+                } else if let item = Self.orderedListParts(trimmed) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(item.marker)
+                            .font(.system(.body, design: .rounded, weight: .semibold))
+                            .foregroundStyle(AgentPalette.teal)
+                        inline(item.body).lineSpacing(4)
+                    }
+                } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") || trimmed.hasPrefix("• ") {
                     HStack(alignment: .top, spacing: 7) {
-                        Text("•").foregroundStyle(pal.muted)
-                        inline(String(trimmed.dropFirst(2)))
+                        Text("•").foregroundStyle(AgentPalette.coral.opacity(0.85))
+                        inline(String(trimmed.dropFirst(2))).lineSpacing(4)
                     }
                 } else if trimmed.hasPrefix("> ") {
                     HStack(alignment: .top, spacing: 9) {
                         Capsule().fill(AgentPalette.coral.opacity(0.65)).frame(width: 3)
-                        inline(String(trimmed.dropFirst(2))).foregroundStyle(pal.mutedHi)
+                        inline(String(trimmed.dropFirst(2))).foregroundStyle(pal.mutedHi).lineSpacing(4)
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(AgentPalette.coral.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityElement(children: .combine)
                 } else {
-                    inline(line)
+                    inline(line).lineSpacing(4)
                 }
             }
         }
@@ -15304,8 +15406,6 @@ struct AgentMessageRow: View {
     let onToolTap: (AgentChatMessage.Tool) -> Void
     let onActivitySheet: (AgentActivitySheetRequest) -> Void
     @Environment(\.colorScheme) private var scheme
-    @State private var expandedLong = false
-
     /// PA-4 — the voice-instruction chip state, derived from the turn that follows
     /// this message: no assistant yet → গৃহীত; streaming → চলছে; settled → শেষ.
     private enum VoiceTurnStatus { case received, working, done }
@@ -15528,7 +15628,6 @@ struct AgentMessageRow: View {
                             }
                         }
                         if !message.text.isEmpty {
-                            let long = message.text.count > 1500 && !message.isStreaming
                             VStack(alignment: .leading, spacing: 4) {
                                 if message.isStreaming {
                                     HStack(alignment: .bottom, spacing: 2) {
@@ -15549,16 +15648,6 @@ struct AgentMessageRow: View {
                                         onAskSelection: { selection, side in
                                             Task { await vm.prepareSelectionQuestion(selection, inSideConversation: side) }
                                         })
-                                        // 1.4: cap ONLY the collapsed state; expanded rows size
-                                        // naturally (never a greedy .infinity inside the lazy list).
-                                        .frame(maxHeight: long && !expandedLong ? 340 : nil, alignment: .top)
-                                        .clipped()
-                                        .mask(
-                                            LinearGradient(stops: long && !expandedLong
-                                                ? [.init(color: .black, location: 0), .init(color: .black, location: 0.78),
-                                                   .init(color: .clear, location: 1)]
-                                                : [.init(color: .black, location: 0), .init(color: .black, location: 1)],
-                                                startPoint: .top, endPoint: .bottom))
                                         .contentShape(Rectangle())
                                         // Owner issue #6 (build 69): long-press → copy + haptic.
                                         .contextMenu {
@@ -15575,21 +15664,6 @@ struct AgentMessageRow: View {
                                                 Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
                                             }
                                         }
-                                }
-                                if long {
-                                    Button {
-                                        AlmaAgentHaptics.selection()
-                                        withAnimation(.easeOut(duration: 0.3)) { expandedLong.toggle() }
-                                    } label: {
-                                        HStack(spacing: 4) {
-                                            Text(expandedLong ? "কম দেখুন" : "বিস্তারিত দেখুন")
-                                                .font(.system(size: 12, weight: .medium))
-                                            Image(systemName: "chevron.down")
-                                                .font(.system(size: 10))
-                                                .rotationEffect(.degrees(expandedLong ? 180 : 0))
-                                        }
-                                        .foregroundStyle(AgentPalette.coral.opacity(0.85))
-                                    }
                                 }
                             }
                         }

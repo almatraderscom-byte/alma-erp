@@ -6,8 +6,24 @@ afterEach(() => {
 })
 
 const STYLE_MARKER = 'কথা বলার ধরন'
+const PROFESSIONAL_REPORT_MARKER = 'Final answer-এর professional shape'
 
 describe('COMMUNICATION_STYLE (BP5 — how it talks, model-agnostic)', () => {
+  it('always ships the adaptive professional-report contract', async () => {
+    const { buildSystemPrompt } = await import('../system-prompt')
+    const business = buildSystemPrompt().map((b) => b.text ?? '').join('\n')
+    const personal = buildSystemPrompt(null, undefined, undefined, undefined, false, false, false, undefined, false, true)
+      .map((b) => b.text ?? '')
+      .join('\n')
+
+    for (const text of [business, personal]) {
+      expect(text).toContain(PROFESSIONAL_REPORT_MARKER)
+      expect(text).toContain('Long report / audit / review / analysis')
+      expect(text).toContain('Simple reply')
+      expect(text).toContain('Voice/TTS reply-তে emoji ও Markdown একদম নয়')
+    }
+  })
+
   it('advertises native rich-output grammar without allowing fabricated media', async () => {
     const { buildSystemPrompt } = await import('../system-prompt')
     const text = buildSystemPrompt().map((b) => b.text ?? '').join('\n')

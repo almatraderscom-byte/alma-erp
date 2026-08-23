@@ -80,3 +80,36 @@ describe('AgentMarkdown links', () => {
     expect(html).not.toContain('<a')
   })
 })
+
+describe('AgentMarkdown professional report surface', () => {
+  it('renders semantic editorial hierarchy, tables, lists, and callouts', () => {
+    const html = renderToStaticMarkup(createElement(AgentMarkdown, {
+      content: `# সাপ্তাহিক রিপোর্ট
+
+## নির্বাহী সারাংশ
+
+**Bottom line:** বিক্রি স্থিতিশীল।
+
+### মূল সংকেত
+
+- বিক্রি যাচাই করা হয়েছে
+- stock ঝুঁকি আছে
+
+| KPI | অবস্থা |
+| --- | --- |
+| বিক্রি | স্থিতিশীল |
+
+> Live data ছাড়া কোনো সংখ্যা যোগ করা হয়নি।`,
+    }))
+
+    expect(html).toContain('<h1')
+    expect(html).toContain('text-[22px]')
+    expect(html).toContain('<h2')
+    expect(html).toContain('border-l-2')
+    expect(html).toContain('<h3')
+    expect(html).toContain('<ul')
+    expect(html).toContain('<table')
+    expect(html).toContain('scope="col"')
+    expect(html).toContain('role="note"')
+  })
+})

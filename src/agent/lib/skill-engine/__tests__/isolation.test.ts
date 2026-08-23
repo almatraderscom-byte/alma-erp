@@ -115,6 +115,13 @@ describe('SK-7 — measured on the real system prompt', () => {
     }
   })
 
+  it('the adaptive professional-report contract survives isolation', () => {
+    const { stable } = buildSystemPromptBlocks({ isolatedSkill: skillArg })
+    const text = stable.map((b) => b.text).join('')
+    expect(text).toContain('Final answer-এর professional shape')
+    expect(text).toContain('Long report / audit / review / analysis')
+  })
+
   it('the skill body reaches the model, and only once', () => {
     const { stable, volatile } = buildSystemPromptBlocks({
       isolatedSkill: skillArg,

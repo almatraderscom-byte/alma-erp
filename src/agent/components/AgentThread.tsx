@@ -719,6 +719,11 @@ function CollapsibleMessage({
   )
 }
 
+// Ordinary professional reports should read as one uninterrupted document.
+// Only truly giant replies keep the chat-protection fold; the native renderer
+// uses the same 12k-character boundary for progressive Markdown parsing.
+const GIANT_ASSISTANT_REPLY_CHARACTERS = 12_000
+
 /** Pretty-print a tool input object for the expandable "ইনপুট" panel. */
 function formatToolInput(input: unknown): string | null {
   if (input == null) return null
@@ -938,7 +943,13 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
             key={i}
             className="mb-3 text-[15px] leading-[1.7] text-cream select-text break-words [overflow-wrap:anywhere]"
           >
-            <AgentMarkdown content={seg.text} />
+            {!msg.streaming && seg.text.length > GIANT_ASSISTANT_REPLY_CHARACTERS ? (
+              <CollapsibleMessage collapsedMaxPx={360}>
+                <AgentMarkdown content={seg.text} />
+              </CollapsibleMessage>
+            ) : (
+              <AgentMarkdown content={seg.text} />
+            )}
             {msg.streaming && i === lastIdx && (
               <motion.span
                 className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] rounded-full bg-[#E07A5F]/60"
@@ -1781,10 +1792,12 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                             aria-hidden
                           />
                         </div>
-                      ) : (
+                      ) : msg.text.length > GIANT_ASSISTANT_REPLY_CHARACTERS ? (
                         <CollapsibleMessage collapsedMaxPx={360}>
                           <AgentMarkdown content={msg.text} />
                         </CollapsibleMessage>
+                      ) : (
+                        <AgentMarkdown content={msg.text} />
                       )}
                     </div>
                   )}
