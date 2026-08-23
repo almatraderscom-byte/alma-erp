@@ -88,7 +88,21 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       // 0) Connection snapshot — lets the client reconcile turn state instantly
       //    (roadmap 3.5) without a separate status request.
       const snap = await getTurnSnapshot(turnId)
-      if (snap) {
+      if (!snap) {
+        // Fail closed (Codex P1 #834 r6): without the snapshot the turn's prose
+        // family is unknown — serving stored v2 rows as if v1 would put a
+        // superseded draft beside its replacement. The client reconciles via
+        // turn-status / polling and re-attaches.
+        safeEnqueue(`data: ${JSON.stringify({ type: 'error', message: 'turn_snapshot_unavailable' })}\n\n`)
+        closed = true
+        try {
+          controller.close()
+        } catch {
+          /* already closed */
+        }
+        return
+      }
+      {
         turnProtocol = proseProtocolFromVersions(snap.versions)
         safeEnqueue(`data: ${JSON.stringify({
           type: 'turn_snapshot',
