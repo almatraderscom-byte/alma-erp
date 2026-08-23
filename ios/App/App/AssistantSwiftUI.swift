@@ -6209,7 +6209,15 @@ final class AssistantVM {
                     if s?.status == "running" {
                         self.startRecoveryPolling(cid: cid)
                     } else {
-                        self.adoptAssistantIdentity(s?.assistantMessageId)
+                        // turn-status answers for the conversation's LATEST turn:
+                        // a concurrent/subsequent turn may have finished meanwhile.
+                        // Adopt its assistant id only when it is the turn we tailed
+                        // (or send-time evidence says so) (Codex P1 #839 r6).
+                        if let s {
+                            self.applyTerminalStatusIdentity(
+                                s, matchedOurTurn: s.turnId == turnId
+                                    || self.isTerminalForOurTurn(s, requireEvidence: true))
+                        }
                         await self.finishRecovery(terminalStatus: s?.status ?? "done")
                     }
                 }
