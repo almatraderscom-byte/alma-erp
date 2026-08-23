@@ -6134,3 +6134,37 @@ final class ProseIdentityTests: XCTestCase {
         XCTAssertFalse(tail.tools.isEmpty, "a poll must not discard the tool-only streaming tail")
     }
 }
+
+
+@MainActor
+final class AgentMessageTimeLabelTests: XCTestCase {
+    private func dhaka(_ y: Int, _ mo: Int, _ d: Int, _ h: Int, _ mi: Int) -> Date {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = AgentMessageTimeLabel.dhaka
+        return cal.date(from: DateComponents(year: y, month: mo, day: d, hour: h, minute: mi))!
+    }
+
+    func testLabelsTodayYesterdayWeekdayAndOlderInBangla() {
+        let now = dhaka(2026, 8, 23, 14, 33)                       // Sunday
+        XCTAssertEqual(AgentMessageTimeLabel.label(for: dhaka(2026, 8, 23, 14, 33), now: now), "আজ দুপুর ২:৩৩")
+        XCTAssertEqual(AgentMessageTimeLabel.label(for: dhaka(2026, 8, 22, 16, 22), now: now), "গতকাল বিকাল ৪:২২")
+        XCTAssertEqual(AgentMessageTimeLabel.label(for: dhaka(2026, 8, 20, 9, 5), now: now), "বৃহস্পতিবার সকাল ৯:০৫")
+        XCTAssertEqual(AgentMessageTimeLabel.label(for: dhaka(2026, 8, 13, 21, 10), now: now), "১৩ আগস্ট রাত ৯:১০")
+        XCTAssertEqual(AgentMessageTimeLabel.label(for: dhaka(2025, 12, 31, 0, 0), now: now), "৩১ ডিসেম্বর ২০২৫ রাত ১২:০০")
+    }
+
+    func testParsesServerAndLocalIsoStamps() {
+        XCTAssertNotNil(AgentMessageTimeLabel.parse("2026-08-23T01:00:00.000Z"))
+        XCTAssertNotNil(AgentMessageTimeLabel.parse("2026-08-23T01:00:00Z"))
+        XCTAssertNotNil(AgentMessageTimeLabel.parse(AgentMessageTimeLabel.isoNow()))
+        XCTAssertNil(AgentMessageTimeLabel.parse(nil))
+        XCTAssertNil(AgentMessageTimeLabel.parse(""))
+    }
+
+    func testSendStampsCreatedAtSoTheDividerShowsImmediately() {
+        let vm = AssistantVM()
+        vm.debugAppendLocalOwnerMessage(text: "হ্যালো")
+        XCTAssertNotNil(AgentMessageTimeLabel.parse(vm.messages.last?.createdAt),
+                        "a freshly sent owner message must carry a parseable send time")
+    }
+}
