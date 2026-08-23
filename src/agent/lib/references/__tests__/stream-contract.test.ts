@@ -25,14 +25,19 @@ function read(path: string): string {
 }
 
 describe('verified-reference stream contract', () => {
-  it.each(SOURCES)('%s: every reference-carrying terminal states the contract', (path) => {
+  it.each(SOURCES)('%s: EVERY terminal states the contract, not just the citing ones', (path) => {
     const source = read(path)
-    const terminals = source.split('\n').filter((line) => (
-      line.includes("type: 'done'") && line.includes('references:')
+    const lines = source.split('\n')
+    const terminals = lines.flatMap((line, index) => (
+      line.includes("type: 'done'") && !line.trimStart().startsWith('|') ? [index] : []
     ))
     expect(terminals.length).toBeGreaterThan(0)
-    for (const line of terminals) {
-      expect(line, line.trim().slice(0, 120)).toContain('referencesActive:')
+    for (const index of terminals) {
+      // An early terminal (answer-gate hit, route-guard blocker) cites nothing,
+      // but a cached answer can still carry Markdown links — leaving the client
+      // in legacy mode keeps those clickable under an ON contract (Codex P2).
+      const block = lines.slice(index, index + 14).join('\n')
+      expect(block, lines[index].trim().slice(0, 120)).toContain('referencesActive:')
     }
   })
 

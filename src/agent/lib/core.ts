@@ -3099,6 +3099,10 @@ export async function* runAgentTurn(
           cacheRead: totalCacheReadTokens,
           costUsd,
           needContinue: false,
+          // This salvage cites nothing, but an ON contract must still be stated
+          // or the client leaves the reply in legacy mode (Codex P2, PR #845).
+          references: shouldRenderAgentReferences() ? [] : undefined,
+          referencesActive: shouldRenderAgentReferences(),
         }
         return
       } catch (salvageError) {

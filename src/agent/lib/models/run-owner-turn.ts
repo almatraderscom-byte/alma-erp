@@ -6217,6 +6217,8 @@ export async function* runOwnerTurn(
       cacheCreation: 0,
       cacheRead: 0,
       costUsd: 0,
+      references: shouldRenderAgentReferences() ? [] : undefined,
+      referencesActive: shouldRenderAgentReferences(),
     }
     return
   }
@@ -6324,7 +6326,10 @@ export async function* runOwnerTurn(
           await touchConversationActivity(conversationId)
           void recordGateServe(hit, conversationId)
           yield { type: 'text_delta', delta: answerText }
-          yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0 }
+          // Early terminals cite nothing, but while the contract is ON they must
+          // still say so: leaving the client in legacy mode keeps a cached
+          // answer's Markdown links clickable until a refresh (Codex P2 #845).
+          yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0, references: shouldRenderAgentReferences() ? [] : undefined, referencesActive: shouldRenderAgentReferences() }
           return
         }
       }
