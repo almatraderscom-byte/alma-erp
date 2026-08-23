@@ -441,6 +441,76 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     outPerM: 1,
     thinking: 'none',
   },
+  // ── Owner-picked additions 2026-08-23 (OpenRouter /api/v1/models catalog
+  // verified the same day: slug, context, pricing, `tools` + `reasoning`
+  // support). Owner showed the `google/gemini-3.7-flash:batch` page — that
+  // variant is the OpenRouter BATCH API only (async, 24-hour completion
+  // window, text-only, no streaming), so it cannot run a live chat turn; the
+  // sync slug below is the same model at the non-discounted rate. ──────────
+  {
+    id: 'or-gemini-3.7-flash',
+    label: 'Gemini 3.7 Flash (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'google/gemini-3.7-flash',
+    supportsTools: true,
+    // Catalog lists input_cache_read ($0.0375/M) — the adapter's cache_control
+    // breakpoint on the system prefix is honoured.
+    supportsCaching: true,
+    contextWindow: 1_048_576,
+    inPerM: 0.375,
+    outPerM: 1.875,
+    cachedInPerM: 0.0375,
+    thinking: 'level',
+    // `reasoning_effort` is in supported_parameters — same dial as the other
+    // OpenRouter heads.
+    effort: {
+      dialect: 'openrouter_effort',
+      levels: ['low', 'medium', 'high'],
+    },
+  },
+  {
+    // STEALTH model: a third-party provider serving an unnamed reasoning model
+    // for free during its preview. OpenRouter's banner: prompts and completions
+    // are RETAINED by the provider (not used for training). Text+image+video in.
+    // Free today — the slug may be renamed or withdrawn when the provider goes
+    // public, so a failure here is expected to fall through the usual ladder.
+    id: 'or-ox-alpha',
+    label: 'Ox Alpha (OpenRouter stealth)',
+    provider: 'openrouter',
+    apiModel: 'stealth/ox-alpha',
+    supportsTools: true,
+    // No cache pricing published — skip the cache_control breakpoint.
+    supportsCaching: false,
+    contextWindow: 1_048_576,
+    inPerM: 0,
+    outPerM: 0,
+    thinking: 'level',
+    effort: {
+      dialect: 'openrouter_effort',
+      levels: ['low', 'medium', 'high'],
+    },
+  },
+  {
+    // Xiaomi's omnimodal model (text/image/audio/video in). Catalog rate is the
+    // list price; the model page showed a temporary 15% promo ($0.119/$0.238)
+    // that the catalog does not carry — we bill off the list price so the
+    // dashboard never under-states cost.
+    id: 'or-mimo-v2.5',
+    label: 'MiMo V2.5 (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'xiaomi/mimo-v2.5',
+    supportsTools: true,
+    // input_cache_read published ($0.0028/M).
+    supportsCaching: true,
+    contextWindow: 1_050_000,
+    inPerM: 0.14,
+    outPerM: 0.28,
+    cachedInPerM: 0.0028,
+    thinking: 'level',
+    // No `effort` entry ON PURPOSE: the catalog lists `reasoning` but NOT
+    // `reasoning_effort` for xiaomi/mimo-v2.5, so the picker offers no dial
+    // rather than one the host may ignore (same rule as xai-grok-4.20).
+  },
 ]
 
 export function getModel(id?: string | null): ModelEntry {
