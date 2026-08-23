@@ -3,6 +3,12 @@ const AUTH_PATH_PREFIXES = ['/login', '/forgot-password', '/reset-password'] as 
 
 const PUBLIC_APP_PREFIXES = ['/app/download', '/download.html', '/privacy-policy', '/releases'] as const
 
+// The route itself is server-gated: it renders only on Vercel previews, requires
+// the owner session in local development, and 404s in production. AuthGate is a
+// client component and cannot read VERCEL_ENV, so it must let this one exact
+// pathname reach that server decision instead of replacing it with a login UI.
+const SERVER_GATED_PROOF_PATHS = ['/agent/report-preview'] as const
+
 export function isAuthPath(pathname: string): boolean {
   const path = pathname.split('?')[0] || '/'
   return AUTH_PATH_PREFIXES.some(p => path === p || path.startsWith(`${p}/`))
@@ -27,7 +33,9 @@ function isDevCreativeStudioDemo(pathname: string): boolean {
 
 export function isPublicPath(pathname: string): boolean {
   if (isDevCreativeStudioDemo(pathname)) return true
-  return isAuthPath(pathname) || isPublicAppPath(pathname)
+  const path = pathname.split('?')[0] || '/'
+  const isServerGatedProof = SERVER_GATED_PROOF_PATHS.some(p => path === p)
+  return isServerGatedProof || isAuthPath(pathname) || isPublicAppPath(pathname)
 }
 
 /** Normalize callbackUrl from query string — never return an auth page. */
