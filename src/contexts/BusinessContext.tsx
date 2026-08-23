@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -16,6 +17,7 @@ import {
   DEFAULT_BUSINESS_ID,
   STORAGE_KEY,
   isRouteAllowed,
+  resolveEntityRouteBusiness,
   resolveBusinessId,
 } from '@/lib/businesses'
 import { setApiBusinessId } from '@/lib/api'
@@ -39,6 +41,34 @@ function loadBusinessId(): BusinessId {
   }
 }
 
+function routeBusinessSelector(): string | null {
+  if (typeof window === 'undefined') return null
+  return new URLSearchParams(window.location.search).get('business_id')
+}
+
+function routeHasExactEntityFocus(): boolean {
+  if (typeof window === 'undefined') return false
+  return Boolean(new URLSearchParams(window.location.search).get('focus')?.trim())
+}
+
+function effectiveBusinessId(pathname: string, allowedBusinessIds: readonly BusinessId[]): BusinessId {
+  const stored = loadBusinessId()
+  const allowedStored = allowedBusinessIds.includes(stored)
+    ? stored
+    : (allowedBusinessIds[0] ?? DEFAULT_BUSINESS_ID)
+  const entityRoute = resolveEntityRouteBusiness(
+    pathname,
+    routeBusinessSelector(),
+    allowedStored,
+    allowedBusinessIds,
+    { hasExactEntityFocus: routeHasExactEntityFocus() },
+  )
+  if (entityRoute.kind === 'authorized') return entityRoute.businessId
+  if (pathname.startsWith('/trading') && allowedBusinessIds.includes('ALMA_TRADING')) return 'ALMA_TRADING'
+  if (pathname.startsWith('/digital') && allowedBusinessIds.includes('CREATIVE_DIGITAL_IT')) return 'CREATIVE_DIGITAL_IT'
+  return allowedStored
+}
+
 export function BusinessProvider({
   children,
   allowedBusinessAccess,
@@ -49,24 +79,17 @@ export function BusinessProvider({
 }) {
   const router = useRouter()
   const pathname = usePathname()
-  const [businessId, setBusinessIdState] = useState<BusinessId>(() => loadBusinessId())
-  const [hydrated, setHydrated] = useState(() => typeof window !== 'undefined')
-
   const allowedBusinessIds = useMemo(
     () => parseBusinessAccess(allowedBusinessAccess ?? undefined),
     [allowedBusinessAccess],
   )
+  const [businessId, setBusinessIdState] = useState<BusinessId>(
+    () => effectiveBusinessId(pathname, allowedBusinessIds),
+  )
+  const [hydrated, setHydrated] = useState(() => typeof window !== 'undefined')
 
-  useEffect(() => {
-    const stored = loadBusinessId()
-    const routeBusiness = pathname.startsWith('/trading') && allowedBusinessIds.includes('ALMA_TRADING')
-      ? 'ALMA_TRADING'
-      : pathname.startsWith('/digital') && allowedBusinessIds.includes('CREATIVE_DIGITAL_IT')
-        ? 'CREATIVE_DIGITAL_IT'
-        : null
-    const next = routeBusiness ?? (allowedBusinessIds.includes(stored)
-      ? stored
-      : (allowedBusinessIds[0] ?? DEFAULT_BUSINESS_ID))
+  useLayoutEffect(() => {
+    const next = effectiveBusinessId(pathname, allowedBusinessIds)
     setBusinessIdState(next)
     setApiBusinessId(next)
     try {
@@ -94,10 +117,21 @@ export function BusinessProvider({
 
   useEffect(() => {
     if (!hydrated) return
+    const entityRoute = resolveEntityRouteBusiness(
+      pathname,
+      routeBusinessSelector(),
+      businessId,
+      allowedBusinessIds,
+      { hasExactEntityFocus: routeHasExactEntityFocus() },
+    )
+    if (entityRoute.kind === 'invalid' || entityRoute.kind === 'forbidden') {
+      router.replace(BUSINESSES[businessId].homePath)
+      return
+    }
     if (!isRouteAllowed(pathname, businessId)) {
       router.replace(BUSINESSES[businessId].homePath)
     }
-  }, [hydrated, pathname, businessId, router])
+  }, [hydrated, pathname, businessId, allowedBusinessIds, router])
 
   const business = BUSINESSES[businessId]
 

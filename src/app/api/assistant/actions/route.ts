@@ -26,10 +26,36 @@ import {
   renderSelectionForAction,
 } from '@/agent/lib/image-config-contract'
 import { readKv } from '@/lib/creative-studio/taste'
+import { exposedAgentReferences } from '@/agent/lib/references/flags'
+import { filterAgentReferencesForContext } from '@/agent/lib/references/validator'
+import type { BusinessId } from '@/lib/businesses'
 
 export const runtime = 'nodejs'
 
 const readImageKv = (key: string) => readKv(key).catch(() => null)
+
+function actionBusinessId(value: unknown): BusinessId | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = (value as Record<string, unknown>).businessId
+    ?? (value as Record<string, unknown>).business_id
+  return raw === 'ALMA_LIFESTYLE' || raw === 'CREATIVE_DIGITAL_IT' || raw === 'ALMA_TRADING'
+    ? raw
+    : undefined
+}
+
+function exposedActionResult(value: unknown, payload: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const record = value as Record<string, unknown>
+  const { references, ...rest } = record
+  const canonical = Array.isArray(references)
+    ? filterAgentReferencesForContext(references, {
+        businessId: actionBusinessId(payload),
+        roles: ['SUPER_ADMIN'],
+      })
+    : []
+  const visible = exposedAgentReferences(canonical)
+  return visible.length ? { ...rest, references: visible } : rest
+}
 
 function isMissingImageProjectionColumn(error: unknown): boolean {
   const code = (error as { code?: unknown })?.code
@@ -164,7 +190,7 @@ export async function GET(req: NextRequest) {
     imageConfig?: unknown
     imageConfigRevision?: number | null
   } & Record<string, unknown>) => {
-    const { payload, imageModel, imageQuote, imageConfig, imageConfigRevision, ...r } = row
+    const { payload, result, imageModel, imageQuote, imageConfig, imageConfigRevision, ...r } = row
     const renderSelection = r.type === 'image_gen' && imageProjectionAvailable
       ? renderSelectionForAction({
           type: r.type,
@@ -178,6 +204,7 @@ export async function GET(req: NextRequest) {
       : null
     return {
       ...r,
+      result: exposedActionResult(result, payload),
       expired: r.status === 'pending' && isPendingActionExpired(r.createdAt, r.type),
       ...(r.type === 'image_gen' && imageProjectionAvailable
         ? { imageModelSelection: selectionForImageAction({

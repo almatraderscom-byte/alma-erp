@@ -9,6 +9,7 @@ import type { OrderStatus } from '@/types'
 import type { CreateProductInput, SupplierImportCommitResponse } from '@/lib/api'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useBusiness } from '@/contexts/BusinessContext'
+import type { BusinessId } from '@/lib/businesses'
 
 // ── READ HOOKS ────────────────────────────────────────────────────────────
 
@@ -50,11 +51,12 @@ export function useOrders(filters?: {
  * No polling — only fetches when id changes.
  * Skipped entirely when id is null.
  */
-export function useOrder(id: string | null) {
+export function useOrder(id: string | null, scopedBusinessId?: BusinessId) {
   const { businessId } = useBusiness()
+  const targetBusinessId = scopedBusinessId ?? businessId
   return useQuery(
-    () => id ? api.orders.get(id) : Promise.resolve(null),
-    [businessId, id],
+    () => id ? api.orders.get(id, targetBusinessId) : Promise.resolve(null),
+    [targetBusinessId, id],
     { enabled: id !== null }
   )
 }

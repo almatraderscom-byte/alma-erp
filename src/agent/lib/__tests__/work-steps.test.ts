@@ -1,4 +1,5 @@
 import Ajv2020 from 'ajv/dist/2020'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import agentEventSchema from '../../protocol/agent-event.schema.json'
 import {
@@ -32,6 +33,13 @@ function planRow(overrides: Partial<TrackerPlanRow> = {}): TrackerPlanRow {
 }
 
 describe('work_steps_snapshot projector', () => {
+  it('casts the advisory lock result so Prisma never deserializes PostgreSQL void', () => {
+    const source = readFileSync(new URL('../work-steps.ts', import.meta.url), 'utf8')
+    expect(source).toContain(
+      'pg_advisory_xact_lock(hashtext(${planId}))::text AS lock_token',
+    )
+  })
+
   it('projects durable plan rows and validates against the canonical schema', () => {
     const snapshot = projectWorkSteps({
       plan: planRow(), currentTurnId: 'turn-1', revision: 1, blockedBy: null, live: true, now: NOW,

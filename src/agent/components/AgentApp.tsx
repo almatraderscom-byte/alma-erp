@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage, type TimelineEntry } from './AgentThread'
+import { markTimelinePreamble, supersedeLatestTimelineDraft } from './agent-timeline'
 import AgentComposer, { type PendingFile } from './AgentComposer'
 import AgentLiveDock from './AgentLiveDock'
 import { DEFAULT_CHAT_MODE, normalizeChatMode, type ChatMode } from '@/agent/lib/chat-mode'
@@ -21,6 +22,7 @@ import { cn } from '@/lib/utils'
 import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { type PlanDrivePanelData, type PlanDriveAction } from '@/agent/components/monitor/PlanDriveTimeline'
 import { selectSettledProse } from '@/agent/lib/presentation/build-presentation'
+import type { AgentReferenceV1 } from '@/agent/lib/references/types'
 import {
   addEntry as outboxAdd,
   defaultOutboxStorage,
@@ -110,6 +112,7 @@ type MessageRow = {
   thinkingMs?: number
   /** Ordered reasoning↔tool timeline — drives the unified stream after reload. */
   timeline?: TimelineEntry[]
+  references?: AgentReferenceV1[]
   createdAt?: string
 }
 
@@ -188,6 +191,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       durationMs: r.durationMs ?? undefined,
       apiRounds: r.apiRounds ?? undefined,
       roundCostsUsd: r.roundCostsUsd ?? undefined,
+      references: r.references,
       pendingActions: confirmBlocks.length
         ? confirmBlocks.map((cb) => ({
             id: cb.pendingActionId as string,
@@ -1414,6 +1418,16 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                 }
               : m
           ))
+        } else if (evt.type === 'preamble') {
+          // The text delta arrives first; flush it, then mark the exact timeline
+          // entry as the speak-first lead. Position is not identity: on turns
+          // without a preamble, entry zero is an ordinary replaceable draft.
+          flushStreamBuffer()
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId
+              ? { ...m, timeline: markTimelinePreamble(m.timeline, String(evt.text ?? '')) }
+              : m,
+          ))
         } else if (evt.type === 'verification_retry') {
           // The honesty guard caught a draft that must be rewritten. Keep it in
           // the raw audit timeline as superseded, but remove it from the visible
@@ -1428,19 +1442,21 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           setStreamStatus('🔁 নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…')
           setMessages((prev) => prev.map((m) => {
             if (m.id !== assistantMsgId) return m
-            const timeline = [...(m.timeline ?? [])]
-            // Never supersede the LEADING first line — it is what Boss already
-            // read before the work started, not a draft the rewrite replaces.
-            for (let i = timeline.length - 1; i >= 1; i--) {
-              const e = timeline[i]
-              if (e.t === 'text') { timeline[i] = { ...e, state: 'superseded' }; break }
-            }
+            const timeline = supersedeLatestTimelineDraft(m.timeline)
             timeline.push({
               t: 'verify',
               attempt: typeof evt.attempt === 'number' ? evt.attempt : 1,
               max: typeof evt.maxAttempts === 'number' ? evt.maxAttempts : 1,
             })
             return { ...m, text: '', toolActivity: [], selfCorrected: true, timeline }
+          }))
+        } else if (evt.type === 'references') {
+          const incoming = Array.isArray(evt.references) ? evt.references as AgentReferenceV1[] : []
+          setMessages((prev) => prev.map((m) => {
+            if (m.id !== assistantMsgId) return m
+            // Server projections are authoritative, including [] after a
+            // rollout kill-switch. Merging would retain stale ON-era links.
+            return { ...m, references: incoming }
           }))
         } else if (evt.type === 'done') {
           gotStreamDone = true
@@ -1471,6 +1487,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   durationMs: evt.durationMs as number | undefined,
                   apiRounds: (evt.apiRounds as number | undefined) ?? undefined,
                   roundCostsUsd: (evt.roundCostsUsd as number[] | undefined) ?? undefined,
+                  references: Array.isArray(evt.references)
+                    ? evt.references as AgentReferenceV1[]
+                    : m.references,
                 }
               : m
           ))

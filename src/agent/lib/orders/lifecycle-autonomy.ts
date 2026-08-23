@@ -32,6 +32,12 @@ import {
 
 export type LifecycleActionKind = 'staff_push' | 'fraud_flag' | 'risk_alert' | 'order_confirm'
 
+export interface LifecycleOrderEntity {
+  /** Exact ERP database identity accepted by /orders/:id. */
+  id: string
+  orderNumber?: string
+}
+
 export interface LifecycleAction {
   kind: LifecycleActionKind
   category: AutonomyCategory
@@ -42,12 +48,16 @@ export interface LifecycleAction {
   summary: string
   /** Order refs involved (order number / id). */
   orders?: string[]
+  /** Exact ERP identities corresponding to `orders`; safe for navigation. */
+  orderEntities?: LifecycleOrderEntity[]
   /** Agent confidence 0..1 for this action (fraud heuristics are not certain). */
   confidence?: number
 }
 
 export interface FakeOrderSignal {
   ref: string
+  /** Detection starts from an AgentOrder, so its exact DB identity is known. */
+  orderEntity?: LifecycleOrderEntity
   customerName: string | null
   reasons: string[]
 }
@@ -82,7 +92,15 @@ export function detectFakeOrderSignals(orders: AgentOrder[]): FakeOrderSignal[] 
     if (!isDeliverablePhone(o.customerPhone)) reasons.push('ফোন নম্বর নেই/ভুল — ডেলিভারি করা যাবে না')
     if ((o.itemCount ?? 0) === 0 || o.totalAmount === 0) reasons.push('আইটেম/টাকা শূন্য')
     if (reasons.length) {
-      out.push({ ref: o.orderNumber?.trim() || o.id, customerName: o.customerName, reasons })
+      out.push({
+        ref: o.orderNumber?.trim() || o.id,
+        orderEntity: {
+          id: o.id,
+          ...(o.orderNumber?.trim() ? { orderNumber: o.orderNumber.trim() } : {}),
+        },
+        customerName: o.customerName,
+        reasons,
+      })
     }
   }
   return out
@@ -107,6 +125,7 @@ export function buildLifecycleActions(input: {
           severity: issue.severity,
           summary: `স্টাফকে ফলো-আপ দরকার: ${issue.detail}`,
           orders: issue.orders,
+          orderEntities: issue.orderEntities,
           confidence: 0.9,
         })
         break
@@ -119,6 +138,7 @@ export function buildLifecycleActions(input: {
           severity: issue.severity,
           summary: `কনফার্ম করার আগে যাচাই দরকার: ${issue.detail}`,
           orders: issue.orders,
+          orderEntities: issue.orderEntities,
           confidence: 0.7,
         })
         break
@@ -144,6 +164,9 @@ export function buildLifecycleActions(input: {
       severity: 'high',
       summary: `${input.fakeSignals.length}টি সম্ভাব্য ভুয়া/সমস্যাযুক্ত অর্ডার — যাচাই করা দরকার`,
       orders: input.fakeSignals.map((s) => s.ref),
+      orderEntities: input.fakeSignals
+        .map((signal) => signal.orderEntity)
+        .filter((entity): entity is LifecycleOrderEntity => entity != null),
       confidence: 0.75,
     })
   }

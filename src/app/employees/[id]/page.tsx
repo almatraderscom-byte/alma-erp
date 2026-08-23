@@ -1,5 +1,5 @@
 'use client'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
@@ -17,7 +17,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { SalarySlipToolbar } from '@/components/finance/SalarySlipToolbar'
 import type { SalarySlipModel } from '@/components/pdf/SalarySlipDocument'
 import type { EmployeeWalletResponse } from '@/types/payroll-wallet'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import toast from 'react-hot-toast'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
@@ -30,6 +30,7 @@ import { api, APIError } from '@/lib/api'
 import { parseSalaryCorrectionPayload } from '@/types/salary-correction'
 import { MOTION } from '@/lib/motion'
 import type { HRAddPayrollResponse } from '@/types/hr'
+import { resolveEntityRouteBusiness } from '@/lib/businesses'
 
 type LegacyPayTxType = 'deposit' | 'advance' | 'salary_payment' | 'adjustment'
 
@@ -130,19 +131,46 @@ type EmployeeAttendanceResponse = {
 }
 
 export default function EmployeeDetailPage() {
+  return (
+    <Suspense fallback={null}>
+      <EmployeeDetailPageContent />
+    </Suspense>
+  )
+}
+
+function EmployeeDetailPageContent() {
   const { id } = useParams<{ id: string }>()
+  const searchParams = useSearchParams()
   const decoded = decodeURIComponent(id || '')
-  const { data: list, loading: listLoading, refetch: refetchEmployees } = useHREmployees()
+  const { business, businessId, allowedBusinessIds } = useBusiness()
+  const entityRoute = resolveEntityRouteBusiness(
+    `/employees/${encodeURIComponent(decoded)}`,
+    searchParams.get('business_id'),
+    businessId,
+    allowedBusinessIds,
+  )
+  const employeeBusinessId = entityRoute.kind === 'authorized'
+    ? entityRoute.businessId
+    : entityRoute.kind === 'legacy'
+      ? businessId
+      : null
+  const scopedBusinessId = employeeBusinessId ?? businessId
+  const { data: list, loading: listLoading, refetch: refetchEmployees } = useHREmployees({
+    businessId: scopedBusinessId,
+    enabled: employeeBusinessId !== null,
+  })
   const { data: session } = useSession()
   const actorRole = normalizeAlmaRole(session?.user?.role)
   const canEditSalary = actorRole === 'SUPER_ADMIN' || actorRole === 'ADMIN' || actorRole === 'HR'
   const canWriteWallet = isWalletAdmin(actorRole)
   const canReverseSalary = actorRole === 'SUPER_ADMIN' || actorRole === 'HR'
   const canResetAttendance = actorRole === 'SUPER_ADMIN'
-  const { data: txs, loading, refetch } = useHRPayrollForEmployee(decoded || null)
+  const { data: txs, loading, refetch } = useHRPayrollForEmployee(
+    employeeBusinessId ? decoded || null : null,
+    scopedBusinessId,
+  )
   const { mutate: postPay, loading: paying } = useHrAddPayroll()
   const { branding } = useBranding()
-  const { business } = useBusiness()
   const [openPay, setOpenPay] = useState(false)
   const [payTxType, setPayTxType] = useState<LegacyPayTxType>('deposit')
   const [payConfirm, setPayConfirm] = useState<PayrollPayPayload | null>(null)
@@ -216,15 +244,20 @@ export default function EmployeeDetailPage() {
     : null
 
   const loadWallet = useCallback(async (signal?: { cancelled: boolean }) => {
+      if (!employeeBusinessId || !decoded) {
+        setWallet(null)
+        setWalletLoading(false)
+        return
+      }
       setWalletLoading(true)
       try {
-        const res = await fetch(`/api/payroll/wallet/${encodeURIComponent(decoded)}?business_id=${business.id}`, { cache: 'no-store' })
+        const res = await fetch(`/api/payroll/wallet/${encodeURIComponent(decoded)}?business_id=${employeeBusinessId}`, { cache: 'no-store' })
         const j = await res.json().catch(() => ({}))
         if (!signal?.cancelled) setWallet(res.ok ? (j as EmployeeWalletResponse) : null)
       } finally {
         if (!signal?.cancelled) setWalletLoading(false)
       }
-  }, [business.id, decoded])
+  }, [employeeBusinessId, decoded])
 
   useEffect(() => {
     const signal = { cancelled: false }
@@ -233,10 +266,15 @@ export default function EmployeeDetailPage() {
   }, [loadWallet])
 
   const loadAttendance = useCallback(async (signal?: { cancelled: boolean }) => {
+    if (!employeeBusinessId || !decoded) {
+      setAttendance(null)
+      setAttendanceLoading(false)
+      return
+    }
     setAttendanceLoading(true)
     try {
       const result = await safeFetchJson<EmployeeAttendanceResponse>(
-        `/api/attendance?business_id=${business.id}&employee_id=${encodeURIComponent(decoded)}`,
+        `/api/attendance?business_id=${employeeBusinessId}&employee_id=${encodeURIComponent(decoded)}`,
         { cache: 'no-store' },
       )
       if (!signal?.cancelled) {
@@ -249,7 +287,7 @@ export default function EmployeeDetailPage() {
     } finally {
       if (!signal?.cancelled) setAttendanceLoading(false)
     }
-  }, [business.id, decoded])
+  }, [employeeBusinessId, decoded])
 
   useEffect(() => {
     const signal = { cancelled: false }
@@ -258,7 +296,7 @@ export default function EmployeeDetailPage() {
   }, [loadAttendance])
 
   const loadPendingCorrections = useCallback(async (signal?: { cancelled: boolean }) => {
-    if (!canWriteWallet || !decoded) return
+    if (!canWriteWallet || !decoded || !employeeBusinessId) return
     setPendingCorrectionsLoading(true)
     try {
       const result = await safeFetchJson<{ approvals: PendingSalaryCorrectionRow[] }>(
@@ -280,7 +318,7 @@ export default function EmployeeDetailPage() {
     } finally {
       if (!signal?.cancelled) setPendingCorrectionsLoading(false)
     }
-  }, [canWriteWallet, decoded])
+  }, [canWriteWallet, decoded, employeeBusinessId])
 
   useEffect(() => {
     const signal = { cancelled: false }
@@ -308,7 +346,7 @@ export default function EmployeeDetailPage() {
       const res = await fetch('/api/payroll/wallet/entries/reverse-accrual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ business_id: business.id, accrual_entry_id: entryId }),
+        body: JSON.stringify({ business_id: scopedBusinessId, accrual_entry_id: entryId }),
       })
       const j = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(j.error || res.statusText)
@@ -337,7 +375,7 @@ export default function EmployeeDetailPage() {
       const res = await fetch('/api/payroll/wallet/advance-recovery', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employee_id: decoded, business_id: business.id }),
+        body: JSON.stringify({ employee_id: decoded, business_id: scopedBusinessId }),
       })
       const j = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(j.error || res.statusText)
@@ -444,7 +482,7 @@ export default function EmployeeDetailPage() {
       await api.hr.requestSalaryCorrection({
         accrual_entry_id: selectedAccrual.id,
         employee_id: employee.emp_id,
-        business_id: business.id,
+        business_id: scopedBusinessId,
         period_ym: periodYm,
         proposed_amount: proposedAmount,
         reason,
@@ -534,7 +572,7 @@ export default function EmployeeDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           amount: newSalary,
-          businessId: business.id,
+          businessId: scopedBusinessId,
           effectiveDate,
           reason: reason || undefined,
         }),

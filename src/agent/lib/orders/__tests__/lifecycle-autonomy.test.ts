@@ -54,6 +54,7 @@ describe('detectFakeOrderSignals', () => {
     const out = detectFakeOrderSignals([order({ customerName: 'test order' })])
     expect(out).toHaveLength(1)
     expect(out[0].reasons.some((r) => r.includes('টেস্ট'))).toBe(true)
+    expect(out[0].orderEntity).toEqual({ id: 'id-1', orderNumber: 'A-1' })
   })
 
   it('flags a Bangla টেস্ট / ভুয়া name', () => {
@@ -100,6 +101,20 @@ describe('buildLifecycleActions', () => {
     }
   })
 
+  it('propagates exact issue identities separately from display refs', () => {
+    const [action] = buildLifecycleActions({
+      issues: [issue({
+        type: 'stuck_pending',
+        orders: ['ALM-9081'],
+        orderEntities: [{ id: 'db-order-1', orderNumber: 'ALM-9081' }],
+      })],
+      fakeSignals: [],
+    })
+
+    expect(action.orders).toEqual(['ALM-9081'])
+    expect(action.orderEntities).toEqual([{ id: 'db-order-1', orderNumber: 'ALM-9081' }])
+  })
+
   it('maps mismatch to an IRREVERSIBLE order_confirm (money path)', () => {
     const [a] = buildLifecycleActions({ issues: [issue({ type: 'mismatch' })], fakeSignals: [] })
     expect(a.kind).toBe('order_confirm')
@@ -127,6 +142,20 @@ describe('buildLifecycleActions', () => {
     expect(fraud).toHaveLength(1)
     expect(fraud[0].orders).toEqual(['A-1', 'A-2'])
     expect(fraud[0].severity).toBe('high')
+  })
+
+  it('propagates exact fake-order identities when detection supplied them', () => {
+    const [fraud] = buildLifecycleActions({
+      issues: [],
+      fakeSignals: [{
+        ref: 'A-1',
+        orderEntity: { id: 'db-order-1', orderNumber: 'A-1' },
+        customerName: 'fake',
+        reasons: ['x'],
+      }],
+    })
+
+    expect(fraud.orderEntities).toEqual([{ id: 'db-order-1', orderNumber: 'A-1' }])
   })
 
   it('emits no fraud_flag when there are no fake signals', () => {

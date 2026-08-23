@@ -43,6 +43,7 @@ import {
 } from '@/agent/lib/mac-agent/bus'
 import { classifyCommand } from '@/agent/lib/mac-agent/policy'
 import { classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
+import { exposedAgentReferences } from '@/agent/lib/references/flags'
 
 export const runtime = 'nodejs'
 // Delegation approval runs the worker sub-agent synchronously (an OpenRouter
@@ -75,6 +76,7 @@ async function appendConversationNote(
   db: any,
   action: { conversationId?: string | null; payload: unknown },
   text: string,
+  usage?: Record<string, unknown>,
 ) {
   const conversationId = resolveConversationId(action)
   if (!conversationId) return
@@ -86,6 +88,7 @@ async function appendConversationNote(
       tokensIn: 0,
       tokensOut: 0,
       costUsd: 0,
+      ...(usage ? { usage } : {}),
     },
   })
   await prisma.agentConversation.update({
@@ -340,12 +343,30 @@ async function runApprove(
       const note = result.success
         ? `🤝 ${result.roleLabel} (${result.modelLabel}) সম্পন্ন করেছে:\n\n${result.summary}`
         : `⚠️ ${role} worker কাজটি করতে পারেনি: ${result.error ?? 'unknown'}`
-      await appendConversationNote(db, action, note)
+      await appendConversationNote(db, action, note, result.success ? {
+        entityLinks: result.entityLinks,
+        references: result.references,
+      } : undefined)
       await db.agentPendingAction.update({
         where: { id: actionId },
-        data: { status: 'executed', result: { summary: result.summary, model: result.modelId, success: result.success } },
+        data: {
+          status: 'executed',
+          result: {
+            summary: result.summary,
+            model: result.modelId,
+            success: result.success,
+            entityLinks: result.entityLinks,
+            references: result.references,
+          },
+        },
       })
-      return Response.json({ success: true, summary: result.summary, model: result.modelId })
+      return Response.json({
+        success: true,
+        summary: result.summary,
+        model: result.modelId,
+        entityLinks: result.entityLinks,
+        references: exposedAgentReferences(result.references),
+      })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       await appendConversationNote(db, action, `⚠️ Worker চালাতে সমস্যা: ${msg}`)

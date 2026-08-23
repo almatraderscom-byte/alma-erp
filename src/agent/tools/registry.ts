@@ -14,6 +14,15 @@ import {
 } from './tool-contract'
 import { TOOL_CLASSIFICATION } from './capability-classification'
 import {
+  enrichToolResultWithEntityLinks,
+  type AgentEntityLink,
+} from '@/agent/lib/entity-links'
+import {
+  enrichToolResultWithReferences,
+  referenceContextFromServerContext,
+} from '@/agent/lib/references/extractors'
+import type { AgentReferenceV1 } from '@/agent/lib/references/types'
+import {
   isToolAllowedForOwnerTurn,
   type OwnerTurnAuthorization,
 } from '@/agent/lib/turn-authorization'
@@ -109,6 +118,10 @@ export interface ToolResult {
   success: boolean
   data?: unknown
   error?: string
+  /** Verified internal destinations derived from this tool's allowlisted output. */
+  entityLinks?: AgentEntityLink[]
+  /** Additive provider-neutral verified destinations; never model-authored. */
+  references?: AgentReferenceV1[]
   /**
    * Phase 2 result envelope — stable machine error code (see tool-contract.ts
    * TOOL_ERROR_CODES). Handlers may set it themselves; the executor fills it
@@ -549,7 +562,7 @@ export async function executePersonalTool(
   if (!tool) {
     return { success: false, error: `Unknown personal tool: ${name}`, errorCode: 'unknown_tool', retryable: false }
   }
-  return runRegisteredTool(tool, input, serverContext, {
+  const result = await runRegisteredTool(tool, input, serverContext, {
     conversationId: serverContext.conversationId as string | undefined,
     businessId: (serverContext.businessId as string | undefined) ?? 'ALMA_LIFESTYLE',
     turnId: serverContext.turnId as string | undefined,
@@ -560,6 +573,7 @@ export async function executePersonalTool(
     permissionMode: serverContext.permissionMode as string | undefined,
     elevationGrant: serverContext.elevationGrant as ToolRunContext['elevationGrant'],
   })
+  return enrichToolResultWithReferences(name, result, referenceContextFromServerContext(serverContext))
 }
 
 export const CORE_AGENT_TOOLS: AgentTool[] = [
@@ -618,7 +632,6 @@ export const TRADING_TOOLS: AgentTool[] = [
   ...AUTONOMY_TOOLS,
   ...HEARTBEAT_TOOLS,
   ...CS_AUTONOMY_TOOLS,
-  ...ORDER_AUTONOMY_TOOLS,
   ...FINANCE_AUTONOMY_TOOLS,
   ...BILLS_TOOLS,
   ...IMPORTANT_DATE_TOOLS,
@@ -1292,7 +1305,7 @@ export async function executeTool(
     }
     tool = anyTool
   }
-  return runRegisteredTool(tool, input, serverContext, {
+  const result = await runRegisteredTool(tool, input, serverContext, {
     conversationId,
     businessId,
     turnId,
@@ -1305,6 +1318,18 @@ export async function executeTool(
     confidence: typeof serverContext.confidence === 'number' ? serverContext.confidence : undefined,
     capabilityRevoked: serverContext.capabilityRevoked === true,
     accountScopeOk: serverContext.accountScopeOk === false ? false : undefined,
+  })
+  // Owner-agent result enrichment lives at executeTool (not runRegisteredTool):
+  // the latter is also used by the customer-facing CS registry, which must never
+  // receive private internal navigation metadata.
+  const referenceContext = referenceContextFromServerContext({ ...serverContext, businessId })
+  const withReferences = enrichToolResultWithReferences(name, result, referenceContext)
+  return enrichToolResultWithEntityLinks(name, withReferences, {
+    businessId: businessId === 'ALMA_TRADING'
+      ? 'ALMA_TRADING'
+      : businessId === 'CREATIVE_DIGITAL_IT'
+        ? 'CREATIVE_DIGITAL_IT'
+        : 'ALMA_LIFESTYLE',
   })
 }
 

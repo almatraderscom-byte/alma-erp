@@ -321,7 +321,12 @@ export async function syncPlanTracker(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
     return await db.$transaction(async (tx: typeof db) => {
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${planId}))`
+      // `pg_advisory_xact_lock` returns PostgreSQL `void`. Prisma attempts to
+      // deserialize every `$queryRaw` column and rejects `void` with P2010,
+      // which used to make every live plan snapshot fail open and disappear
+      // before reaching the clients. Casting the result keeps the same
+      // transaction-scoped lock while giving Prisma a supported wire type.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${planId}))::text AS lock_token`
       const plan: TrackerPlanRow | null = await tx.agentPlan.findUnique({
         where: { id: planId },
         select: PLAN_SELECT,

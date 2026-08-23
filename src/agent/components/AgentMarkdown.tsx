@@ -1,16 +1,106 @@
 'use client'
 
 import React, { useCallback } from 'react'
+import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
 import { stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
+import { classifyAgentMarkdownHref } from '@/agent/lib/markdown-link-router'
 import { impactLight } from '@/lib/haptics'
+import type { AgentReferenceV1 } from '@/agent/lib/references/types'
 
 interface AgentMarkdownProps {
   content: string
   className?: string
   onArtifactDetected?: (content: string, type: 'code' | 'markdown') => void
+  references?: AgentReferenceV1[]
+  onArtifactOpen?: (id: string) => void
+}
+
+const MARKDOWN_LINK_CLASS = 'text-[#E07A5F] underline underline-offset-2 hover:text-[#81B29A] [overflow-wrap:anywhere]'
+const subscribeToStableOrigin = () => () => {}
+
+function useCurrentOrigin(): string | undefined {
+  return React.useSyncExternalStore(
+    subscribeToStableOrigin,
+    () => window.location.origin,
+    () => undefined,
+  )
+}
+
+function referenceHref(reference: AgentReferenceV1): string {
+  if (reference.destination.type === 'internal_section') return reference.destination.webPath
+  if (reference.destination.type === 'internal_entity') return reference.destination.webPath
+  if (reference.destination.type === 'artifact_report') return reference.destination.apiPath
+  return reference.destination.url
+}
+
+function ExternalReferenceBadge({ reference }: { reference: AgentReferenceV1 }) {
+  if (reference.destination.type !== 'external_object'
+    && reference.destination.type !== 'external_source'
+    && reference.destination.type !== 'external_media') return null
+  const provider = reference.display?.provider ?? reference.destination.provider
+  const domain = reference.display?.domain ?? reference.destination.hostname
+  return (
+    <span className="ml-1 whitespace-nowrap text-[10px] font-medium no-underline opacity-70">
+      [{provider} · {domain}]
+    </span>
+  )
+}
+
+function AgentMarkdownLink({
+  href,
+  children,
+  reference,
+  onArtifactOpen,
+}: {
+  href?: string
+  children: React.ReactNode
+  reference?: AgentReferenceV1
+  onArtifactOpen?: (id: string) => void
+}) {
+  // Root-relative links classify identically during SSR and hydration. The exact
+  // browser origin is learned after mount only so an absolute same-origin link can
+  // also become an in-app navigation without introducing a hydration mismatch.
+  const currentOrigin = useCurrentOrigin()
+
+  const destination = React.useMemo(
+    () => reference && href === referenceHref(reference)
+      ? classifyAgentMarkdownHref(href, currentOrigin)
+      : { kind: 'invalid' as const },
+    [href, currentOrigin, reference],
+  )
+
+  // A readable label is harmless; clickability requires a structured reference
+  // attached to this exact message. A plausible model-authored URL/path is inert.
+  if (!reference) return <span>{children}</span>
+  if (reference.destination.type === 'artifact_report') {
+    const artifactId = reference.destination.artifactId
+    return (
+      <button
+        type="button"
+        className={MARKDOWN_LINK_CLASS}
+        onClick={() => onArtifactOpen?.(artifactId)}
+      >
+        {children}
+      </button>
+    )
+  }
+
+  if (destination.kind === 'internal') {
+    return <Link href={destination.href} prefetch={false} className={MARKDOWN_LINK_CLASS}>{children}</Link>
+  }
+  if (destination.kind === 'external') {
+    return (
+      <a href={destination.href} target="_blank" rel="noopener noreferrer" className={MARKDOWN_LINK_CLASS}>
+        {children}<ExternalReferenceBadge reference={reference} />
+      </a>
+    )
+  }
+  // Keep the label readable, but never create a clickable element for an unsafe
+  // or malformed destination.
+  return <span>{children}</span>
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -41,7 +131,18 @@ function CopyButton({ text }: { text: string }) {
  * fall back to opening the image in a new tab so the owner can long-press / right-click
  * save. Best-effort, never throws into render.
  */
-function ImageWithDownload({ src, alt }: { src?: string; alt?: string }) {
+function ImageWithDownload({
+  src,
+  alt,
+  provider,
+  domain,
+}: {
+  src?: string
+  alt?: string
+  provider: string
+  domain: string
+}) {
+  const [loaded, setLoaded] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   // Click = full-screen preview (owner ask 2026-07-15: "image e click korle boro
   // hoy na, direct download lekha thake") — download stays as the corner button.
@@ -70,6 +171,23 @@ function ImageWithDownload({ src, alt }: { src?: string; alt?: string }) {
     }
   }, [src, busy])
   if (!src) return null
+  // Verification controls what may be offered. Consent controls whether the
+  // browser contacts that remote host at all (tracking pixels included).
+  if (!loaded) {
+    return (
+      <span className="my-3 block rounded-xl border border-border-subtle bg-bg-1 p-4">
+        <span className="block text-sm text-cream">{alt || 'ছবি'}</span>
+        <span className="mt-1 block text-[10px] font-medium text-muted-hi">{provider} · {domain}</span>
+        <button
+          type="button"
+          onClick={() => setLoaded(true)}
+          className="mt-3 rounded-full border border-[#E07A5F]/30 bg-[#E07A5F]/10 px-3 py-1.5 text-xs font-semibold text-[#E07A5F]"
+        >
+          ছবি লোড করুন
+        </button>
+      </span>
+    )
+  }
   return (
     <span className="group relative my-3 block overflow-hidden rounded-xl border border-border-subtle bg-bg-1">
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -108,13 +226,18 @@ function ImageWithDownload({ src, alt }: { src?: string; alt?: string }) {
   )
 }
 
-function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
+function AgentMarkdownInner({ content, className, references, onArtifactOpen }: AgentMarkdownProps) {
   // The server strips typed tool calls when the ROUND ends — which is too late
   // for the person watching it stream. Live on 2026-07-28 the owner read
   // `{"type": "tool_call", …}` as it arrived, and it vanished only afterwards.
   // Same repair, applied where the text is drawn, so a delta never shows machine
   // syntax even for the seconds before the round closes.
   const safe = React.useMemo(() => stripToolCallMarkup(content), [content])
+  const referencesByHref = React.useMemo(() => {
+    const map = new Map<string, AgentReferenceV1>()
+    for (const reference of references ?? []) map.set(referenceHref(reference), reference)
+    return map
+  }, [references])
   return (
     <div className={cn('prose-agent select-text text-cream break-words [overflow-wrap:anywhere]', className)}>
       <ReactMarkdown
@@ -204,14 +327,35 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
           hr() { return <hr className="my-4 border-border-subtle" /> },
           a({ href, children }) {
             return (
-              <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#E07A5F] underline underline-offset-2 hover:text-[#81B29A] [overflow-wrap:anywhere]">
+              <AgentMarkdownLink
+                href={href}
+                reference={href ? referencesByHref.get(href) : undefined}
+                onArtifactOpen={onArtifactOpen}
+              >
                 {children}
-              </a>
+              </AgentMarkdownLink>
             )
           },
           strong({ children }) { return <strong className="font-bold text-cream">{children}</strong> },
           em({ children }) { return <em className="italic text-muted-hi">{children}</em> },
-          img({ src, alt }) { return <ImageWithDownload src={typeof src === 'string' ? src : undefined} alt={typeof alt === 'string' ? alt : undefined} /> },
+          img({ src, alt }) {
+            const value = typeof src === 'string' ? src : undefined
+            const reference = value ? referencesByHref.get(value) : undefined
+            if (!reference || reference.kind !== 'external_media'
+              || reference.purpose !== 'media'
+              || reference.destination.type !== 'external_media'
+              || !reference.destination.mediaType?.toLowerCase().startsWith('image/')) {
+              return <span className="text-muted-hi">{typeof alt === 'string' ? alt : 'ছবি'}</span>
+            }
+            return (
+              <ImageWithDownload
+                src={value}
+                alt={typeof alt === 'string' ? alt : undefined}
+                provider={reference.destination.provider}
+                domain={reference.destination.hostname}
+              />
+            )
+          },
         }}
       >
         {safe}
@@ -225,7 +369,10 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
  * markdown on every text_delta. ~10x render reduction during streaming.
  */
 const AgentMarkdown = React.memo(AgentMarkdownInner, (prev, next) =>
-  prev.content === next.content && prev.className === next.className,
+  prev.content === next.content
+    && prev.className === next.className
+    && prev.references === next.references
+    && prev.onArtifactOpen === next.onArtifactOpen,
 )
 
 export default AgentMarkdown

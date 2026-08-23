@@ -96,7 +96,7 @@ export type TimelineEntry =
   | { t: 'think'; text: string }
   /** `superseded`: verification rewrote this draft. It remains audit data and is
    *  never rendered as a separate owner-facing reply. */
-  | { t: 'text'; text: string; state?: 'superseded' }
+  | { t: 'text'; text: string; state?: 'superseded'; lead?: true }
   /** The honesty guard re-checked the draft — rendered as activity, not prose. */
   | { t: 'verify'; attempt?: number; max?: number }
   | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; live?: boolean; id?: string; shot?: string }
@@ -106,6 +106,8 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   text: string
+  /** Server-minted destinations authorized for this exact message. */
+  references?: import('@/agent/lib/references/types').AgentReferenceV1[]
   files?: Array<{ previewUrl: string; mediaType: string; path?: string }>
   /**
    * Only set on a message Boss typed WHILE a turn was running.
@@ -887,7 +889,7 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
             key={i}
             className="mb-3 text-[15px] leading-[1.7] text-cream select-text break-words [overflow-wrap:anywhere]"
           >
-            <AgentMarkdown content={seg.text} />
+            <AgentMarkdown content={seg.text} references={msg.references} onArtifactOpen={onOpenFile} />
             {msg.streaming && i === lastIdx && (
               <motion.span
                 className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] rounded-full bg-[#E07A5F]/60"
@@ -1722,7 +1724,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     <div className="text-[15px] leading-[1.7] text-cream select-text break-words [overflow-wrap:anywhere]">
                       {msg.streaming && msg.text ? (
                         <div className="relative alma-stream-reveal">
-                          <AgentMarkdown content={msg.text} />
+                          <AgentMarkdown content={msg.text} references={msg.references} onArtifactOpen={(id) => onArtifactOpen(id)} />
                           <motion.span
                             className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] rounded-full bg-[#E07A5F]/60"
                             animate={{ opacity: [1, 0, 1] }}
@@ -1732,7 +1734,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         </div>
                       ) : (
                         <CollapsibleMessage collapsedMaxPx={360}>
-                          <AgentMarkdown content={msg.text} />
+                          <AgentMarkdown content={msg.text} references={msg.references} onArtifactOpen={(id) => onArtifactOpen(id)} />
                         </CollapsibleMessage>
                       )}
                     </div>

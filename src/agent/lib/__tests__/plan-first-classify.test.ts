@@ -20,6 +20,12 @@ describe('plan-first classification (owner ask: plan like Claude Code)', () => {
     expect(await derive('আজকের সব অর্ডার একবার দেখে নাও, যেগুলোর ট্র্যাকিং নেই সেগুলো আলাদা করে রাখো এবং কাস্টমারদের একটা করে মেসেজ পাঠিয়ে দাও')).toBe(true)
   })
 
+  it('plans the real dashboard → orders → approvals → summary shape before tools run', async () => {
+    expect(await derive(
+      'আজকের dashboard inspect করো, pending orders দেখো, pending approvals যাচাই করো, তারপর সব cross-check করে summary দাও',
+    )).toBe(true)
+  })
+
   it('does NOT plan a plain lookup question', async () => {
     expect(await derive('আজকে কত অর্ডার হয়েছে?')).toBe(false)
   })

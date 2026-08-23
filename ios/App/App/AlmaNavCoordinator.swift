@@ -40,12 +40,35 @@ enum AlmaNavCoordinator {
     static let temporaryWebRoutes: Set<String> = [
         // NP-1: /agent/live-watch NATIVE (Monitor → Agents tab, AG-08).
         // NP-4: /portal/wallet, /forgot-password, /reset-password NATIVE.
-        "/agent/creative-studio-demo" // NP-8: retire (web-page removal rides the merge — this branch must not trigger Vercel builds)
+        "/agent/creative-studio-demo", // NP-8: retire (web-page removal rides the merge — this branch must not trigger Vercel builds)
+        "/agent/mac",
+        "/agent/media",
+        "/agent/phone",
+        "/agent/phone-console",
+        "/agent/phone-console/calls",
+        "/agent/phone-console/extensions",
+        "/agent/phone-console/line",
+        "/agent/phone-console/live",
+        "/agent/phone-console/quality",
+        "/agent/phone-console/recordings",
+        "/agent/phone-console/routing",
+        "/agent/phone-console/routing/outbound",
+        "/agent/phone-console/routing/preview",
+        "/agent/phone-console/settings",
+        "/agent/phone-console/settings/blocklist",
+        "/agent/phone-console/settings/history",
+        "/agent/phone-console/settings/hold",
+        "/agent/phone-console/settings/hours",
+        "/agent/phone-console/settings/limits",
+        "/agent/phone-console/settings/provider"
     ]
 
     /// NP-4 (AU-02): typed QUERY routes — these native screens accept their query
     /// string (reset token), so a query no longer forces the web page for them.
     static let queryCapableRoutes: Set<String> = [
+        // An order entity link carries its exact id as /orders?focus=<id>.
+        // OrdersScreen consumes the query and opens the native detail sheet.
+        "/orders",
         "/reset-password",
         // A Meta Ads push taps through as /agent/growth?rec=<id>. The native
         // Growth screen now reads that id and opens on that recommendation, so
@@ -88,12 +111,22 @@ enum AlmaNavCoordinator {
             return .tabRoot(index)
         }
 
-        // Query-carrying links: native screens don't receive query context —
-        // /orders?focus=…, /attendance?review=… only work on the web page. Until a
+        // Query-carrying links: most native screens don't receive query context —
+        // /attendance?review=… only works on the web page. Until a
         // native screen accepts the parameter (typed path routes like
         // /employees/{id} already do), the query keeps its web page — but as an
         // EXPLICIT, telemetry-logged decision, not a silent fallthrough.
         if hasQuery {
+            // Canonical Agent entity links carry a server-stamped business_id.
+            // Resolve the full path so the native router can validate the route/
+            // business pairing before constructing a screen. A bad pairing must
+            // never fall through to web or fetch another business's record.
+            if isBusinessScopedEntityLink(path: path, bare: bare) {
+                if let native = AlmaNativeRouter.screen(for: path, openWebForced: openWebForced) {
+                    return .native(native)
+                }
+                return .unknown
+            }
             // NP-4: typed query routes go native WITH their query (reset token).
             if queryCapableRoutes.contains(bare),
                let native = AlmaNativeRouter.screen(for: path, openWebForced: openWebForced) {
@@ -119,5 +152,35 @@ enum AlmaNavCoordinator {
             return .web(reason: "public-web")
         }
         return .unknown
+    }
+
+    private static func isBusinessScopedEntityLink(path: String, bare: String) -> Bool {
+        guard queryValue(path, name: "business_id") != nil else { return false }
+        if bare == "/orders" {
+            return !(queryValue(path, name: "focus") ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return hasOnePathParam(bare, after: "/orders/")
+            || hasOnePathParam(bare, after: "/employees/")
+            || hasOnePathParam(bare, after: "/trading/accounts/")
+            || hasTwoPathParams(bare, after: "/agent/references/")
+    }
+
+    private static func hasOnePathParam(_ path: String, after prefix: String) -> Bool {
+        guard path.hasPrefix(prefix) else { return false }
+        let remainder = path.dropFirst(prefix.count)
+        return !remainder.isEmpty && !remainder.contains("/")
+    }
+
+    private static func hasTwoPathParams(_ path: String, after prefix: String) -> Bool {
+        guard path.hasPrefix(prefix) else { return false }
+        let parts = path.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: false)
+        return parts.count == 2 && parts.allSatisfy { !$0.isEmpty }
+    }
+
+    private static func queryValue(_ path: String, name: String) -> String? {
+        guard let query = path.split(separator: "?").dropFirst().first else { return nil }
+        return URLComponents(string: "https://x/?\(query)")?
+            .queryItems?.first { $0.name == name }?.value
     }
 }

@@ -46,6 +46,53 @@ export const DEFAULT_BUSINESS_ID: BusinessId = 'ALMA_LIFESTYLE'
 
 export const STORAGE_KEY = 'alma-business-id'
 
+/** Trusted selector carried by canonical Agent entity links. Authorization is
+ * still enforced against the authenticated user's allowed businesses. */
+export const ENTITY_ROUTE_BUSINESS_QUERY = 'business_id'
+
+export type EntityRouteBusinessResolution =
+  | { kind: 'not_entity' }
+  | { kind: 'legacy'; expectedBusinessId: BusinessId }
+  | { kind: 'authorized'; businessId: BusinessId; shouldSwitch: boolean }
+  | { kind: 'forbidden'; businessId: BusinessId }
+  | { kind: 'invalid' }
+
+function hasOnePathParam(pathname: string, prefix: string): boolean {
+  if (!pathname.startsWith(prefix)) return false
+  const value = pathname.slice(prefix.length)
+  return value.length > 0 && !value.includes('/')
+}
+
+function entityRouteBusinessId(pathname: string, hasExactEntityFocus: boolean): BusinessId | null {
+  if ((pathname === '/orders' && hasExactEntityFocus) || hasOnePathParam(pathname, '/orders/')) return 'ALMA_LIFESTYLE'
+  if (hasOnePathParam(pathname, '/employees/')) return 'ALMA_LIFESTYLE'
+  if (hasOnePathParam(pathname, '/trading/accounts/')) return 'ALMA_TRADING'
+  return null
+}
+
+function strictBusinessId(raw: string): BusinessId | null {
+  if (raw === 'ALMA_LIFESTYLE' || raw === 'CREATIVE_DIGITAL_IT' || raw === 'ALMA_TRADING') return raw
+  return null
+}
+
+/** Resolve a business-scoped entity route without treating its query as auth. */
+export function resolveEntityRouteBusiness(
+  pathname: string,
+  rawBusinessId: string | null | undefined,
+  activeBusinessId: BusinessId,
+  allowedBusinessIds: readonly BusinessId[],
+  options: { hasExactEntityFocus?: boolean } = {},
+): EntityRouteBusinessResolution {
+  const expectedBusinessId = entityRouteBusinessId(pathname, options.hasExactEntityFocus === true)
+  if (!expectedBusinessId) return { kind: 'not_entity' }
+  if (rawBusinessId == null) return { kind: 'legacy', expectedBusinessId }
+
+  const businessId = strictBusinessId(rawBusinessId)
+  if (!businessId || businessId !== expectedBusinessId) return { kind: 'invalid' }
+  if (!allowedBusinessIds.includes(businessId)) return { kind: 'forbidden', businessId }
+  return { kind: 'authorized', businessId, shouldSwitch: businessId !== activeBusinessId }
+}
+
 export interface NavItem {
   href: string
   icon: string

@@ -15,6 +15,8 @@ import { optimizeTradingScreenshot } from '@/lib/trading-screenshot'
 import { roundMoney } from '@/lib/money'
 import { invalidateQueryCache } from '@/hooks/useQuery'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+import { useBusiness } from '@/contexts/BusinessContext'
+import { resolveEntityRouteBusiness } from '@/lib/businesses'
 
 const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
 const fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25 } } }
@@ -47,10 +49,25 @@ export default function TradingAccountDetailPage() {
   const params = useParams<{ id: string }>()
   const searchParams = useSearchParams()
   const accountId = String(params?.id || '')
+  const { businessId, allowedBusinessIds } = useBusiness()
+  const entityRoute = resolveEntityRouteBusiness(
+    `/trading/accounts/${encodeURIComponent(accountId)}`,
+    searchParams.get('business_id'),
+    businessId,
+    allowedBusinessIds,
+  )
+  const accountBusinessId = entityRoute.kind === 'authorized'
+    ? entityRoute.businessId
+    : entityRoute.kind === 'legacy'
+      ? businessId
+      : null
   const { role } = useActor()
   const isAdmin = role === 'SUPER_ADMIN' || role === 'ADMIN'
   const isSuperAdmin = role === 'SUPER_ADMIN'
-  const { data, loading, refetch } = useTradingAccountDetail(accountId)
+  const { data, loading, refetch } = useTradingAccountDetail(
+    accountBusinessId === 'ALMA_TRADING' ? accountId : null,
+    accountBusinessId ?? businessId,
+  )
   const { data: staffData } = useTradingStaff()
   const initialTab = (searchParams.get('tab')?.toUpperCase() || 'TRADES') as Tab
   const [tab, setTab] = useState<Tab>(['TRADES', 'EXPENSES', 'DAILY_SUMMARY', 'PERFORMANCE', 'STAFF', 'SETTLEMENT'].includes(initialTab) ? initialTab : 'TRADES')

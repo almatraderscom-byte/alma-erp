@@ -45,6 +45,17 @@ const SAVE_TTL_DAYS = 30
 const MAX_ANSWER_CHARS = 1500
 const MIN_ANSWER_CHARS = 40
 
+export type AnswerGateBusinessId = 'ALMA_LIFESTYLE' | 'CREATIVE_DIGITAL_IT' | 'ALMA_TRADING'
+export type AnswerGateScope = 'personal' | `business:${AnswerGateBusinessId}`
+
+/** Never let one business's stable FAQ row answer inside another business. */
+export function answerGateScopeForContext(
+  personalMode: boolean,
+  businessId: AnswerGateBusinessId,
+): AnswerGateScope {
+  return personalMode ? 'personal' : `business:${businessId}`
+}
+
 /**
  * HARD deny-list — anything matching here is NEVER gated (read) and NEVER
  * cached (write). Three families:
@@ -57,6 +68,9 @@ export const GATE_DENY_RE = new RegExp(
     // live-data intents
     'sale|sell|বিক্রি|সেল|revenue|আয়|order|অর্ডার|stock|স্টক|মজুদ|inventory|pending|পেন্ডিং',
     'attendance|হাজিরা|উপস্থিত|check\\s*in|অফিসে|office\\s*(e|te)|টাস্ক|task|balance|ব্যালেন্স',
+    // Detail-link entities must run a fresh tool turn so the exact ID/href is
+    // verified; a cached prose answer cannot safely reconstruct that contract.
+    'employee|কর্মচারী|staff|স্টাফ|trading\\s*account|trading\\s*অ্যাকাউন্ট|ট্রেডিং\\s*অ্যাকাউন্ট',
     // time-relative freshness
     '\\b(aj|ajke|ajk)\\b|আজ|গতকাল|kal\\b|কাল|ekhon|এখন|এই\\s*মুহূর্ত|live|fresh|নতুন\\s*করে|আপডেট|update|সর্বশেষ|latest',
     // money figures / quantities
@@ -76,16 +90,29 @@ const FOLLOWUP_RE =
 /** Question-ish signal (Bangla + Banglish + English). */
 const QUESTION_RE = /\?|(\b(ki|kivabe|kothay|kar|kader|keno|kobe|konta|which|what|how|where|who|why|when)\b)|কি\b|কী\b|কিভাবে|কোথায়|কার|কেন|কবে|কোনটা/i
 
+const NAMED_ENTITY_LOOKUP_RE =
+  /সম্পর্কে\s*(?:কি|কী)\s*জান|(?:কি|কী)\s*পরিচয়|\bwho\s+is\b|\bwhat\s+do\s+you\s+know\s+about\b|\bprofile\s+(?:of|for)\b/i
+
 /**
  * Standalone knowledge-question check — ALL gate reads and writes require this.
  * Exported for tests.
  */
-export function isGateableQuestion(text: string): boolean {
+export function isGateableQuestion(
+  text: string,
+  scope?: AnswerGateScope | 'business',
+): boolean {
   const t = (text ?? '').trim()
   if (t.length < 10 || t.length > 220) return false
   if (FOLLOWUP_RE.test(t)) return false
   if (GATE_DENY_RE.test(t)) return false
-  return QUESTION_RE.test(t)
+  if (NAMED_ENTITY_LOOKUP_RE.test(t)) return false
+  if (!QUESTION_RE.test(t)) return false
+  // A semantic cache cannot prove whether an apparent FAQ mentions a person,
+  // account, or other ERP entity (for example "Eyafi কোন brand-এর লোক?").
+  // Keep business turns on the fresh provider-neutral tool/link path. Personal
+  // stable knowledge may still use the Answer Gate.
+  if (scope?.startsWith('business')) return false
+  return true
 }
 
 async function minSimilarity(): Promise<number> {
@@ -112,11 +139,11 @@ export type GateHit = {
  */
 export async function tryAnswerGate(
   text: string,
-  scope: 'business' | 'personal',
+  scope: AnswerGateScope,
 ): Promise<GateHit | null> {
   try {
     if (!ANSWER_GATE_ENABLED) return null
-    if (!isGateableQuestion(text)) return null
+    if (!isGateableQuestion(text, scope)) return null
 
     const embedResult = await embed(text)
     if (!embedResult.success) return null
@@ -207,7 +234,7 @@ function classifierClient(): OpenAI | null {
 export async function maybeCacheQaPair(opts: {
   question: string
   answer: string
-  scope: 'business' | 'personal'
+  scope: AnswerGateScope
   sourceModelId: string
   usedTools: boolean
   hadCards: boolean
@@ -220,7 +247,7 @@ export async function maybeCacheQaPair(opts: {
     if (opts.usedTools || opts.hadCards) return // tool/card turns are never static facts
     const q = opts.question.trim()
     const a = opts.answer.trim()
-    if (!isGateableQuestion(q)) return
+    if (!isGateableQuestion(q, opts.scope)) return
     if (a.length < MIN_ANSWER_CHARS || a.length > MAX_ANSWER_CHARS) return
     if (GATE_DENY_RE.test(a)) return // answer itself references live data/actions
 

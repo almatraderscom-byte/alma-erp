@@ -8,6 +8,7 @@ import {
   getReplayEvents,
   isTerminalEventType,
   pollTurnEvents,
+  sanitizeTurnEventPayloadForReferenceRollout,
   subscribeTurnEvents,
 } from '@/agent/lib/turn-events'
 
@@ -66,7 +67,8 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       }
       // `id:` carries the seq so EventSource's automatic Last-Event-ID resume works.
       const emitEvent = (seq: number, payload: unknown) => {
-        safeEnqueue(`id: ${seq}\ndata: ${JSON.stringify(payload)}\n\n`)
+        const exposedPayload = sanitizeTurnEventPayloadForReferenceRollout(payload)
+        safeEnqueue(`id: ${seq}\ndata: ${JSON.stringify(exposedPayload)}\n\n`)
       }
       const finish = () => {
         if (closed) return

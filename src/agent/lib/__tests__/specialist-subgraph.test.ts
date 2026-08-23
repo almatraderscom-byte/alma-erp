@@ -1,7 +1,20 @@
 /**
  * Phase 35 — specialist fan-out subgraph (LangGraph Send, reads only).
  */
-import { describe, it, expect } from 'vitest'
+import { afterAll, beforeEach, describe, it, expect, vi } from 'vitest'
+import type { AlmaRole } from '@/lib/roles'
+
+type FakeStore = {
+  rows: Map<string, { value: unknown }>
+  get: ReturnType<typeof vi.fn>
+  put: ReturnType<typeof vi.fn>
+}
+
+const memory = vi.hoisted(() => ({ store: null as FakeStore | null }))
+
+vi.mock('@/agent/lib/graph/memory-store', () => ({
+  getAlmaMemoryStore: () => memory.store,
+}))
 import {
   buildSpecialistFanoutGraph,
   runSpecialistFanout,
@@ -12,9 +25,37 @@ import {
   type SpecialistRunner,
 } from '@/agent/lib/graph/specialist-subgraph'
 import { filterToolsReadOnly } from '@/agent/lib/models/subagent'
+import { buildInternalEntityReference } from '@/agent/lib/references/internal-registry'
 
 const brief = (role: string, task: string, extra: Partial<SpecialistBrief> = {}): SpecialistBrief =>
   ({ role: role as SpecialistBrief['role'], task, businessId: 'ALMA_LIFESTYLE', ...extra })
+
+const originalReferenceRollout = process.env.AGENT_REFERENCES_ROLLOUT
+const originalReferenceKill = process.env.AGENT_REFERENCES_KILL_SWITCH
+
+function fakeStore(): FakeStore {
+  const rows = new Map<string, { value: unknown }>()
+  const rowKey = (namespace: readonly string[], key: string) => `${namespace.join('/')}::${key}`
+  return {
+    rows,
+    get: vi.fn(async (namespace: readonly string[], key: string) => rows.get(rowKey(namespace, key)) ?? null),
+    put: vi.fn(async (namespace: readonly string[], key: string, value: unknown) => {
+      rows.set(rowKey(namespace, key), { value })
+    }),
+  }
+}
+
+beforeEach(() => {
+  memory.store = null
+  delete process.env.AGENT_REFERENCES_KILL_SWITCH
+})
+
+afterAll(() => {
+  if (originalReferenceRollout == null) delete process.env.AGENT_REFERENCES_ROLLOUT
+  else process.env.AGENT_REFERENCES_ROLLOUT = originalReferenceRollout
+  if (originalReferenceKill == null) delete process.env.AGENT_REFERENCES_KILL_SWITCH
+  else process.env.AGENT_REFERENCES_KILL_SWITCH = originalReferenceKill
+})
 
 describe('Send fan-out (reads only, stateless briefs)', () => {
   it('runs every brief as its own branch and reconciles all findings', async () => {
@@ -65,6 +106,29 @@ describe('Send fan-out (reads only, stateless briefs)', () => {
     const out = await runSpecialistFanout([], { runner })
     expect(out.findings).toEqual([])
   })
+
+  it('propagates verified branch references through reconciliation to the head', async () => {
+    process.env.AGENT_REFERENCES_ROLLOUT = 'shadow'
+    const reference = buildInternalEntityReference({
+      namespace: 'order',
+      id: 'delegated-order',
+      sourceTool: 'get_orders',
+      outputPath: 'data.orders[0].id',
+      context: { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] },
+    })!
+    const runner: SpecialistRunner = async () => ({
+      success: true,
+      summary: 'verified order finding',
+      toolsUsed: ['get_orders'],
+      costUsd: 0,
+      references: [reference],
+    })
+
+    const out = await runSpecialistFanout([brief('researcher', 'order check')], { runner })
+
+    expect(out.findings[0].references).toEqual([reference])
+    expect(out.references).toEqual([reference])
+  })
 })
 
 describe('read-only enforcement (parallel branches cannot write)', () => {
@@ -84,7 +148,7 @@ describe('reconciliation', () => {
   const f = (role: string, findings: string, success = true): SpecialistFinding => ({
     role: role as SpecialistFinding['role'], success, findings, evidence: [], uncertainty: '',
     artifacts: [], proposedNextStep: null, toolsUsed: [], costUsd: 0, fromCache: false,
-    error: success ? null : 'x',
+    error: success ? null : 'x', references: [],
   })
 
   it('flags contradictory branches for the head instead of averaging them away', () => {
@@ -112,5 +176,87 @@ describe('cache policy (explicit key+version only)', () => {
     await g.invoke({ briefs: [brief('researcher', 'x', { cacheable: true, cacheKey: 'k', cacheVersion: 'v1' })] }, { recursionLimit: 24 })
     await g.invoke({ briefs: [brief('researcher', 'x', { cacheable: true, cacheKey: 'k', cacheVersion: 'v1' })] }, { recursionLimit: 24 })
     expect(calls).toBe(2)
+  })
+
+  it('scopes identical cache keys by business and revalidates role/business references on write', async () => {
+    process.env.AGENT_REFERENCES_ROLLOUT = 'shadow'
+    const store = fakeStore()
+    memory.store = store
+    const lifestyle = buildInternalEntityReference({
+      namespace: 'order', id: 'cache-lifestyle', sourceTool: 'get_orders', outputPath: 'data.orders[0].id',
+      context: { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] },
+    })!
+    const cdit = buildInternalEntityReference({
+      namespace: 'cdit_project', id: 'cache-cdit', sourceTool: 'get_cdit_projects', outputPath: 'data.projects[0].id',
+      context: { businessId: 'CREATIVE_DIGITAL_IT', roles: ['SUPER_ADMIN'] },
+    })!
+    const viewerOnly = buildInternalEntityReference({
+      namespace: 'order', id: 'cache-viewer', sourceTool: 'get_orders', outputPath: 'data.orders[0].id',
+      context: { businessId: 'ALMA_LIFESTYLE', roles: ['VIEWER'] },
+    })!
+    let calls = 0
+    const runner: SpecialistRunner = async (candidate) => {
+      calls++
+      return {
+        success: true, summary: candidate.businessId, toolsUsed: [], costUsd: 0,
+        references: [lifestyle, cdit, viewerOnly],
+      }
+    }
+    const cache = { cacheable: true, cacheKey: 'same', cacheVersion: 'v1' }
+
+    const lifestyleOut = await runSpecialistFanout([
+      brief('researcher', 'lifestyle', { ...cache, referenceRoles: ['SUPER_ADMIN'] as AlmaRole[] }),
+    ], { runner })
+    const cditOut = await runSpecialistFanout([
+      brief('researcher', 'cdit', {
+        ...cache, businessId: 'CREATIVE_DIGITAL_IT', referenceRoles: ['SUPER_ADMIN'] as AlmaRole[],
+      }),
+    ], { runner })
+
+    expect(calls).toBe(2)
+    expect(lifestyleOut.references).toEqual([lifestyle])
+    expect(cditOut.references).toEqual([cdit])
+    expect(store.put.mock.calls.map((call) => call[0])).toEqual(expect.arrayContaining([
+      expect.arrayContaining(['ALMA_LIFESTYLE']),
+      expect.arrayContaining(['CREATIVE_DIGITAL_IT']),
+    ]))
+  })
+
+  it('revalidates cached references on read and clears them when collection is OFF', async () => {
+    process.env.AGENT_REFERENCES_ROLLOUT = 'shadow'
+    const store = fakeStore()
+    memory.store = store
+    const lifestyle = buildInternalEntityReference({
+      namespace: 'order', id: 'cache-read', sourceTool: 'get_orders', outputPath: 'data.orders[0].id',
+      context: { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] },
+    })!
+    const cdit = buildInternalEntityReference({
+      namespace: 'cdit_project', id: 'cache-read-cdit', sourceTool: 'get_cdit_projects', outputPath: 'data.projects[0].id',
+      context: { businessId: 'CREATIVE_DIGITAL_IT', roles: ['SUPER_ADMIN'] },
+    })!
+    let calls = 0
+    const runner: SpecialistRunner = async () => {
+      calls++
+      return { success: true, summary: 'cached', toolsUsed: [], costUsd: 0, references: [lifestyle] }
+    }
+    const scopedBrief = brief('researcher', 'cached', {
+      cacheable: true, cacheKey: 'read', cacheVersion: 'v1', referenceRoles: ['SUPER_ADMIN'],
+    })
+
+    await runSpecialistFanout([scopedBrief], { runner })
+    const stored = [...store.rows.values()][0].value as { finding: SpecialistFinding }
+    stored.finding.references.push(cdit)
+
+    const shadowHit = await runSpecialistFanout([scopedBrief], { runner })
+    expect(calls).toBe(1)
+    expect(shadowHit.references).toEqual([lifestyle])
+
+    process.env.AGENT_REFERENCES_ROLLOUT = 'off'
+    const offHit = await runSpecialistFanout([scopedBrief], { runner })
+    // Rollout mode is part of the namespace, so OFF cannot replay a SHADOW
+    // result whose summary may have been produced under different link rules.
+    expect(calls).toBe(2)
+    expect(offHit.references).toEqual([])
+    expect(offHit.findings[0].references).toEqual([])
   })
 })

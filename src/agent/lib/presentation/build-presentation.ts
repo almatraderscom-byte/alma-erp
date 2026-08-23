@@ -12,7 +12,8 @@
  *
  * Read-time only — nothing here writes to the database or changes model/tool
  * behaviour.
- */
+*/
+import type { AgentReferenceV1 } from '@/agent/lib/references/types'
 
 export type AgentPresentationBlockV1 =
   | { id: string; type: 'prose'; text: string; state: 'final' | 'progress' | 'superseded' }
@@ -52,6 +53,7 @@ export type AgentPresentationV1 = {
   /** The honesty guard superseded a draft and rewrote the answer this turn —
    *  clients render the "🔁 নিজে যাচাই করে ঠিক করেছে" badge from this. */
   selfCorrected?: true
+  references?: AgentReferenceV1[]
 }
 
 /** Raw persisted timeline entry (usage.timeline) — lenient by design. */
@@ -87,6 +89,7 @@ export type BuildPresentationInput = {
   costUsd?: number | null
   apiRounds?: number | null
   roundCostsUsd?: number[] | null
+  references?: AgentReferenceV1[] | null
 }
 
 /** Live-parity verification row label (same string the clients show mid-stream). */
@@ -291,6 +294,7 @@ export function buildAgentPresentationV1(input: BuildPresentationInput): AgentPr
     version: 1,
     messageId: input.messageId,
     blocks,
+    ...(input.references?.length ? { references: input.references } : {}),
     ...(selfCorrected ? { selfCorrected: true as const } : {}),
     ...(hasUsage
       ? {

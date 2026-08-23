@@ -595,7 +595,8 @@ export const api = {
     }): Promise<OrdersResponse> => apiGet('/api/orders/orders', bizParams(p as Record<string, string>)),
 
     /** GET /api/orders/orders?id=ALM-0001 → GAS ?route=order&id=... */
-    get: (id: string): Promise<{ order: Order }> => apiGet('/api/orders/orders', { id }),
+    get: (id: string, businessId?: BusinessId): Promise<{ order: Order }> =>
+      apiGet('/api/orders/orders', { id, business_id: businessId ?? _businessId }),
   },
 
   customers: {
@@ -640,14 +641,15 @@ export const api = {
   },
 
   hr: {
-    employees: (p?: { startDate?: string; endDate?: string }): Promise<HREmployeesApi> =>
-      apiGet('/api/hr/employees', bizParams(p as Record<string, string>)),
+    employees: (p?: { startDate?: string; endDate?: string; business_id?: BusinessId }): Promise<HREmployeesApi> =>
+      apiGet('/api/hr/employees', { ...(p as Record<string, string>), business_id: p?.business_id ?? _businessId }),
     payroll: (p?: {
       emp_id?: string
       startDate?: string
       endDate?: string
+      business_id?: BusinessId
     }): Promise<HRPayrollListApi> =>
-      apiGet('/api/hr/payroll', bizParams(p as Record<string, string>)),
+      apiGet('/api/hr/payroll', { ...(p as Record<string, string>), business_id: p?.business_id ?? _businessId }),
     dashboard: (p?: {
       startDate?: string
       endDate?: string

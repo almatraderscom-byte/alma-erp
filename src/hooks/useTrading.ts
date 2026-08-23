@@ -4,6 +4,7 @@ import { api } from '@/lib/api'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { useMutation, useQuery } from '@/hooks/useQuery'
 import type { TradingAccountInput, TradingAnalyticsFilters, TradingBkashSummaryInput, TradingCapitalInput, TradingEmployeeReportInput, TradingExpenseInput, TradingHrProfileInput, TradingPartnershipSettleInput, TradingTradeActionInput, TradingTradeInput } from '@/types/trading'
+import type { BusinessId } from '@/lib/businesses'
 
 export function useTradingAnalytics(filters?: TradingAnalyticsFilters) {
   const { businessId } = useBusiness()
@@ -68,12 +69,13 @@ export function useTradingAccounts(filters?: { search?: string; status?: string 
   )
 }
 
-export function useTradingAccountDetail(id: string | null) {
+export function useTradingAccountDetail(id: string | null, scopedBusinessId?: BusinessId) {
   const { businessId } = useBusiness()
+  const targetBusinessId = scopedBusinessId ?? businessId
   return useQuery(
-    () => businessId === 'ALMA_TRADING' && id ? api.trading.accountDetail(id) : Promise.resolve(null),
-    [businessId, id],
-    { enabled: businessId === 'ALMA_TRADING' && Boolean(id), cacheKey: `trading-account:${businessId}:${id || ''}`, cacheMs: 10_000 },
+    () => targetBusinessId === 'ALMA_TRADING' && id ? api.trading.accountDetail(id) : Promise.resolve(null),
+    [targetBusinessId, id],
+    { enabled: targetBusinessId === 'ALMA_TRADING' && Boolean(id), cacheKey: `trading-account:${targetBusinessId}:${id || ''}`, cacheMs: 10_000 },
   )
 }
 

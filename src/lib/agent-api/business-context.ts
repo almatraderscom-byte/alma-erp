@@ -1,8 +1,9 @@
 /**
  * Agent business context resolver — Phase 7.
  *
- * The agent module supports two business scopes:
+ * The agent module supports all ERP business scopes:
  *   - ALMA_LIFESTYLE (default / Lifestyle ops)
+ *   - CREATIVE_DIGITAL_IT (agency operations)
  *   - ALMA_TRADING   (Binance P2P trading)
  *
  * `businessId` is stored on AgentProject + AgentConversation. Resolution order:
@@ -17,12 +18,12 @@
 import { prisma } from '@/lib/prisma'
 import { DEFAULT_AGENT_BUSINESS_ID } from '@/lib/agent-api/constants'
 
-export type AgentBusinessId = 'ALMA_LIFESTYLE' | 'ALMA_TRADING'
+export type AgentBusinessId = 'ALMA_LIFESTYLE' | 'CREATIVE_DIGITAL_IT' | 'ALMA_TRADING'
 
-export const AGENT_BUSINESS_IDS: AgentBusinessId[] = ['ALMA_LIFESTYLE', 'ALMA_TRADING']
+export const AGENT_BUSINESS_IDS: AgentBusinessId[] = ['ALMA_LIFESTYLE', 'CREATIVE_DIGITAL_IT', 'ALMA_TRADING']
 
 export function isAgentBusinessId(value: unknown): value is AgentBusinessId {
-  return value === 'ALMA_LIFESTYLE' || value === 'ALMA_TRADING'
+  return value === 'ALMA_LIFESTYLE' || value === 'CREATIVE_DIGITAL_IT' || value === 'ALMA_TRADING'
 }
 
 export function normalizeBusinessId(value: unknown): AgentBusinessId {

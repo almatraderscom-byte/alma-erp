@@ -1,5 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
+import { buildInternalEntityReference } from '@/agent/lib/references/internal-registry'
+
+const originalReferenceRollout = process.env.AGENT_REFERENCES_ROLLOUT
 
 const mocks = vi.hoisted(() => ({
   getToken: vi.fn(),
@@ -44,6 +47,12 @@ describe('GET /api/assistant/actions pagination', () => {
     mocks.getToken.mockResolvedValue({ sub: 'owner-1' })
     mocks.isSystemOwner.mockReturnValue(true)
     mocks.updateMany.mockResolvedValue({ count: 0 })
+    process.env.AGENT_REFERENCES_ROLLOUT = 'on'
+  })
+
+  afterAll(() => {
+    if (originalReferenceRollout == null) delete process.env.AGENT_REFERENCES_ROLLOUT
+    else process.env.AGENT_REFERENCES_ROLLOUT = originalReferenceRollout
   })
 
   it('returns a stable cursor and only the requested page size', async () => {
@@ -111,5 +120,45 @@ describe('GET /api/assistant/actions pagination', () => {
       'https://alma.test/api/assistant/actions?status=pending&limit=20',
     ))).rejects.toThrow('database unavailable')
     expect(mocks.findMany).toHaveBeenCalledTimes(1)
+  })
+
+  it('canonicalizes result references and removes malformed or cross-business rows', async () => {
+    const lifestyle = buildInternalEntityReference({
+      namespace: 'order', id: 'ord_1', sourceTool: 'get_orders', outputPath: 'data.id',
+      context: { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] },
+    })!
+    const cdit = buildInternalEntityReference({
+      namespace: 'cdit_project', id: 'project_1', sourceTool: 'get_cdit_projects', outputPath: 'data.id',
+      context: { businessId: 'CREATIVE_DIGITAL_IT', roles: ['SUPER_ADMIN'] },
+    })!
+    const tampered = structuredClone(lifestyle)
+    if (tampered.destination.type !== 'internal_entity') throw new Error('fixture')
+    tampered.destination.webPath = '/agent/growth'
+    mocks.findMany.mockResolvedValue([{
+      ...row('scoped', '2026-07-29T03:00:00Z'),
+      payload: { businessId: 'ALMA_LIFESTYLE' },
+      result: { ok: true, references: [lifestyle, cdit, tampered] },
+    }])
+
+    const response = await GET(new NextRequest('https://alma.test/api/assistant/actions'))
+    const body = await response.json()
+    expect(body.actions[0].result.references).toEqual([lifestyle])
+  })
+
+  it.each(['off', 'shadow'] as const)('omits durable references while rollout is %s', async (mode) => {
+    process.env.AGENT_REFERENCES_ROLLOUT = mode
+    const reference = buildInternalEntityReference({
+      namespace: 'order', id: 'ord_hidden', sourceTool: 'get_orders', outputPath: 'data.id',
+      context: { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] },
+    })!
+    mocks.findMany.mockResolvedValue([{
+      ...row(`hidden-${mode}`, '2026-07-29T03:00:00Z'),
+      payload: { businessId: 'ALMA_LIFESTYLE' },
+      result: { ok: true, references: [reference] },
+    }])
+
+    const response = await GET(new NextRequest('https://alma.test/api/assistant/actions'))
+    const body = await response.json()
+    expect(body.actions[0].result).toEqual({ ok: true })
   })
 })
