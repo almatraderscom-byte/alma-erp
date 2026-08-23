@@ -141,6 +141,11 @@ const DSML_ELEMENT_BLOCK_COMPLETE = new RegExp(
   '<[|｜]DSML[|｜](invoke|parameter)\\b[^>]*>[\\s\\S]*?<\\/[|｜]DSML[|｜]\\1>', 'gi',
 )
 const DSML_STRAY = new RegExp(DSML_TAG, 'gi')
+// Streaming strips only the CLOSING sentinel tags: an opener must survive the
+// push-time strip so holdFrom sees it and keeps the body back until the block
+// completes (Codex P1 #842 — a delta ending in a complete `<｜DSML｜invoke …>`
+// lost its opener and the next delta's argument body streamed out as prose).
+const DSML_STRAY_CLOSING = new RegExp('<\\/[|｜]DSML[|｜][a-z_]+\\b[^>]*>', 'gi')
 
 /**
  * The streaming-safe subset of STRAY_MARKERS: closing tags and the pipe
@@ -201,9 +206,9 @@ export function stripToolCallMarkup(
     .replace(streaming ? DSML_BLOCK_COMPLETE : DSML_BLOCK, '')
     .replace(streaming ? DSML_ELEMENT_BLOCK_COMPLETE : DSML_ELEMENT_BLOCK, '')
     // A lone sentinel tag (stream cut mid-block, or an unwrapped invoke) is
-    // never prose either way — safe in streaming because holdFrom keeps an
-    // unclosed DSML opener back until its block completes.
-    .replace(DSML_STRAY, '')
+    // never prose. Streaming strips only closers — an opener stays for
+    // holdFrom (see DSML_STRAY_CLOSING).
+    .replace(streaming ? DSML_STRAY_CLOSING : DSML_STRAY, '')
     // Fences first: the block is removed WITH its contents, so a stripped call
     // cannot leave an empty ``` card behind.
     .replace(streaming ? FENCED_TOOL_BLOCK_COMPLETE : FENCED_TOOL_BLOCK, '')

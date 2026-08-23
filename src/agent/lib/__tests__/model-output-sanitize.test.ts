@@ -385,4 +385,27 @@ describe('the SIXTH shape — Gemini 3.7 Flash speak-first, his screen 2026-08-2
     expect(out).toContain('বস, স্টক দেখে নিচ্ছি।')
     expect(out).toContain('এখন ফলাফল')
   })
+
+  it('streaming: a delta ending in a COMPLETE opener keeps the next delta\'s body held (Codex P1)', () => {
+    const f = createMarkupStreamFilter()
+    const deltas = [
+      'দেখছি। <｜DSML｜tool_calls><｜DSML｜invoke name="get_orders">',
+      '<｜DSML｜parameter name="limit">',
+      '{"limit": 5}',
+      '</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>',
+      ' ফলাফল এল।',
+    ]
+    const out = deltas.map((d) => f.push(d)).join('') + f.flush()
+    expect(out).not.toContain('limit')
+    expect(out).not.toContain('DSML')
+    expect(out).not.toContain('get_orders')
+    expect(out).toContain('দেখছি।')
+    expect(out).toContain('ফলাফল এল')
+  })
+
+  it('streaming: an opener the stream never closes is dropped at flush, not spilled', () => {
+    const f = createMarkupStreamFilter()
+    const out = f.push('যাচাই করছি। <｜DSML｜invoke name="get_orders">') + f.push('{"li') + f.flush()
+    expect(out.trim()).toBe('যাচাই করছি।')
+  })
 })
