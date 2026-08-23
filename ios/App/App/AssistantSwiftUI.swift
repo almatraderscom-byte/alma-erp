@@ -5686,8 +5686,24 @@ final class AssistantVM {
         }
         var pairedTail = false
         if let localTail = messages.last(where: { $0.role == .assistant && $0.id.hasPrefix("stream-") }) {
-            if let aIdx = incoming.lastIndex(where: { $0.role == .assistant }),
-               aIdx > (lastServerUser ?? -1) {
+            // R-1 (handoff F-12): the server names the exact persisted assistant
+            // row (done.messageId / turn_snapshot / turn-status). Pair by THAT
+            // identity first; the positional "last assistant after the last
+            // user row" rule is only the legacy fallback for a tail that never
+            // learned its id.
+            let exactIdx = localTail.serverId.flatMap { sid in
+                incoming.firstIndex(where: { $0.role == .assistant && $0.id == sid })
+            }
+            // A tail that KNOWS its row must never fall back to position: if that
+            // row is absent from this page (not persisted yet, older page), the
+            // tail stays unpaired and waits — claiming an unrelated last row
+            // would block the real row from taking the identity later
+            // (Codex P1 #839).
+            let positionalIdx = localTail.serverId == nil
+                ? incoming.lastIndex(where: { $0.role == .assistant })
+                : nil
+            if let aIdx = exactIdx ?? positionalIdx,
+               exactIdx != nil || aIdx > (lastServerUser ?? -1) {
                 if localIdByServerId[incoming[aIdx].id] == nil {
                     _ = claimLocalRowId(serverId: incoming[aIdx].id, localId: localTail.id,
                                         activeServerIds: activeServerIds)
@@ -5775,7 +5791,10 @@ final class AssistantVM {
         // appended (it merges on the next poll). Prose must never disappear.
         if !pairedTail,
            let tail = messages.last(where: { $0.role == .assistant && $0.id.hasPrefix("stream-") }),
-           !tail.text.isEmpty {
+           // Retain by CONTENT, not by `text` alone: a tool-only tail (prose not
+           // yet spoken, or cleared by a legacy v1 tool start) used to be dropped
+           // by a poll that landed in that state (handoff F-05).
+           !tail.text.isEmpty || !tail.blocks.isEmpty || !tail.tools.isEmpty {
             var kept = tail
             kept.isStreaming = false
             incoming.append(kept)
@@ -6110,6 +6129,7 @@ final class AssistantVM {
                         recoverableTurn = descriptor
                         markOutgoingAccepted(clientMessageId: descriptor.clientMessageId)
                     }
+                    applyTerminalStatusIdentity(status, matchedOurTurn: true)
                     await finishRecovery(terminalStatus: status.status ?? "done")
                 } else {
                     startRecoveryPolling(cid: cid, awaitingTurnCreation: true)
@@ -6127,12 +6147,16 @@ final class AssistantVM {
                     pendingAutoContinue = true
                     pendingAutoContinueTurnId = tid
                 }
+                applyTerminalStatusIdentity(status, matchedOurTurn: true)
                 await finishRecovery(terminalStatus: status.status ?? "done")
             } else if trigger == "transport-drop" {
                 // Bounded proof: turn creation can lag the send by a few seconds
                 // (auth, persistence, vision). Poll briefly before declaring failure.
                 startRecoveryPolling(cid: cid, awaitingTurnCreation: true)
             } else {
+                // Reached only when the terminal row was NOT matched to our
+                // turn: its assistantMessageId belongs to another reply.
+                applyTerminalStatusIdentity(status, matchedOurTurn: false)
                 await finishRecovery(terminalStatus: status.status ?? "done")
             }
         }
@@ -6185,6 +6209,15 @@ final class AssistantVM {
                     if s?.status == "running" {
                         self.startRecoveryPolling(cid: cid)
                     } else {
+                        // turn-status answers for the conversation's LATEST turn:
+                        // a concurrent/subsequent turn may have finished meanwhile.
+                        // Adopt its assistant id only when it is the turn we tailed
+                        // (or send-time evidence says so) (Codex P1 #839 r6).
+                        if let s {
+                            self.applyTerminalStatusIdentity(
+                                s, matchedOurTurn: s.turnId == turnId
+                                    || self.isTerminalForOurTurn(s, requireEvidence: true))
+                        }
                         await self.finishRecovery(terminalStatus: s?.status ?? "done")
                     }
                 }
@@ -6222,6 +6255,7 @@ final class AssistantVM {
                         if self.reconnecting { self.ensureStreamingTail() }
                     } else if sawRunning || !awaitingTurnCreation
                                 || self.isTerminalForOurTurn(s, requireEvidence: true) {
+                        self.adoptAssistantIdentity(s.assistantMessageId)
                         await self.finishRecovery(terminalStatus: s.status ?? "done")
                         return
                     } else if elapsed > 20 {
@@ -8446,6 +8480,27 @@ final class AssistantVM {
                                             onSeq: { box.value = max(box.value, $0) })
     }
 
+    /// Codex P1 #839 r3: a terminal status names OUR assistant row only when it
+    /// was positively matched to the turn we were watching. The unmatched
+    /// fallback (a stale previous turn, a concurrently completed one) must settle
+    /// WITHOUT adopting that id — pairing the tail with a stranger's row by exact
+    /// identity would overwrite that row's content on the next history merge and
+    /// leave the real reply duplicated or detached.
+    func applyTerminalStatusIdentity(_ status: TurnStatusResponse, matchedOurTurn: Bool) {
+        guard matchedOurTurn else {
+            AlmaTurnLog.event("turn.identityNotAdopted", "unmatched terminal \(status.turnId ?? "-")")
+            return
+        }
+        adoptAssistantIdentity(status.assistantMessageId)
+    }
+
+    /// R-1 (handoff F-12): bind the streaming tail to the persisted assistant
+    /// row the server named, so the next history merge pairs by identity.
+    private func adoptAssistantIdentity(_ id: String?) {
+        guard let id, !id.isEmpty, let i = messages.lastIndex(where: { $0.isStreaming }) else { return }
+        messages[i].serverId = id
+    }
+
     /// Wipe the streaming tail's derived content ahead of an authoritative replay.
     private func resetStreamingTailForReplay() {
         ensureStreamingTail()
@@ -8883,7 +8938,7 @@ final class AssistantVM {
                 } else {
                     adoptNewConversationId(newId)
                 }
-            case .done(_, let tokensIn, let tokensOut, let costUsd, let needContinue, let apiRounds,
+            case .done(let doneMessageId, let tokensIn, let tokensOut, let costUsd, let needContinue, let apiRounds,
                        let cacheCreation, let cacheRead, let roundCostsUsd):
                 // Terminal server truth is also an acceptance proof. Some direct
                 // production streams can coalesce/omit the early id envelope;
@@ -8897,6 +8952,12 @@ final class AssistantVM {
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     Self.commitVerifiedReplacement(on: &messages[i])
                     messages[i].suppressedRawToolEnvelope = nil
+                    // R-1 (handoff F-12): the server names the exact persisted row.
+                    // Bind the tail to it so the settle merge pairs by identity —
+                    // a continuation, background reply or concurrent assistant
+                    // write can no longer canonicalize this tail against the
+                    // wrong row.
+                    if let doneMessageId, !doneMessageId.isEmpty { messages[i].serverId = doneMessageId }
                     if messages[i].proseProtocol == 2 {
                         messages[i].settleProse()
                         messages[i].syncProseBlocks()
@@ -8926,7 +8987,7 @@ final class AssistantVM {
                 thinkingLive = false
                 settleLiveMode()
                 AlmaAgentTickHaptic.turnCompleted()
-            case .turnError(let message):
+            case .turnError(let message, let salvagedMessageId):
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     // Verification never produced a terminal replacement; retain
                     // the complete draft the owner can already see.
@@ -8935,12 +8996,19 @@ final class AssistantVM {
                     // Verification never produced a terminal replacement; retain
                     // the complete draft the owner can already see.
                     messages[i].verificationReplacementText = nil
+                    // The server persisted a salvaged row (partial work + warning)
+                    // before failing: bind it by identity so finalizeTurn pairs the
+                    // tail with THAT row, never positionally with a concurrent one
+                    // (Codex P1 #839 r5).
+                    if let salvagedMessageId, !salvagedMessageId.isEmpty {
+                        messages[i].serverId = salvagedMessageId
+                    }
                 }
                 sawTerminalEvent = true
                 thinkingLive = false
                 settleLiveMode()
                 errorToast = message
-            case .turnSnapshot(let turnId, let convId, _, let snapshotLastSeq, let snapshotProtocol):
+            case .turnSnapshot(let turnId, let convId, _, let snapshotLastSeq, let snapshotProtocol, let snapshotAssistantId):
                 // Durable-stream hello (PR 5) — reconcile ids on (re)connect, and
                 // NOW (stream provably attached) wipe the frozen partial so the
                 // authoritative replay rebuilds the tail without doubling.
@@ -8965,6 +9033,7 @@ final class AssistantVM {
                         messages[i].proseProtocol = snapshotProtocol == 2 ? 2 : 1
                     }
                 }
+                adoptAssistantIdentity(snapshotAssistantId)
             case .turnProtocol(let protocolVersion):
                 // Route envelope, sent before any prose. Per-message so a later
                 // turn on this screen starts clean.
@@ -9038,6 +9107,10 @@ final class AssistantVM {
     }
 
     /// Tests: behave as if a FULL durable replay was just requested.
+    func debugSetCurrentTurnId(_ id: String?) { currentTurnId = id }
+    func debugIsTerminalForOurTurn(_ st: TurnStatusResponse, requireEvidence: Bool) -> Bool {
+        isTerminalForOurTurn(st, requireEvidence: requireEvidence)
+    }
     func debugArmReplayReset(afterSeq: Int = -1) {
         replayResetAfterSeq = afterSeq
         pendingReplayReset = true
@@ -10642,7 +10715,7 @@ final class AssistantVM {
         if case .done(let mid, let tin, _, let cost, let cont, _, _, _, _)? = decode(#"{"type":"done","messageId":"m1","tokensIn":5,"costUsd":0.1,"needContinue":true}"#) {
             check("done fields", mid == "m1" && tin == 5 && cost == 0.1 && cont)
         } else { check("done fields", false) }
-        if case .turnSnapshot(let tid, _, let st, let seq, _)? = decode(#"{"type":"turn_snapshot","turnId":"t9","status":"running","lastSeq":7}"#) {
+        if case .turnSnapshot(let tid, _, let st, let seq, _, _)? = decode(#"{"type":"turn_snapshot","turnId":"t9","status":"running","lastSeq":7}"#) {
             check("turn_snapshot", tid == "t9" && st == "running" && seq == 7)
         } else { check("turn_snapshot", false) }
         if case .progressUpdate(let label)? = decode(#"{"type":"progress_update","label":"স্টক যাচাই করছি"}"#) {

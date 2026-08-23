@@ -76,6 +76,11 @@ struct TurnStatusResponse: Decodable {
     let continuationNeeded: Bool?
     /// Prose lifecycle v2: the prose family this turn streamed (1 or 2).
     let agentProseProtocol: Int?
+    /// R-1 (handoff F-12): the EXACT persisted assistant row of this turn — the
+    /// client pairs its streaming tail by this identity, never by position.
+    let assistantMessageId: String?
+    /// Liveness signal: highest durable event seq the turn has written.
+    let lastSeq: Int?
 }
 
 /// Server-authored image-render estimate pinned to one model selection. These
@@ -907,10 +912,12 @@ enum AgentTurnEvent: Sendable {
     case done(messageId: String?, tokensIn: Int?, tokensOut: Int?, costUsd: Double?,
               needContinue: Bool, apiRounds: Int?, cacheCreation: Int?, cacheRead: Int?,
               roundCostsUsd: [Double]?)
-    case turnError(message: String)
+    /// `messageId` = the assistant row the server salvaged before failing
+    /// (partial work + warning) — bound exactly like `done.messageId`.
+    case turnError(message: String, messageId: String? = nil)
     /// Durable-stream hello (roadmap 3.5/PR 5): current turn state on (re)connect.
     case turnSnapshot(turnId: String?, conversationId: String?, status: String?, lastSeq: Int?,
-                      agentProseProtocol: Int? = nil)
+                      agentProseProtocol: Int? = nil, assistantMessageId: String? = nil)
     /// Page-capped replay ended early — reconnect from this cursor.
     case replayContinue(afterSeq: Int)
     case unknown(type: String)
@@ -1046,11 +1053,13 @@ enum AgentTurnEvent: Sendable {
                          cacheCreation: ev.cacheCreation, cacheRead: ev.cacheRead,
                          roundCostsUsd: ev.roundCostsUsd)
         case "error":
-            self = .turnError(message: ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন")
+            self = .turnError(message: ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন",
+                              messageId: ev.messageId)
         case "turn_snapshot":
             self = .turnSnapshot(turnId: ev.turnId, conversationId: ev.conversationId,
                                  status: ev.status, lastSeq: ev.lastSeq,
-                                 agentProseProtocol: ev.agentProseProtocol)
+                                 agentProseProtocol: ev.agentProseProtocol,
+                                 assistantMessageId: ev.assistantMessageId)
         case "replay_continue":
             self = .replayContinue(afterSeq: ev.afterSeq ?? -1)
         default:

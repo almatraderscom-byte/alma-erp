@@ -5979,3 +5979,158 @@ final class ProseRetentionTests: XCTestCase {
         XCTAssertEqual(vm.messages.last?.proseProtocol, 2, "the negotiated protocol survives the wipe")
     }
 }
+
+// MARK: - Reliability epic R-1 (identity) — handoff F-12 / F-05
+
+@MainActor
+final class ProseIdentityTests: XCTestCase {
+    func testDoneAndSnapshotBindTheExactAssistantRow() {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("উত্তর", blockId: "t:p1")])
+        vm.debugApplyTurnEvents([.done(messageId: "assistant-row-7", tokensIn: nil, tokensOut: nil, costUsd: nil,
+                                       needContinue: false, apiRounds: nil, cacheCreation: nil,
+                                       cacheRead: nil, roundCostsUsd: nil)])
+        XCTAssertEqual(vm.messages.last?.serverId, "assistant-row-7")
+
+        let recovering = AssistantVM()
+        recovering.debugApplyTurnEvents([.turnSnapshot(turnId: "t1", conversationId: "c1", status: "running",
+                                                       lastSeq: 9, agentProseProtocol: 2,
+                                                       assistantMessageId: "assistant-row-9")])
+        XCTAssertEqual(recovering.messages.last?.serverId, "assistant-row-9")
+    }
+
+    func testSettleMergePairsTheTailByServerIdNotByPosition() throws {
+        let vm = AssistantVM()
+        vm.debugClearChronologyAnchors()
+        var owner = AgentChatMessage(id: "local-owner", role: .user, clientMessageId: "client-1",
+                                     outgoingState: .accepted, text: "রিপোর্ট দাও")
+        owner.createdAt = "2026-08-23T01:00:00.000Z"
+        vm.messages = [owner]
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("স্ট্রিম করা উত্তর", blockId: "t:p1"),
+                                 .done(messageId: "server-answer", tokensIn: nil, tokensOut: nil, costUsd: nil,
+                                       needContinue: false, apiRounds: nil, cacheCreation: nil,
+                                       cacheRead: nil, roundCostsUsd: nil)])
+        let tailId = try XCTUnwrap(vm.messages.last?.id)
+        XCTAssertTrue(tailId.hasPrefix("stream-"))
+
+        // A later background assistant row is LAST in the history page: the old
+        // positional rule paired the streamed tail with it.
+        let wire = try JSONDecoder().decode([AgentMessageWire].self, from: Data(#"""
+        [
+          {"id":"server-owner","clientMessageId":"client-1","role":"user","createdAt":"2026-08-23T01:00:00.000Z","content":[{"type":"text","text":"রিপোর্ট দাও"}]},
+          {"id":"server-answer","role":"assistant","createdAt":"2026-08-23T01:00:05.000Z","content":[{"type":"text","text":"স্ট্রিম করা উত্তর"}]},
+          {"id":"server-background","role":"assistant","createdAt":"2026-08-23T01:00:09.000Z","content":[{"type":"text","text":"ব্যাকগ্রাউন্ড রিপোর্ট"}]}
+        ]
+        """#.utf8))
+        vm.debugMergeServerMessages(wire)
+
+        let answer = try XCTUnwrap(vm.messages.first { $0.serverId == "server-answer" })
+        XCTAssertEqual(answer.id, tailId, "the streamed tail keeps its SwiftUI identity on ITS row")
+        XCTAssertEqual(answer.text, "স্ট্রিম করা উত্তর")
+        let background = try XCTUnwrap(vm.messages.first { $0.serverId == "server-background" })
+        XCTAssertNotEqual(background.id, tailId, "the background row is a separate message, not the tail")
+        XCTAssertEqual(vm.messages.filter { $0.role == .assistant }.count, 2)
+    }
+
+    func testUnmatchedTerminalStatusNeverLendsItsAssistantId() throws {
+        // Codex P1 #839 r3: recovery found a terminal row that is NOT our turn
+        // (stale previous turn / concurrent completion). Its assistantMessageId
+        // must not bind our streaming tail; a positive match still does.
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("আমাদের উত্তর", blockId: "t:p1")])
+        let status = try JSONDecoder().decode(TurnStatusResponse.self, from: Data(
+            #"{"status":"done","turnId":"other-turn","assistantMessageId":"stranger-row"}"#.utf8))
+        vm.applyTerminalStatusIdentity(status, matchedOurTurn: false)
+        XCTAssertNil(vm.messages.last?.serverId, "an unmatched terminal must not lend its row id to our tail")
+        vm.applyTerminalStatusIdentity(status, matchedOurTurn: true)
+        XCTAssertEqual(vm.messages.last?.serverId, "stranger-row")
+    }
+
+    func testPollingMatchRequiresTurnIdOrSendTimeEvidence() throws {
+        // Codex P1 #839 r4: the polling path decides adoption with
+        // isTerminalForOurTurn(requireEvidence: true) — only our turn id or a
+        // startedAt that matches our send counts; a concurrent turn does not.
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("আমাদের উত্তর", blockId: "t:p1")])
+        vm.debugSetCurrentTurnId("our-turn")
+        let ours = try JSONDecoder().decode(TurnStatusResponse.self, from: Data(
+            #"{"status":"done","turnId":"our-turn","assistantMessageId":"our-row"}"#.utf8))
+        let other = try JSONDecoder().decode(TurnStatusResponse.self, from: Data(
+            #"{"status":"done","turnId":"concurrent-turn","assistantMessageId":"stranger-row"}"#.utf8))
+        XCTAssertTrue(vm.debugIsTerminalForOurTurn(ours, requireEvidence: true))
+        XCTAssertFalse(vm.debugIsTerminalForOurTurn(other, requireEvidence: true))
+        vm.applyTerminalStatusIdentity(other, matchedOurTurn: vm.debugIsTerminalForOurTurn(other, requireEvidence: true))
+        XCTAssertNil(vm.messages.last?.serverId)
+        vm.applyTerminalStatusIdentity(ours, matchedOurTurn: vm.debugIsTerminalForOurTurn(ours, requireEvidence: true))
+        XCTAssertEqual(vm.messages.last?.serverId, "our-row")
+    }
+
+    func testSalvagedErrorReplyBindsItsExactRow() throws {
+        // Codex P1 #839 r5: a provider failure after partial work persists a
+        // salvaged assistant row and the terminal `error` carries its id.
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("আংশিক কাজ", blockId: "t:p1")])
+        let dto = try JSONDecoder().decode(AgentSSEEvent.self, from: Data(
+            #"{"type":"error","message":"provider down","messageId":"salvaged-row-3"}"#.utf8))
+        vm.debugApplyTurnEvents([AgentTurnEvent(dto: dto)])
+        XCTAssertEqual(vm.messages.last?.serverId, "salvaged-row-3")
+        XCTAssertEqual(vm.messages.last?.text, "আংশিক কাজ", "the partial work stays on screen")
+
+        // An error without an id binds nothing (unchanged behaviour).
+        let plain = AssistantVM()
+        plain.debugApplyTurnEvents([.turnProtocol(2), .textDelta("x", blockId: "t:p1"), .turnError(message: "boom")])
+        XCTAssertNil(plain.messages.last?.serverId)
+    }
+
+    func testTailWithKnownIdNeverFallsBackToPositionalPairing() throws {
+        // Codex P1 #839: the tail knows its row, but this history page does not
+        // carry it yet (not persisted / older page) while an unrelated assistant
+        // row is last. It must stay unpaired — not be claimed by that row.
+        let vm = AssistantVM()
+        vm.debugClearChronologyAnchors()
+        var owner = AgentChatMessage(id: "local-owner", role: .user, clientMessageId: "client-3",
+                                     outgoingState: .accepted, text: "রিপোর্ট")
+        owner.createdAt = "2026-08-23T01:20:00.000Z"
+        vm.messages = [owner]
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("স্ট্রিম", blockId: "t:p1"),
+                                 .done(messageId: "server-answer-late", tokensIn: nil, tokensOut: nil, costUsd: nil,
+                                       needContinue: false, apiRounds: nil, cacheCreation: nil,
+                                       cacheRead: nil, roundCostsUsd: nil)])
+        let tailId = try XCTUnwrap(vm.messages.last?.id)
+        let wire = try JSONDecoder().decode([AgentMessageWire].self, from: Data(#"""
+        [
+          {"id":"server-owner","clientMessageId":"client-3","role":"user","createdAt":"2026-08-23T01:20:00.000Z","content":[{"type":"text","text":"রিপোর্ট"}]},
+          {"id":"server-unrelated","role":"assistant","createdAt":"2026-08-23T01:20:03.000Z","content":[{"type":"text","text":"অন্য কাজের উত্তর"}]}
+        ]
+        """#.utf8))
+        vm.debugMergeServerMessages(wire)
+
+        let unrelated = try XCTUnwrap(vm.messages.first { $0.serverId == "server-unrelated" })
+        XCTAssertNotEqual(unrelated.id, tailId, "an unrelated last row must not claim the tail")
+        let tail = try XCTUnwrap(vm.messages.first { $0.id == tailId })
+        XCTAssertEqual(tail.serverId, "server-answer-late", "the tail keeps its own identity and waits for its row")
+        XCTAssertEqual(tail.text, "স্ট্রিম")
+    }
+
+    func testToolOnlyTailSurvivesAPollThatHasNotPersistedItYet() throws {
+        let vm = AssistantVM()
+        vm.debugClearChronologyAnchors()
+        var owner = AgentChatMessage(id: "local-owner", role: .user, clientMessageId: "client-2",
+                                     outgoingState: .accepted, text: "স্টক দেখো")
+        owner.createdAt = "2026-08-23T01:10:00.000Z"
+        vm.messages = [owner]
+        // Legacy v1 turn: the tool start cleared the narration, leaving a tool-only tail.
+        vm.debugApplyTurnEvents([.textDelta("দেখছি…"), .toolStart(id: "tool-1", name: "get_inventory_status", inputPretty: nil)])
+        XCTAssertEqual(vm.messages.last?.text, "")
+        XCTAssertFalse(vm.messages.last?.tools.isEmpty ?? true)
+
+        let wire = try JSONDecoder().decode([AgentMessageWire].self, from: Data(#"""
+        [{"id":"server-owner","clientMessageId":"client-2","role":"user","createdAt":"2026-08-23T01:10:00.000Z","content":[{"type":"text","text":"স্টক দেখো"}]}]
+        """#.utf8))
+        vm.debugMergeServerMessages(wire)
+
+        let tail = try XCTUnwrap(vm.messages.last)
+        XCTAssertEqual(tail.role, .assistant)
+        XCTAssertFalse(tail.tools.isEmpty, "a poll must not discard the tool-only streaming tail")
+    }
+}
