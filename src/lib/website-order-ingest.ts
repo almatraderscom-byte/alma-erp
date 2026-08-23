@@ -4,6 +4,7 @@ import { NOTIFY_ROLES } from '@/lib/notification-routing'
 import { sendOrderAlert } from '@/lib/resend'
 import { errorMeta, logEvent } from '@/lib/logger'
 import { enqueueOrderConfirmationSms } from '@/services/sms/events'
+import { orderDetailPath } from '@/lib/order-links'
 
 export type WebsiteOrderLine = {
   product_name: string
@@ -130,15 +131,17 @@ export async function ingestWebsiteOrder(input: WebsiteOrderPayload) {
   })
 
   void Promise.all([
-    // Role matrix (notification-routing.ts) — staff fulfil website orders too;
-    // ?q= lands the tap on the order itself.
+    // Role matrix (notification-routing.ts) — staff fulfil website orders too.
+    // A known ERP id opens the exact drawer; otherwise the link stays generic.
     notifyRoles(NOTIFY_ROLES.orderCreated, {
       businessId: 'ALMA_LIFESTYLE',
       type: 'ORDER_ASSIGNED',
       priority: 'NORMAL',
       title: 'New website order',
       message: `Order ${erpOrderId || input.website_order_id} from ${input.customer_name} (${input.website_order_id}).`,
-      actionUrl: `/orders?q=${encodeURIComponent(String(erpOrderId || input.website_order_id))}`,
+      // Only the ERP id is valid for GET /api/orders/orders?id=... . The
+      // storefront id is useful context, but must not masquerade as a record id.
+      actionUrl: orderDetailPath(erpOrderId),
     }),
     sendOrderAlert({
       businessId: 'ALMA_LIFESTYLE',

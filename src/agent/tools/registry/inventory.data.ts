@@ -265,7 +265,7 @@ export const INVENTORY_ROWS: readonly InventoryRow[] = [
   {"name":"meta_ads_list_tools","domain":"meta_ads","mode":"read","risk":"low","groups":["growth"],"pools":["lifestyle"],"hasSchema":true},
   {"name":"meta_ads_update_entity","domain":"meta_ads","mode":"stage","risk":"high","groups":["growth"],"pools":["lifestyle"],"hasSchema":true},
   {"name":"open_live_browser","domain":"browser","mode":"write","risk":"medium","groups":["base"],"pools":["lifestyle","trading"],"hasSchema":true},
-  {"name":"order_lifecycle_scan","domain":"erp","mode":"read","risk":"low","groups":["erp"],"pools":["lifestyle","trading"],"hasSchema":false},
+  {"name":"order_lifecycle_scan","domain":"erp","mode":"read","risk":"low","groups":["erp"],"pools":["lifestyle"],"hasSchema":false},
   {"name":"outbound_phone_call","domain":"calls","mode":"stage","risk":"high","groups":["base"],"pools":["lifestyle","trading"],"hasSchema":true},
   {"name":"pause_campaign","domain":"ads","mode":"stage","risk":"high","groups":["growth"],"pools":["lifestyle"],"hasSchema":true},
   {"name":"pause_content_engine","domain":"content","mode":"write","risk":"medium","groups":["content"],"pools":["lifestyle"],"hasSchema":false},

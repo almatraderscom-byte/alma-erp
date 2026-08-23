@@ -456,17 +456,19 @@ struct EmployeeCorrectionSnapshot: Decodable, Equatable {
 struct EmployeePendingCorrection: Decodable, Identifiable, Equatable {
     let id: String
     let type: String?
+    let businessId: String?
     let createdAt: String?
     let reason: String?
     let requesterName: String?
     let payload: EmployeeCorrectionSnapshot?
 
-    private enum Keys: String, CodingKey { case id, type, createdAt, reason, requester, payloadSnapshot }
+    private enum Keys: String, CodingKey { case id, type, businessId, createdAt, reason, requester, payloadSnapshot }
     private enum RequesterKeys: String, CodingKey { case name }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         type = try? c.decodeIfPresent(String.self, forKey: .type)
+        businessId = try? c.decodeIfPresent(String.self, forKey: .businessId)
         createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
         reason = try? c.decodeIfPresent(String.self, forKey: .reason)
         let r = try? c.nestedContainer(keyedBy: RequesterKeys.self, forKey: .requester)
@@ -487,13 +489,11 @@ struct EmployeeApprovalsListResponse: Decodable {
 
 // MARK: - View models
 
-/// The web BusinessContext default — HR roster lives in the primary business.
-private let employeesBusinessId = "ALMA_LIFESTYLE"
-
 @available(iOS 17.0, *)
 @Observable
 @MainActor
 final class EmployeesVM {
+    let businessId: String
     var employees: [EmployeeRosterItem] = []
     /// Full LinkableUser list from include_users=1 — add-employee picker + link flows.
     var users: [EmployeeLinkedUser] = []
@@ -505,6 +505,10 @@ final class EmployeesVM {
     var error: String? = nil
     var notice: String? = nil              // success line (the web's toast)
     var authExpired = false
+
+    init(businessId: String = AlmaAccess.Context.currentId) {
+        self.businessId = businessId
+    }
 
     /// Users with no link and no stale ID — the "Link roster row to user" choices.
     var unlinkableUsers: [EmployeeLinkedUser] {
@@ -518,7 +522,7 @@ final class EmployeesVM {
         do {
             let resp: EmployeesListResponse = try await AlmaAPI.shared.get(
                 "/api/hr/employees",
-                query: ["business_id": employeesBusinessId, "include_users": "1"])
+                query: ["business_id": businessId, "include_users": "1"])
             employees = resp.employees
             users = resp.users
             var map: [String: String] = [:]
@@ -562,7 +566,7 @@ final class EmployeesVM {
         defer { linkBusyUserId = nil }
         do {
             var body: [String: String] = [
-                "business_id": employeesBusinessId,
+                "business_id": businessId,
                 "action": action,
                 "user_id": userId,
             ]
@@ -594,6 +598,7 @@ final class EmployeesVM {
 @Observable
 @MainActor
 final class EmployeeDetailVM {
+    let businessId: String
     var wallet: EmployeeWalletDetail? = nil
     var attendance: EmployeeAttendanceDetail? = nil
     var legacy: [EmployeePayrollTx] = []
@@ -614,6 +619,10 @@ final class EmployeeDetailVM {
     /// Ran anything that changed the roster (salary edit)? The list screen refreshes.
     var rosterDirty = false
 
+    init(businessId: String = AlmaAccess.Context.currentId) {
+        self.businessId = businessId
+    }
+
     func load(empId: String) async {
         loading = true
         error = nil
@@ -621,11 +630,11 @@ final class EmployeeDetailVM {
         let encoded = empId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? empId
         // The four fetches are independent — a failure in one must not blank the rest.
         async let walletTask: EmployeeWalletDetail? = try? AlmaAPI.shared.get(
-            "/api/payroll/wallet/\(encoded)", query: ["business_id": employeesBusinessId])
+            "/api/payroll/wallet/\(encoded)", query: ["business_id": businessId])
         async let attendanceTask: EmployeeAttendanceDetail? = try? AlmaAPI.shared.get(
-            "/api/attendance", query: ["business_id": employeesBusinessId, "employee_id": empId])
+            "/api/attendance", query: ["business_id": businessId, "employee_id": empId])
         async let legacyTask: EmployeePayrollListResponse? = try? AlmaAPI.shared.get(
-            "/api/hr/payroll", query: ["business_id": employeesBusinessId, "emp_id": empId])
+            "/api/hr/payroll", query: ["business_id": businessId, "emp_id": empId])
         async let correctionsTask: EmployeeApprovalsListResponse? = try? AlmaAPI.shared.get(
             "/api/approvals", query: ["status": "PENDING", "module": "PAYROLL", "limit": "80"])
         let (w, a, l, p) = await (walletTask, attendanceTask, legacyTask, correctionsTask)
@@ -633,9 +642,10 @@ final class EmployeeDetailVM {
         wallet = w
         attendance = a
         legacy = l?.transactions ?? []
-        // Web filter parity: SALARY_CORRECTION rows whose payload targets this employee.
+        // Web filter parity: SALARY_CORRECTION rows of THIS business whose payload
+        // targets this employee (IDs repeat across businesses — Codex P2).
         pendingCorrections = (p?.approvals ?? []).filter {
-            $0.type == "SALARY_CORRECTION" && $0.payload?.employeeId == empId
+            $0.type == "SALARY_CORRECTION" && $0.businessId == businessId && $0.payload?.employeeId == empId
         }
         if w == nil && a == nil {
             error = "বিস্তারিত লোড করা যায়নি — আবার চেষ্টা করুন।"
@@ -675,7 +685,7 @@ final class EmployeeDetailVM {
                 "date": AnyEncodable(date),
                 "period_ym": AnyEncodable(periodYm),
                 "note": AnyEncodable(note),
-                "business_id": AnyEncodable(employeesBusinessId),
+                "business_id": AnyEncodable(businessId),
             ]
             let resp: EmployeePayrollAddResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/hr/payroll", body: body)
@@ -724,7 +734,7 @@ final class EmployeeDetailVM {
         do {
             var body: [String: AnyEncodable] = [
                 "amount": AnyEncodable(amount),
-                "businessId": AnyEncodable(employeesBusinessId),
+                "businessId": AnyEncodable(businessId),
                 "effectiveDate": AnyEncodable(effectiveDate),
             ]
             let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -760,7 +770,7 @@ final class EmployeeDetailVM {
             var body: [String: AnyEncodable] = [
                 "accrual_entry_id": AnyEncodable(accrualEntryId),
                 "employee_id": AnyEncodable(empId),
-                "business_id": AnyEncodable(employeesBusinessId),
+                "business_id": AnyEncodable(businessId),
                 "period_ym": AnyEncodable(periodYm),
                 "proposed_amount": AnyEncodable(proposedAmount),
                 "reason": AnyEncodable(reason),
@@ -798,7 +808,7 @@ final class EmployeeDetailVM {
         defer { reversingEntryId = nil }
         do {
             let body: [String: String] = [
-                "business_id": employeesBusinessId,
+                "business_id": businessId,
                 "accrual_entry_id": entryId,
             ]
             let resp: EmployeeOkResponse = try await AlmaAPI.shared.send(
@@ -825,7 +835,7 @@ final class EmployeeDetailVM {
         do {
             let body: [String: String] = [
                 "employee_id": empId,
-                "business_id": employeesBusinessId,
+                "business_id": businessId,
             ]
             let resp: EmployeeAdvanceRecoveryResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/payroll/wallet/advance-recovery", body: body)
@@ -872,7 +882,7 @@ final class EmployeeDetailVM {
 @available(iOS 17.0, *)
 struct EmployeesScreen: View {
     @Environment(\.colorScheme) private var colorScheme
-    @State private var vm = EmployeesVM()
+    @State private var vm: EmployeesVM
     @State private var searchQuery = ""
     @State private var roleFilter = "ALL"
     @State private var selected: EmployeeRosterItem? = nil
@@ -881,7 +891,17 @@ struct EmployeesScreen: View {
     /// Deep-link target: /employees/{empId} opens this employee's native detail
     /// sheet as soon as the roster loads (approvals/payroll name taps used to
     /// escape to the WEB profile — owner report 2026-07-15).
-    var focusEmpId: String? = nil
+    let focusEmpId: String?
+    let businessId: String
+
+    init(openWeb: @escaping (_ path: String, _ title: String) -> Void,
+         focusEmpId: String? = nil,
+         businessId: String = AlmaAccess.Context.currentId) {
+        self.openWeb = openWeb
+        self.focusEmpId = focusEmpId
+        self.businessId = businessId
+        _vm = State(initialValue: EmployeesVM(businessId: businessId))
+    }
 
     var body: some View {
         ScrollView {
@@ -890,7 +910,7 @@ struct EmployeesScreen: View {
                 if let err = vm.error { noticeCard(err) }
                 if let ok = vm.notice { successCard(ok) }
                 statsStrip
-                addEmployeeButton
+                if AlmaSession.shared.can(.employeeWrite) { addEmployeeButton }
                 searchBar
                 roleChips
                 if !vm.loading || !vm.employees.isEmpty { countLine }
@@ -1228,7 +1248,7 @@ private struct EmployeeDetailSheet: View {
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
-    @State private var vm = EmployeeDetailVM()
+    @State private var vm: EmployeeDetailVM
     @State private var showBalanceNote = false
     @State private var showPay = false
     @State private var showSalary = false
@@ -1245,6 +1265,17 @@ private struct EmployeeDetailSheet: View {
     @State private var photoItem: PhotosPickerItem? = nil
     @State private var photoBusy = false
     @State private var photoNotice: String? = nil
+
+    init(employee: EmployeeRosterItem,
+         linkedUserId: String?,
+         listVM: EmployeesVM,
+         openWeb: @escaping (_ path: String, _ title: String) -> Void) {
+        self.employee = employee
+        self.linkedUserId = linkedUserId
+        self.listVM = listVM
+        self.openWeb = openWeb
+        _vm = State(initialValue: EmployeeDetailVM(businessId: listVM.businessId))
+    }
 
     var body: some View {
         ScrollView {
@@ -1328,14 +1359,20 @@ private struct EmployeeDetailSheet: View {
 
     private var actionsRow: some View {
         VStack(spacing: 8) {
+            // Web CAPABILITIES: payroll entry = payrollWrite (SUPER_ADMIN/HR),
+            // salary edit = employeeWrite (SUPER_ADMIN/HR).
             HStack(spacing: 8) {
+                if AlmaSession.shared.can(.payrollWrite) {
                 actionButton("+ Payroll entry", icon: "banknote", prominent: true) {
                     vm.actionError = nil; vm.notice = nil
                     showPay = true
                 }
+                }
+                if AlmaSession.shared.can(.employeeWrite) {
                 actionButton("Edit salary", icon: "pencil") {
                     vm.actionError = nil; vm.notice = nil
                     showSalary = true
+                }
                 }
             }
             HStack(spacing: 8) {
@@ -2366,7 +2403,7 @@ private struct EmployeeAddSheet: View {
             "monthly_salary": AnyEncodable(Double(salaryText) ?? 0),
             "status": AnyEncodable(status),
             "notes": AnyEncodable(notes),
-            "business_id": AnyEncodable("ALMA_LIFESTYLE"),
+            "business_id": AnyEncodable(vm.businessId),
         ]
         if !trimmedEmpId.isEmpty { payload["emp_id"] = AnyEncodable(trimmedEmpId) }
         if !selectedUserId.isEmpty { payload["user_id"] = AnyEncodable(selectedUserId) }

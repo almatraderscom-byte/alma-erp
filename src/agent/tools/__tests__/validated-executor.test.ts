@@ -151,6 +151,23 @@ describe('validated executor (Phase 2)', () => {
     expect(seen.count).toBe(2)
   })
 
+  it('runRegisteredTool never adds owner-only internal entity links', async () => {
+    const tool = fakeTool({
+      name: 'get_customer_order_status',
+      handler: async () => ({
+        success: true,
+        data: {
+          orders: [{ id: 'erp-private-42', orderNumber: 'AL-42', source: 'erp' }],
+        },
+      }),
+    })
+
+    const res = await runRegisteredTool(tool, { count: 1 }, {}, {})
+
+    expect(res.success).toBe(true)
+    expect(res.entityLinks).toBeUndefined()
+  })
+
   it('envelope: handler failure gets a stable errorCode + retryable', async () => {
     clearValidatorCache()
     const tool = fakeTool({
@@ -206,6 +223,20 @@ describe('validated executor (Phase 2)', () => {
     const res = await executeTool('get_current_datetime', {})
     expect(res.success).toBe(true)
     expect((res.data as { timezone: string }).timezone).toContain('Asia/Dhaka')
+  })
+
+  it('never exposes Lifestyle order identities from the Trading lifecycle tool pool', async () => {
+    const res = await executeTool('order_lifecycle_scan', {}, {
+      businessId: 'ALMA_TRADING',
+    })
+
+    expect(res).toMatchObject({
+      success: false,
+      errorCode: 'wrong_business',
+      retryable: false,
+    })
+    expect(res.entityLinks).toBeUndefined()
+    expect(JSON.stringify(res)).not.toContain('orderEntities')
   })
 })
 

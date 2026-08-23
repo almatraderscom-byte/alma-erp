@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ModelEntry } from '@/agent/lib/models/registry'
+import type { AgentEntityLink } from '@/agent/lib/entity-links'
 
 const mocks = vi.hoisted(() => ({
   turns: [] as Array<Array<Record<string, unknown>>>,
   requests: [] as Array<Record<string, unknown>>,
-  executeTool: vi.fn(async () => ({ success: true, data: { checked: true } })),
+  executeTool: vi.fn(async (): Promise<{
+    success: boolean
+    data: unknown
+    entityLinks?: AgentEntityLink[]
+  }> => ({ success: true, data: { checked: true } })),
 }))
 
 vi.mock('@/agent/lib/models/adapters', () => ({
@@ -97,5 +102,33 @@ describe('adapter worker completion contract', () => {
     const result = await run(1)
     expect(result.completed).toBe(false)
     expect(mocks.requests).toHaveLength(2)
+  })
+
+  it('returns verified entity links accumulated from specialist tool results', async () => {
+    mocks.executeTool.mockResolvedValueOnce({
+      success: true,
+      data: { checked: true },
+      entityLinks: [{
+        entityType: 'order',
+        entityId: 'db-order-1',
+        businessId: 'ALMA_LIFESTYLE',
+        label: '#ALM-9081',
+        href: '/orders/db-order-1?business_id=ALMA_LIFESTYLE',
+        aliases: ['ALM-9081'],
+      }],
+    })
+    mocks.turns.push(
+      [
+        { type: 'tool_start', id: 'call-1', name: 'get_orders' },
+        { type: 'tool_input', id: 'call-1', input: { status: 'pending' } },
+      ],
+      [{ type: 'text_delta', text: 'অর্ডার ALM-9081-এ সমস্যা আছে।' }],
+    )
+
+    const result = await run(1)
+
+    expect(result.entityLinks).toEqual([
+      expect.objectContaining({ entityId: 'db-order-1', href: '/orders/db-order-1?business_id=ALMA_LIFESTYLE' }),
+    ])
   })
 })

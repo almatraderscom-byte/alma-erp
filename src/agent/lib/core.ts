@@ -126,6 +126,10 @@ import {
   type WorkStepsBlocker,
 } from '@/agent/lib/work-steps'
 import {
+  extractAgentEntityLinksFromRecords,
+  linkifyAgentEntityText,
+} from '@/agent/lib/entity-links'
+import {
   deriveOwnerTurnAuthorization,
   filterToolsForOwnerTurn,
   isReadOnlyPlanControlTool,
@@ -1329,6 +1333,7 @@ export async function* runAgentTurn(
       return null
     }
   }
+  const verifiedEntityLinks = () => extractAgentEntityLinksFromRecords(toolRecords, { businessId })
   // Confirm cards emitted this turn — persisted into the assistant message so the
   // card (and later its approved/rejected outcome) survives a page reload.
   const emittedConfirmCards: Array<{ type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; imageModelSelection?: unknown; imageRenderSelection?: unknown }> = []
@@ -1942,7 +1947,7 @@ export async function* runAgentTurn(
       type ToolBlock = Extract<CollectedBlock, { type: 'tool_use' }>
       type ToolExecResult = {
         tb: ToolBlock
-        result: { success: boolean; data?: unknown; error?: string }
+        result: ToolResult
         durationMs: number
       }
 
@@ -2434,7 +2439,9 @@ export async function* runAgentTurn(
 
         toolRecords.push({
           id: tb.id, toolName: tb.name, input: tb.input,
-          output: result.data !== undefined ? { data: result.data } : null,
+          output: result.data !== undefined
+            ? { data: result.data, ...(result.entityLinks?.length ? { entityLinks: result.entityLinks } : {}) }
+            : null,
           status: result.success ? 'success' : 'error',
           durationMs, error: result.error ?? null,
         })
@@ -2807,6 +2814,18 @@ export async function* runAgentTurn(
         yield { type: 'text_delta', delta: joinedText }
       }
     }
+    // The legacy native-Anthropic loop streams model prose before the final
+    // block is known. Reconcile once at convergence using the same verified,
+    // route-allowlisted metadata as every other provider.
+    const entityLinks = verifiedEntityLinks()
+    const linkedJoinedText = linkifyAgentEntityText(joinedText, entityLinks, {
+      appendUnmentioned: true,
+      linkMentions: false,
+    })
+    if (linkedJoinedText !== joinedText) {
+      yield { type: 'text_delta', delta: linkedJoinedText.slice(joinedText.length) }
+      joinedText = linkedJoinedText
+    }
     const storedContent: StoredContentBlock[] = [{ type: 'text', text: joinedText }]
     // Append confirm-card breadcrumbs so the approval card (and its eventual
     // approved/rejected outcome) survives a page reload — issue: cards vanished
@@ -2830,7 +2849,7 @@ export async function* runAgentTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload; the GET route surfaces it as
         // `thinking`/`thinkingMs` and history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: chatModel.id, apiModel, provider: chatModel.provider, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: chatModel.id, apiModel, provider: chatModel.provider, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
       },
     })
     nativeFinalMessageSaved = true
