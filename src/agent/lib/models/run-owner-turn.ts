@@ -228,7 +228,7 @@ import {
 import { extractUserProvidedReferences } from '@/agent/lib/references/external-url'
 import { compileAgentReferenceText } from '@/agent/lib/references/compiler'
 import { mergeAgentReferences } from '@/agent/lib/references/validator'
-import { exposedAgentReferences, toolResultForReferenceRollout } from '@/agent/lib/references/flags'
+import { exposedAgentReferences, shouldRenderAgentReferences, toolResultForReferenceRollout } from '@/agent/lib/references/flags'
 import {
   buildSavedSalvageEventSequence,
 } from '@/agent/lib/models/salvage-contract'
@@ -2197,6 +2197,11 @@ async function* runAlternateProviderTurn(
     businessId,
     roles: ['SUPER_ADMIN'],
   })
+  // ONE authoritative answer to "is the verified-reference contract live for
+  // this turn?". The clients must never infer it from an empty array: inferring
+  // "inactive" turns legacy links inert in shadow, inferring "active" leaves
+  // model-authored links clickable while the contract is ON (Codex P1 ×2, #845).
+  const referenceContractActive = shouldRenderAgentReferences()
   const verifiedReferences = () => mergeAgentReferences(
     userProvidedReferences,
     extractAgentReferencesFromRecords(toolRecords, { businessId, roles: ['SUPER_ADMIN'] }),
@@ -5284,7 +5289,7 @@ async function* runAlternateProviderTurn(
       finalText = linkedFinalText
     }
     if (visibleReferences.length > 0) {
-      yield { type: 'references', references: visibleReferences }
+      yield { type: 'references', references: visibleReferences, referencesActive: true }
     }
 
     // Prefer OpenRouter's actual billed cost; fall back to the local estimate only
@@ -5697,7 +5702,7 @@ async function* runAlternateProviderTurn(
       dedupKey: `chat:msg:${savedMsg.id}`,
     })
 
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: visibleReferences.length > 0 ? visibleReferences : undefined }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: referenceContractActive ? visibleReferences : undefined, referencesActive: referenceContractActive }
   } catch (err) {
     if (signal?.aborted) {
       // The 280s cap aborted mid-round (the adapter stream throws). Salvage what
@@ -5820,9 +5825,9 @@ async function* runAlternateProviderTurn(
           // The provider may have thrown after an arbitrary chunk. Reset every
           // live draft/buffer only AFTER the canonical row exists, then `done`
           // atomically commits exactly that persisted salvage on web and native.
-          const doneEvent: AgentEvent = { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvageCostUsd, needContinue, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: visibleReferences.length > 0 ? visibleReferences : undefined }
+          const doneEvent: AgentEvent = { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvageCostUsd, needContinue, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: referenceContractActive ? visibleReferences : undefined, referencesActive: referenceContractActive }
           if (visibleReferences.length > 0) {
-            yield { type: 'references', references: visibleReferences }
+            yield { type: 'references', references: visibleReferences, referencesActive: true }
           }
           if (proseLifecycle?.protocol === 2) {
             // v2: the exact persisted blocks already reached the live reducers
@@ -6009,9 +6014,9 @@ async function* runAlternateProviderTurn(
       const salvage = await salvagePartialWorkOnError()
       if (salvage) {
         const visibleReferences = exposedAgentReferences(salvage.references)
-        const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: visibleReferences.length ? visibleReferences : undefined }
+        const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: referenceContractActive ? visibleReferences : undefined, referencesActive: referenceContractActive }
         if (visibleReferences.length) {
-          yield { type: 'references', references: visibleReferences }
+          yield { type: 'references', references: visibleReferences, referencesActive: true }
         }
         if (proseLifecycle?.protocol === 2) {
           // v2: the salvage committed the exact persisted blocks (settle + the
@@ -6097,9 +6102,9 @@ async function* runAlternateProviderTurn(
     const salvage = await salvagePartialWorkOnError()
     if (salvage) {
       const visibleReferences = exposedAgentReferences(salvage.references)
-      const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: visibleReferences.length ? visibleReferences : undefined }
+      const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: referenceContractActive ? visibleReferences : undefined, referencesActive: referenceContractActive }
       if (visibleReferences.length) {
-        yield { type: 'references', references: visibleReferences }
+        yield { type: 'references', references: visibleReferences, referencesActive: true }
       }
       if (proseLifecycle?.protocol === 2) {
         // v2: the salvage committed the exact persisted blocks (settle + the

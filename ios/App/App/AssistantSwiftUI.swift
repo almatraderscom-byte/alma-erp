@@ -9280,13 +9280,16 @@ final class AssistantVM {
                     queuedOwnerMessages.removeAll { delivered.contains($0.id) }
                     for id in delivered { steerAwaitingDelivery.removeValue(forKey: id) }
                 }
-            case .references(let references):
+            case .references(let references, let active):
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     // This projection is authoritative, including [] when the
                     // rollout kill-switch clears links written during ON.
-                    messages[i].references = AgentReferenceV1Wire.trustedOnly(references)
+                    messages[i].references = active
+                        ? AgentReferenceV1Wire.trustedOnly(references)
+                        : []
                     messages[i].referenceProjectionPresent = true
+                    messages[i].referencesActive = active
                     touchedStream = true
                 }
             case .preamble:
@@ -9370,7 +9373,8 @@ final class AssistantVM {
                     adoptNewConversationId(newId)
                 }
             case .done(let doneMessageId, let tokensIn, let tokensOut, let costUsd, let needContinue, let apiRounds,
-                       let cacheCreation, let cacheRead, let roundCostsUsd, let doneReferences):
+                       let cacheCreation, let cacheRead, let roundCostsUsd, let doneReferences,
+                       let doneReferencesActive):
                 // Terminal server truth is also an acceptance proof. Some direct
                 // production streams can coalesce/omit the early id envelope;
                 // clear the matching focused composer here before finalizeTurn
@@ -9389,11 +9393,19 @@ final class AssistantVM {
                     // write can no longer canonicalize this tail against the
                     // wrong row.
                     if let doneMessageId, !doneMessageId.isEmpty { messages[i].serverId = doneMessageId }
-                    // Terminal reference projection is authoritative for this row.
-                    if let doneReferences {
-                        messages[i].references = AgentReferenceV1Wire.trustedOnly(doneReferences)
+                    // Terminal reference projection is authoritative for this
+                    // row — including "the contract is OFF", which must clear
+                    // links rather than activate an empty set (Codex P1 #845).
+                    // An older server omits the flag; a non-empty projection
+                    // from one can only mean the rollout was ON.
+                    let terminalActive = doneReferencesActive
+                        ?? (doneReferences.map { !$0.isEmpty })
+                    if let terminalActive {
+                        messages[i].references = terminalActive
+                            ? AgentReferenceV1Wire.trustedOnly(doneReferences ?? [])
+                            : []
                         messages[i].referenceProjectionPresent = true
-                        messages[i].referencesActive = true
+                        messages[i].referencesActive = terminalActive
                     }
                     if messages[i].proseProtocol == 2 {
                         messages[i].settleProse()

@@ -4536,22 +4536,38 @@ final class AssistantParityV2Tests: XCTestCase {
             id: "AL-42")
         let vm = AssistantVM()
 
-        vm.debugApplyTurnEvents([.references([first])])
+        vm.debugApplyTurnEvents([.references([first], active: true)])
         XCTAssertEqual(vm.messages.last?.references.map(\.refId), [first.refId])
         XCTAssertEqual(vm.messages.last?.referenceProjectionPresent, true)
 
-        vm.debugApplyTurnEvents([.references([replacement])])
+        vm.debugApplyTurnEvents([.references([replacement], active: true)])
         XCTAssertEqual(
             vm.messages.last?.references.map(\.refId),
             [replacement.refId],
             "a later server projection replaces the prior set instead of merging")
 
-        vm.debugApplyTurnEvents([.references([])])
+        vm.debugApplyTurnEvents([.references([], active: true)])
         XCTAssertEqual(vm.messages.last?.references, [])
         XCTAssertEqual(
             vm.messages.last?.referenceProjectionPresent,
             true,
             "an explicit empty projection remains authoritative and clears stale trusted links")
+    }
+
+    func testHiddenRolloutTerminalClearsInsteadOfActivatingAnEmptyContract() throws {
+        // Codex P1 (PR #845): a replayed/tail `done` in off/shadow carries an
+        // empty projection. Reading that as a LIVE contract turned every legacy
+        // link and trusted screenshot inert on worker-fallback and reconnects.
+        let reference = try sectionReference(path: "/agent/costs", label: "Costs")
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.references([reference], active: true)])
+        XCTAssertEqual(vm.messages.last?.referencesActive, true)
+
+        vm.debugApplyTurnEvents([.references([], active: false)])
+        XCTAssertEqual(vm.messages.last?.references, [])
+        XCTAssertEqual(
+            vm.messages.last?.referencesActive, false,
+            "an explicitly inactive projection must fall back to legacy rendering")
     }
 
     func testExternalURLGateRejectsClientSideCanonicalizationAttacks() throws {

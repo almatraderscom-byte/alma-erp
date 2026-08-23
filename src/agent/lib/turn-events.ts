@@ -85,8 +85,11 @@ export function sanitizeTurnEventPayloadForReferenceRollout(
   const clean = strip(payload)
   if (!clean || typeof clean !== 'object' || Array.isArray(clean)) return clean
   const event = clean as Record<string, unknown>
+  // An empty array alone reads as "the contract is live and this reply cited
+  // nothing", which made replayed/tail terminals turn legacy links and trusted
+  // screenshots inert in hidden mode (Codex P1, PR #845). Say inactive out loud.
   return event.type === 'references' || event.type === 'done'
-    ? { ...event, references: [] }
+    ? { ...event, references: [], referencesActive: false }
     : event
 }
 

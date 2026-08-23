@@ -1576,11 +1576,17 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           }))
         } else if (evt.type === 'references') {
           const incoming = Array.isArray(evt.references) ? evt.references as AgentReferenceV1[] : []
+          // The server states whether the contract is live; never infer it from
+          // the array. An older server that omits the flag but sends a non-empty
+          // projection can only be running it ON (Codex P1 #845).
+          const active = evt.referencesActive === undefined
+            ? incoming.length > 0
+            : evt.referencesActive === true
           setMessages((prev) => prev.map((m) => {
             if (m.id !== assistantMsgId) return m
             // Server projections are authoritative, including [] after a
             // rollout kill-switch. Merging would retain stale ON-era links.
-            return { ...m, references: incoming, referencesActive: true }
+            return { ...m, references: active ? incoming : [], referencesActive: active }
           }))
         } else if (evt.type === 'done') {
           gotStreamDone = true
@@ -1612,10 +1618,18 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   durationMs: evt.durationMs as number | undefined,
                   apiRounds: (evt.apiRounds as number | undefined) ?? undefined,
                   roundCostsUsd: (evt.roundCostsUsd as number[] | undefined) ?? undefined,
-                  references: Array.isArray(evt.references)
-                    ? evt.references as AgentReferenceV1[]
-                    : m.references,
-                  referencesActive: Array.isArray(evt.references) ? true : m.referencesActive,
+                  ...(() => {
+                    const projected = Array.isArray(evt.references)
+                      ? evt.references as AgentReferenceV1[]
+                      : undefined
+                    const active = evt.referencesActive === undefined
+                      ? (projected ? projected.length > 0 : m.referencesActive)
+                      : evt.referencesActive === true
+                    return {
+                      references: active ? (projected ?? m.references) : [],
+                      referencesActive: active,
+                    }
+                  })(),
                 }
               : m
           ))

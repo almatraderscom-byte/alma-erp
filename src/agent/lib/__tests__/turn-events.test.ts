@@ -113,6 +113,9 @@ describe('A2 — replay + live tail ordering', () => {
     })).toEqual({
       type: 'done',
       references: [],
+      // Explicitly inactive, not just empty: the clients must not read a hidden
+      // replay as a live contract and turn legacy links inert (Codex P1 #845).
+      referencesActive: false,
       presentation: { text: 'ok' },
     })
     expect(sanitizeTurnEventPayloadForReferenceRollout(persisted, {
@@ -124,7 +127,7 @@ describe('A2 — replay + live tail ordering', () => {
     expect(sanitizeTurnEventPayloadForReferenceRollout({
       type: 'references', references: [{ refId: 'old' }], other: ['kept'],
     }, { AGENT_REFERENCES_ROLLOUT: mode })).toEqual({
-      type: 'references', references: [], other: ['kept'],
+      type: 'references', references: [], referencesActive: false, other: ['kept'],
     })
   })
 })

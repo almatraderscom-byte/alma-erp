@@ -134,7 +134,7 @@ import { extractAgentReferencesFromRecords } from '@/agent/lib/references/extrac
 import { extractUserProvidedReferences } from '@/agent/lib/references/external-url'
 import { compileAgentReferenceText } from '@/agent/lib/references/compiler'
 import { mergeAgentReferences } from '@/agent/lib/references/validator'
-import { exposedAgentReferences, toolResultForReferenceRollout } from '@/agent/lib/references/flags'
+import { exposedAgentReferences, shouldRenderAgentReferences, toolResultForReferenceRollout } from '@/agent/lib/references/flags'
 import {
   deriveOwnerTurnAuthorization,
   filterToolsForOwnerTurn,
@@ -320,7 +320,7 @@ export type AgentEvent =
       snippets: string[]
     }
   /** Structured destinations arrive independently of prose and are replay-safe. */
-  | { type: 'references'; references: AgentReferenceV1[] }
+  | { type: 'references'; references: AgentReferenceV1[]; referencesActive?: boolean }
   // needContinue: the turn hit the serverless deadline mid-task (browser work
   // unfinished) — the web client auto-sends a bounded "continue" so a long task
   // finishes end-to-end without the owner typing it every ~4.5 minutes.
@@ -331,7 +331,13 @@ export type AgentEvent =
        * visible instead of silent — which is the owner's "must sync" condition.
        */
       permissionMode?: string
-      references?: AgentReferenceV1[] }
+      references?: AgentReferenceV1[]
+      /** Is the verified-reference contract authoritative for this reply? An
+       *  empty/absent `references` cannot say whether the rollout is hidden or
+       *  the reply simply cited nothing, and the clients must not guess: guessing
+       *  either turns legacy links inert in shadow, or leaves model-authored
+       *  links clickable while the contract is ON (Codex P1 ×2, PR #845). */
+      referencesActive?: boolean }
   /** `messageId`: the assistant row salvaged before the failure (partial work + warning). */
   | { type: 'error'; message: string; messageId?: string }
 
@@ -1365,11 +1371,16 @@ export async function* runAgentTurn(
 
   if (intakeAutoReply) {
     const intakeReferences = userProvidedReferences
+    // ONE authoritative answer to "is the verified-reference contract live for
+    // this turn?". The clients must never infer it from an empty array: inferring
+    // "inactive" turns legacy links inert in shadow, inferring "active" leaves
+    // model-authored links clickable while the contract is ON (Codex P1 ×2, #845).
+    const intakeContractActive = shouldRenderAgentReferences()
     const visibleIntakeReferences = exposedAgentReferences(intakeReferences)
     const replyText = compileAgentReferenceText(intakeAutoReply, intakeReferences, { appendUnmentioned: false })
     yield { type: 'text_delta', delta: replyText }
     if (visibleIntakeReferences.length) {
-      yield { type: 'references', references: visibleIntakeReferences }
+      yield { type: 'references', references: visibleIntakeReferences, referencesActive: true }
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
@@ -1386,7 +1397,7 @@ export async function* runAgentTurn(
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: replyText }])
     await touchConversationActivity(conversationId)
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0, references: visibleIntakeReferences.length ? visibleIntakeReferences : undefined }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0, references: intakeContractActive ? visibleIntakeReferences : undefined, referencesActive: intakeContractActive }
     return
   }
 
@@ -2870,6 +2881,7 @@ export async function* runAgentTurn(
     // route-allowlisted metadata as every other provider.
     const entityLinks = verifiedEntityLinks()
     const references = verifiedReferences()
+    const referenceContractActive = shouldRenderAgentReferences()
     const visibleReferences = exposedAgentReferences(references)
     const legacyLinkedText = linkifyAgentEntityText(joinedText, entityLinks, {
       appendUnmentioned: true,
@@ -2884,7 +2896,7 @@ export async function* runAgentTurn(
       joinedText = linkedJoinedText
     }
     if (visibleReferences.length > 0) {
-      yield { type: 'references', references: visibleReferences }
+      yield { type: 'references', references: visibleReferences, referencesActive: true }
     }
     const storedContent: StoredContentBlock[] = [{ type: 'text', text: joinedText }]
     // Append confirm-card breadcrumbs so the approval card (and its eventual
@@ -2995,7 +3007,8 @@ export async function* runAgentTurn(
       cacheRead: totalCacheReadTokens,
       costUsd,
       needContinue: coreTaskUnfinished,
-      references: visibleReferences.length > 0 ? visibleReferences : undefined,
+      references: referenceContractActive ? visibleReferences : undefined,
+      referencesActive: referenceContractActive,
     }
   } catch (err) {
     // A provider throw/abort may happen after unverified prose was already
