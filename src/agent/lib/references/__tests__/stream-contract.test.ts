@@ -63,3 +63,19 @@ describe('verified-reference stream contract', () => {
     expect(source).toContain('references: [], referencesActive: false')
   })
 })
+
+describe('saved rows agree with their terminal', () => {
+  // Codex P2 round 6: the live terminal activated the contract but the SAVED
+  // row omitted the marker, so reloading a cached answer read it as
+  // pre-contract history and its Markdown URLs went clickable again.
+  it.each(SOURCES)('%s: every persisted usage block carries the marker', (path) => {
+    const lines = read(path).split('\n')
+    const misses: string[] = []
+    lines.forEach((line, index) => {
+      if (!line.includes('usage: {')) return
+      const block = lines.slice(index, index + 14).join('\n')
+      if (!block.includes('referencesActive')) misses.push(`${path}:${index + 1}`)
+    })
+    expect(misses, misses.join(', ')).toEqual([])
+  })
+})

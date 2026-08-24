@@ -6271,6 +6271,9 @@ export async function* runOwnerTurn(
           output_tokens: 0,
           model: 'server-direct-youtube-route-guard',
           provider: 'server',
+          // Same reason as the answer-gate row: the saved row must agree with
+          // the terminal, or a reload flips it back to legacy (Codex P2 #845).
+          referencesActive: shouldRenderAgentReferences() || undefined,
         },
       },
     })
@@ -6387,7 +6390,10 @@ export async function* runOwnerTurn(
               tokensIn: 0,
               tokensOut: 0,
               costUsd: 0,
-              usage: { input_tokens: 0, output_tokens: 0, model: 'answer-gate', provider: 'gate', similarity: hit.similarity, qaId: hit.id },
+              // The live terminal below activates the contract; the SAVED row must
+              // say the same, or a reload reads this cached answer as pre-contract
+              // history and its Markdown URLs go clickable again (Codex P2 #845).
+              usage: { input_tokens: 0, output_tokens: 0, model: 'answer-gate', provider: 'gate', similarity: hit.similarity, qaId: hit.id, referencesActive: shouldRenderAgentReferences() || undefined },
             },
           })
           await touchConversationActivity(conversationId)

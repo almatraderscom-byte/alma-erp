@@ -3071,6 +3071,9 @@ export async function* runAgentTurn(
               provider: chatModel.provider,
               timeline: compactTimelineForStorage(timeline),
               interrupted: true,
+              // Its terminal states the contract; the saved row must agree or a
+              // reload reads this salvage as pre-contract history (Codex P2 #845).
+              referencesActive: shouldRenderAgentReferences() || undefined,
             },
           },
         })

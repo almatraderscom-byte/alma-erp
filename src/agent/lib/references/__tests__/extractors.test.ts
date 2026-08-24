@@ -312,18 +312,41 @@ describe('trusted tool screenshots keep their image under an active contract', (
     expect(media!.destination.url).toContain('files.example.com')
   })
 
-  it('mints one for a Mac screenshot and keeps its pending action', () => {
+  it('accepts the real owner-authenticated Mac screenshot URL', () => {
+    // Codex P1 round 6: shareScreenshot emits ALMA's own files endpoint with
+    // `redirect=1`, which the generic external validator refuses — correctly for
+    // third-party hosts, wrongly for ours. Without this the media reference was
+    // always null and the ON contract showed alt text instead of the screenshot.
     const refs = extractAgentReferences('mac_desk_control', {
       success: true,
       data: {
         device: 'Maruf MacBook',
-        imageUrl: 'https://files.example.com/mac/desk-9.png',
+        imageUrl: 'https://alma-erp-six.vercel.app/api/assistant/files'
+          + '?path=mac-ui%2Fshot-1-cmd-1.jpg&redirect=1',
         pendingActionId: 'action-42',
       },
     }, { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] })
 
-    expect(refs.some((r) => r.kind === 'external_media')).toBe(true)
+    const media = refs.find((r) => r.kind === 'external_media')
+    expect(media, JSON.stringify(refs)).toBeTruthy()
+    if (media!.destination.type !== 'external_media') throw new Error('expected media destination')
+    expect(media!.destination.mediaType).toBe('image/jpeg')
+    expect(media!.destination.url).toContain('redirect=1')
+    expect(media!.destination.provider).toBe('alma')
+    // and the amber-policy pending action still rides along
     expect(refs.some((r) => r.destination.type === 'internal_entity')).toBe(true)
+  })
+
+  it('refuses a look-alike files endpoint on someone else\'s host', () => {
+    const refs = extractAgentReferences('mac_desk_control', {
+      success: true,
+      data: {
+        device: 'Maruf MacBook',
+        imageUrl: 'https://evil.example/api/assistant/files?path=x.jpg&redirect=1',
+      },
+    }, { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] })
+
+    expect(refs.some((r) => r.kind === 'external_media')).toBe(false)
   })
 
   it('falls back to the section when the tool returned no image', () => {

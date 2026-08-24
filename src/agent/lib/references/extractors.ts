@@ -12,6 +12,7 @@ import {
 } from './internal-registry'
 import {
   buildExternalReference,
+  buildOwnerFileMediaReference,
   buildVerifiedMetaObjectReference,
 } from './external-url'
 import { shouldCollectAgentReferences } from './flags'
@@ -622,14 +623,28 @@ function extractToolScreenshot(
   const root = object(data)
   const rawUrl = typeof root?.imageUrl === 'string' ? root.imageUrl : null
   if (rawUrl) {
-    const path = (() => { try { return new URL(rawUrl).pathname.toLowerCase() } catch { return '' } })()
+    const path = (() => {
+      try {
+        const u = new URL(rawUrl)
+        // The files endpoint names the object in `?path=`, not in its own path.
+        return (u.searchParams.get('path') ?? u.pathname).toLowerCase()
+      } catch { return '' }
+    })()
     const mediaType = path.endsWith('.jpg') || path.endsWith('.jpeg')
       ? 'image/jpeg'
       : path.endsWith('.webp') ? 'image/webp' : 'image/png'
     const label = typeof root?.camera === 'string' && root.camera
       ? root.camera
       : typeof root?.device === 'string' && root.device ? root.device : 'Screenshot'
-    const ref = buildExternalReference({
+    // Mac screenshots are served from ALMA's own authenticated files endpoint
+    // (`/api/assistant/files?path=…&redirect=1`); the generic external validator
+    // refuses `redirect` query keys, which is right for third-party hosts and
+    // wrong for ours. Try the reviewed internal builder first, then the external
+    // one for genuinely remote storage URLs (camera snapshots).
+    const ref = buildOwnerFileMediaReference({
+      rawUrl, label, mediaType, source: 'tool_output',
+      sourceTool: toolName, outputPath: 'data.imageUrl', context,
+    }) ?? buildExternalReference({
       rawUrl,
       label,
       kind: 'external_media',

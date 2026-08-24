@@ -458,6 +458,91 @@ export function buildExternalReference(input: {
   }
 }
 
+/**
+ * ALMA's own authenticated file endpoint. Mac and camera screenshots are served
+ * as `{APP_BASE}/api/assistant/files?path=…&redirect=1` — the `redirect=1` is
+ * the point (a 302 to a fresh signed URL), and the generic external validator
+ * correctly refuses `redirect` query keys for third-party hosts. That refusal
+ * made every real Mac screenshot fail to mint a media reference, so an ON
+ * contract replaced the requested image with its alt text (Codex P1, PR #845).
+ *
+ * This is not an external URL at all. Accept it only when the origin is ALMA's
+ * own app host AND the path is exactly the reviewed files endpoint AND it names
+ * a `path` — nothing else about the URL grammar is relaxed.
+ */
+/**
+ * ALMA's own authenticated file endpoint, recognised in ONE place so the builder
+ * and the canonical validator cannot drift. Accepts only: https, our own app
+ * host, the exact reviewed path, and a named `path` param. Everything else about
+ * the URL grammar stays as strict as the external validator.
+ */
+export function ownerAuthenticatedFileUrl(rawValue: unknown): { url: string; hostname: string } | null {
+  if (typeof rawValue !== 'string' || rawValue.length > 4096) return null
+  let url: URL
+  try { url = new URL(rawValue) } catch { return null }
+  if (url.protocol !== 'https:') return null
+  if (url.pathname !== '/api/assistant/files') return null
+  if (!url.searchParams.get('path')) return null
+  if (url.username || url.password || url.hash) return null
+  const appHost = (() => {
+    const base = process.env.APP_URL || process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL
+    if (!base) return null
+    try { return new URL(base).hostname.toLowerCase() } catch { return null }
+  })()
+  const hostname = url.hostname.toLowerCase()
+  const isAlmaHost = hostname === appHost
+    || hostname === 'alma-erp-six.vercel.app'
+    || hostname === 'alma-erp-demo.vercel.app'
+    || (hostname.endsWith('.vercel.app') && hostname.startsWith('alma-erp-git-'))
+  if (!isAlmaHost) return null
+  return { url: url.toString(), hostname }
+}
+
+export function buildOwnerFileMediaReference(input: {
+  rawUrl: unknown
+  label?: unknown
+  mediaType?: string
+  source: AgentReferenceSource
+  sourceTool?: string
+  outputPath?: string
+  context?: AgentReferenceContext
+}): AgentReferenceV1 | null {
+  const owned = ownerAuthenticatedFileUrl(input.rawUrl)
+  if (!owned) return null
+  const context = input.context ?? {}
+  const label = cleanReferenceLabel(input.label, 'Screenshot')
+  const businessId = context.businessId ?? null
+  return {
+    version: AGENT_REFERENCE_VERSION,
+    refId: deterministicReferenceId(['owner_file', 'external_media', owned.url]),
+    kind: 'external_media',
+    label,
+    destination: {
+      type: 'external_media',
+      url: owned.url,
+      provider: 'alma',
+      hostname: owned.hostname,
+      mediaType: input.mediaType,
+    },
+    purpose: 'media',
+    audience: {
+      businessId,
+      businessScope: businessId ? 'exact' : 'personal',
+      roles: [...(context.roles ?? DEFAULT_REFERENCE_ROLES)],
+    },
+    provenance: {
+      source: input.source,
+      verifiedBy: 'server_registry',
+      sourceTool: input.sourceTool,
+      outputPath: input.outputPath,
+    },
+    observedAt: observedAt(context),
+    openMode: 'protected_web',
+    aliases: uniqueReferenceAliases([label, owned.url]),
+    display: { provider: 'alma', domain: owned.hostname },
+  }
+}
+
 export function buildVerifiedMetaObjectReference(input: {
   rawUrl: unknown
   label?: unknown

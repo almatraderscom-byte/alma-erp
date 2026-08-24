@@ -13,7 +13,9 @@ import {
 } from './internal-registry'
 import {
   buildExternalReference,
+  buildOwnerFileMediaReference,
   buildVerifiedMetaObjectReference,
+  ownerAuthenticatedFileUrl,
   validateAndSanitizeExternalUrl,
 } from './external-url'
 import {
@@ -186,7 +188,16 @@ function canonicalExternal(candidate: Record<string, unknown>, context: AgentRef
   const provenance = object(candidate.provenance)
   const observedAt = validObservedAt(candidate.observedAt)
   if (!destination || destination.type !== candidate.kind || !provenance || !observedAt) return null
-  const checked = validateAndSanitizeExternalUrl(destination.url)
+  // ALMA's own authenticated file endpoint is not an external URL: its
+  // `redirect=1` is the mechanism, and the external validator rightly refuses
+  // that query key for third-party hosts. Narrow bypass — media references only,
+  // our own host only, the exact reviewed path only (Codex P1, PR #845).
+  const ownerFile = candidate.kind === 'external_media'
+    ? ownerAuthenticatedFileUrl(destination.url)
+    : null
+  const checked = ownerFile
+    ? { ok: true as const, value: { url: ownerFile.url, hostname: ownerFile.hostname, provider: 'alma' } }
+    : validateAndSanitizeExternalUrl(destination.url)
   if (!checked.ok || checked.value.url !== destination.url) return null
   const source = provenance.source
   if (source !== 'tool_output' && source !== 'connector_output' && source !== 'browser_observed' && source !== 'user_provided') return null
@@ -222,6 +233,24 @@ function canonicalExternal(candidate: Record<string, unknown>, context: AgentRef
   const audience = object(candidate.audience)!
   const roles = canonicalAudienceRoles(candidate, context)
   if (!roles) return null
+  // Rebuilt from the reviewed internal builder, not the external one — the
+  // external builder would re-run the URL gate that refuses `redirect=1`.
+  if (ownerFile) {
+    const owned = buildOwnerFileMediaReference({
+      rawUrl: ownerFile.url,
+      label: candidate.label,
+      mediaType: typeof destination.mediaType === 'string' ? destination.mediaType : undefined,
+      source,
+      sourceTool: typeof provenance.sourceTool === 'string' ? provenance.sourceTool : undefined,
+      outputPath: typeof provenance.outputPath === 'string' ? provenance.outputPath : undefined,
+      context: {
+        businessId: businessId(audience.businessId) ?? undefined,
+        roles,
+        observedAt,
+      },
+    })
+    return owned?.destination.type === candidate.kind ? owned : null
+  }
   const canonical = buildExternalReference({
     rawUrl: checked.value.url,
     label: candidate.label,
