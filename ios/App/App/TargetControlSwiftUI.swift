@@ -312,7 +312,7 @@ private final class TargetControlVM {
             authExpired = true
         } catch {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
-            self.error = error.localizedDescription
+            self.error = almaServerMessage(error)
         }
     }
 
@@ -404,7 +404,7 @@ private final class TargetControlVM {
             return false
         } catch {
             if Self.isCancellation(error) { return false }
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
             return false
         }
     }

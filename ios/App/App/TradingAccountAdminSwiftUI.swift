@@ -336,7 +336,7 @@ final class TAAdminStore {
             await load()
             return true
         } catch {
-            notice = "✗ ব্যর্থ: \(error.localizedDescription)"
+            notice = "✗ ব্যর্থ: \(almaServerMessage(error))"
             return false
         }
     }
@@ -383,7 +383,7 @@ final class TAAdminStore {
             await load()
             return true
         } catch {
-            notice = "✗ ব্যর্থ: \(error.localizedDescription)"
+            notice = "✗ ব্যর্থ: \(almaServerMessage(error))"
             return false
         }
     }
@@ -413,6 +413,8 @@ final class TAAdminStore {
             var fields: [String: String] = [:]
             if !note.isEmpty { fields["note"] = note }
             if !shotDate.isEmpty { fields["shotDate"] = shotDate }
+            // Web parity: the route treats this as a second duplicate guard.
+            fields["fingerprint"] = TradingUploadFingerprint.make(data)
             let _: Resp = try await AlmaAPI.shared.uploadMultipart(
                 "/api/trading/accounts/\(accountId)/performance",
                 fileField: "file", filename: "performance.jpg", mime: "image/jpeg",
@@ -421,7 +423,7 @@ final class TAAdminStore {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             await loadScreenshots(archived: screenshotsArchived)
         } catch {
-            notice = "✗ Upload ব্যর্থ: \(error.localizedDescription)"
+            notice = "✗ Upload ব্যর্থ: \(almaServerMessage(error))"
         }
     }
 
@@ -456,7 +458,7 @@ final class TAAdminStore {
             UINotificationFeedbackGenerator().notificationOccurred(landed ? .success : .warning)
             return true
         } catch {
-            settleResult = "✗ Settle ব্যর্থ: \(error.localizedDescription)"
+            settleResult = "✗ Settle ব্যর্থ: \(almaServerMessage(error))"
             return false
         }
     }

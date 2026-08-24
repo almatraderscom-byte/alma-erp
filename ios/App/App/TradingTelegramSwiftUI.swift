@@ -787,7 +787,7 @@ final class TradingTelegramVM {
             await loadMapping(force: true)
             return true
         } catch {
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
             return false
         }
     }
@@ -801,7 +801,7 @@ final class TradingTelegramVM {
             toast = r.idempotentReplay == true ? "Telegram mapping was already removed" : "Telegram mapping removed"
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } catch {
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
         }
         await loadMapping(force: true)
     }
@@ -830,7 +830,7 @@ final class TradingTelegramVM {
             await loadMapping(force: true)
             return true
         } catch {
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
             return false
         }
     }
@@ -857,7 +857,7 @@ final class TradingTelegramVM {
             await loadMapping(force: true)
             return true
         } catch {
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
             return false
         }
     }
@@ -875,7 +875,7 @@ final class TradingTelegramVM {
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
             }
         } catch {
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
         }
         await loadMapping(force: true)
     }
@@ -890,7 +890,7 @@ final class TradingTelegramVM {
                 "POST", "/api/trading/telegram/chats/test", body: Body(chatId: chatId))
             toast = r.error ?? "Test message পাঠানো হয়েছে ✓"
         } catch {
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
         }
     }
 
@@ -928,7 +928,7 @@ final class TradingTelegramVM {
             toast = r.error ?? "Webhook registered successfully"
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } catch {
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
         }
         await loadWebhook()
     }
@@ -942,7 +942,7 @@ final class TradingTelegramVM {
             authExpired = true
         } catch {
             if Self.isCancellation(error) { return }
-            if live == nil { self.error = error.localizedDescription }
+            if live == nil { self.error = almaServerMessage(error) }
         }
     }
 
@@ -969,7 +969,7 @@ final class TradingTelegramVM {
             authExpired = true
         } catch {
             if Self.isCancellation(error) { return }
-            if !mappingLoaded { self.error = error.localizedDescription }
+            if !mappingLoaded { self.error = almaServerMessage(error) }
         }
     }
 

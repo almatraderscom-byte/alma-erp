@@ -39,6 +39,8 @@
 		82578EF670271FFDE3168C6E /* Pods_AppParityV2Tests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 563C31897C9683E4C39089EC /* Pods_AppParityV2Tests.framework */; };
 		8AE5A46CDEF2B132197C6BDD /* cs_sample_4.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 5ED95135C15036B1B8C1FD27 /* cs_sample_4.jpg */; };
 		8D860AAF950338A1E4500FF4 /* TradingTelegramSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105A54DE7A5B5901CDD437F6 /* TradingTelegramSwiftUI.swift */; };
+		928DC49F8CCA47BA7E334824 /* TradingFormDrafts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 604EC715B8C67E1F7851DB24 /* TradingFormDrafts.swift */; };
+		80F65BFBB833EA49B7EAC8D3 /* TradingUploadFingerprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B8B7F4D9BA27A996090BE7 /* TradingUploadFingerprint.swift */; };
 		A084ECDBA7D38E1E42DFC39D /* Pods_App.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */; };
 		A1AA11A200000000000INTNT /* AlmaAppIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1AA11A100000000000INTNT /* AlmaAppIntents.swift */; };
 		A2BB7700000000000000B001 /* BackgroundRefresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2BB7700000000000000A001 /* BackgroundRefresh.swift */; };
@@ -239,6 +241,8 @@
 		035EE01B7B4664A529CD98B7 /* TradingHomeSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TradingHomeSwiftUI.swift; sourceTree = "<group>"; };
 		0CE6BFDD03747701FD223CA6 /* cs_sample_6.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_6.jpg; sourceTree = "<group>"; };
 		105A54DE7A5B5901CDD437F6 /* TradingTelegramSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TradingTelegramSwiftUI.swift; sourceTree = "<group>"; };
+		604EC715B8C67E1F7851DB24 /* TradingFormDrafts.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TradingFormDrafts.swift; sourceTree = "<group>"; };
+		58B8B7F4D9BA27A996090BE7 /* TradingUploadFingerprint.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TradingUploadFingerprint.swift; sourceTree = "<group>"; };
 		10A01C06D84AE708B261A5FB /* DigitalProjectsSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DigitalProjectsSwiftUI.swift; sourceTree = "<group>"; };
 		137D30126CAA6F1E0C061519 /* cs_sample_11.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_11.jpg; sourceTree = "<group>"; };
 		194974F3E43FEDFCD4DDEE64 /* cs_sample_1.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_1.jpg; sourceTree = "<group>"; };
@@ -636,6 +640,8 @@
 				BE6A3A82A18D773065686026 /* TradingHrSwiftUI.swift */,
 				7294E45AFB934CB152906193 /* TargetControlSwiftUI.swift */,
 				105A54DE7A5B5901CDD437F6 /* TradingTelegramSwiftUI.swift */,
+				604EC715B8C67E1F7851DB24 /* TradingFormDrafts.swift */,
+				58B8B7F4D9BA27A996090BE7 /* TradingUploadFingerprint.swift */,
 				FE2EBFBCB383B82ECC59BB1F /* DigitalHomeSwiftUI.swift */,
 				97A60B31F639A640D07DCF08 /* DigitalClientsSwiftUI.swift */,
 				471B8BE931F61C7162672A60 /* DigitalInvoicesSwiftUI.swift */,
@@ -1180,6 +1186,8 @@
 				6C6A27C2A5F92B5F2617B361 /* TradingHrSwiftUI.swift in Sources */,
 				B3B499D022B574C0B2A96CB7 /* TargetControlSwiftUI.swift in Sources */,
 				8D860AAF950338A1E4500FF4 /* TradingTelegramSwiftUI.swift in Sources */,
+				928DC49F8CCA47BA7E334824 /* TradingFormDrafts.swift in Sources */,
+				80F65BFBB833EA49B7EAC8D3 /* TradingUploadFingerprint.swift in Sources */,
 				454091BDF584DDD3349570F4 /* DigitalHomeSwiftUI.swift in Sources */,
 				DD1E6C29144CBD386AB459B8 /* DigitalClientsSwiftUI.swift in Sources */,
 				B10C00596905806603ADCDC1 /* DigitalInvoicesSwiftUI.swift in Sources */,

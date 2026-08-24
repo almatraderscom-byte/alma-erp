@@ -482,7 +482,7 @@ private final class TradingHrVM {
             authExpired = true
         } catch {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
-            self.error = error.localizedDescription
+            self.error = almaServerMessage(error)
         }
         let (summary, reps) = await (summaryTask, reportsTask)
         if Task.isCancelled { return }
@@ -566,7 +566,7 @@ private final class TradingHrVM {
             return false
         } catch {
             if Self.isCancellation(error) { return false }
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
             return false
         }
     }
