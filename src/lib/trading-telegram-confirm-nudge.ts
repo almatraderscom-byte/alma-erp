@@ -21,6 +21,10 @@ import { escapeHtml } from '@/lib/telegram-notification/formatters'
  */
 
 const NUDGE_EVENT = 'CONFIRM_NUDGE'
+/** Reservation written before the send; rewritten once Telegram accepts it. */
+const PENDING_MARK = 'SENDING'
+/** A reservation still marked SENDING after this long was abandoned mid-flight. */
+const RESERVATION_LEASE_MS = 10 * 60_000
 /** Don't re-warn the same person inside this window (retries, overlapping runs). */
 const NUDGE_COOLDOWN_MS = 4 * 60 * 60_000
 
@@ -231,6 +235,20 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
     // hour) makes the second insert fail on the key itself — atomic, and no new
     // table or unique index. A run that loses the race does not send.
     const claimId = reservationId(urgency, group)
+    // A reservation is a LEASE, not a tombstone. Crashing between the insert and
+    // the send would otherwise leave the id sitting there undelivered, and since
+    // the id is deterministic and the cron has one eligible hour, that staffer's
+    // warning would be suppressed for the rest of the day. Reclaim one that is
+    // still marked SENDING past its lease.
+    await prisma.tradingTelegramAuditLog.deleteMany({
+      where: {
+        id: claimId,
+        detail: { startsWith: `${urgency}; ${PENDING_MARK}` },
+        createdAt: { lt: new Date(Date.now() - RESERVATION_LEASE_MS) },
+      },
+    }).catch(() => {})
+
+    const detail = `${group.count} pending; oldest ${group.oldestYmd}`
     const reserved = await prisma.tradingTelegramAuditLog.create({
       data: {
         id: claimId,
@@ -239,7 +257,7 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
         telegramUserId: group.telegramUserId,
         telegramUsername: group.telegramUsername,
         telegramChatId: group.telegramChatId,
-        detail: `${urgency}; ${group.count} pending; oldest ${group.oldestYmd}`,
+        detail: `${urgency}; ${PENDING_MARK}; ${detail}`,
       },
       select: { id: true },
     }).catch(() => null)
@@ -256,6 +274,11 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
       continue
     }
 
+    // Delivered — drop the SENDING mark so the lease can never reclaim it.
+    await prisma.tradingTelegramAuditLog.update({
+      where: { id: claimId },
+      data: { detail: `${urgency}; ${detail}` },
+    }).catch(() => {})
     sent.push(group.telegramUserId)
   }
 

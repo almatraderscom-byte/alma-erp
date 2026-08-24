@@ -125,6 +125,20 @@ describe('approveTelegramDraftToLedger', () => {
     expect((rollback![0] as { where: { tradingTradeId: unknown } }).where.tradingTradeId).toBeNull()
   })
 
+  it('carries the day cutoff in the claim itself, not in a separate sweep', async () => {
+    process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD = '0'   // cutoff always passed
+    draftFindFirst.mockResolvedValueOnce(pendingDraft()).mockResolvedValueOnce(pendingDraft())
+    createTradingTradeRecord.mockResolvedValue({ trade: { id: 'trade-9' }, summary: { merchantProgress: 0 } })
+
+    await approveTelegramDraftToLedger(ctx, 'draft-1')
+
+    // Recover → sweep → claim as three statements let two retries interleave and
+    // slip a prior-day draft past the admin-reopen control. One predicate cannot.
+    const claim = draftUpdateMany.mock.calls[0][0] as { where: { createdAt?: { gte: Date } } }
+    expect(claim.where.createdAt?.gte).toBeInstanceOf(Date)
+    delete process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD
+  })
+
   it('claims only from PENDING so two concurrent reviewers cannot both post', async () => {
     draftFindFirst.mockResolvedValueOnce(pendingDraft()).mockResolvedValueOnce(pendingDraft())
     createTradingTradeRecord.mockResolvedValue({ trade: { id: 'trade-9' }, summary: { merchantProgress: 0 } })

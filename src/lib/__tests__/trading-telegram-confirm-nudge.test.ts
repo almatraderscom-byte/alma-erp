@@ -10,6 +10,8 @@ const draftFindMany = vi.fn()
 const auditFindFirst = vi.fn()
 const auditCreate = vi.fn()
 const auditDelete = vi.fn()
+const auditDeleteMany = vi.fn()
+const auditUpdate = vi.fn()
 const sendTelegramMessage = vi.fn()
 
 vi.mock('@/lib/prisma', () => ({
@@ -19,6 +21,8 @@ vi.mock('@/lib/prisma', () => ({
       findFirst: (...a: unknown[]) => auditFindFirst(...a),
       create: (...a: unknown[]) => auditCreate(...a),
       delete: (...a: unknown[]) => auditDelete(...a),
+      deleteMany: (...a: unknown[]) => auditDeleteMany(...a),
+      update: (...a: unknown[]) => auditUpdate(...a),
     },
   },
 }))
@@ -94,6 +98,8 @@ describe('sendPendingConfirmNudges', () => {
     auditFindFirst.mockResolvedValue(null)
     auditCreate.mockResolvedValue({ id: 'claim-1' })
     auditDelete.mockResolvedValue({})
+    auditDeleteMany.mockResolvedValue({ count: 0 })
+    auditUpdate.mockResolvedValue({})
     sendTelegramMessage.mockResolvedValue({ ok: true })
     draftFindMany.mockResolvedValue([pending(), pending()])
   })
@@ -107,6 +113,23 @@ describe('sendPendingConfirmNudges', () => {
     expect(String(text)).toContain('@Hossainmuqtadir')
     expect(String(text)).toContain('2')          // two unconfirmed
     expect(auditCreate).toHaveBeenCalledTimes(1)
+    // Reserved as SENDING, then marked delivered so the lease cannot reclaim it.
+    expect(String((auditCreate.mock.calls[0][0] as { data: { detail: string } }).data.detail))
+      .toContain('SENDING')
+    expect(String((auditUpdate.mock.calls[0][0] as { data: { detail: string } }).data.detail))
+      .not.toContain('SENDING')
+  })
+
+  it('reclaims a reservation abandoned mid-send instead of suppressing the day', async () => {
+    await sendPendingConfirmNudges('FINAL')
+
+    // Without this, a crash between the insert and the send leaves the
+    // deterministic id sitting there and no later run can ever take it.
+    const where = (auditDeleteMany.mock.calls[0][0] as {
+      where: { detail: { startsWith: string }; createdAt: { lt: Date } }
+    }).where
+    expect(where.detail.startsWith).toContain('SENDING')
+    expect(where.createdAt.lt).toBeInstanceOf(Date)
   })
 
   it('stays quiet when the same staffer was warned minutes ago', async () => {

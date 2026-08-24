@@ -4,6 +4,7 @@ import { TRADING_BUSINESS_ID } from '@/lib/trading'
 import { logTelegramDraftAudit } from '@/lib/trading-telegram-draft-audit'
 import {
   assertDraftEditable,
+  claimableCreatedAtFilter,
   lockStalePendingTelegramDrafts,
   recoverStrandedApprovedDraft,
   sweepTelegramDraftStates,
@@ -175,12 +176,16 @@ export async function approveTelegramDraftToLedger(ctx: TradingContext, draftId:
   }
 
   // The claim is exclusive: exactly one request can move a draft out of PENDING.
+  // It also carries the day cutoff itself, so no interleaving of recover / sweep /
+  // claim between two retries can slip a prior-day draft past the admin-reopen
+  // control — past the cutoff hour, only today's drafts match at all.
   const claim = await prisma.tradingTelegramDraft.updateMany({
     where: {
       id: draftId,
       businessId: TRADING_BUSINESS_ID,
       status: 'PENDING',
       tradingTradeId: null,
+      ...(claimableCreatedAtFilter() ? { createdAt: claimableCreatedAtFilter() } : {}),
     },
     data: { status: 'APPROVED', reviewedBy: ctx.userId, reviewedAt: new Date() },
   })

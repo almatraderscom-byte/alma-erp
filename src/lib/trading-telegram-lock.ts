@@ -158,3 +158,22 @@ export async function sweepTelegramDraftStates(options?: { force?: boolean }): P
   await healStuckApprovedTelegramDrafts()
   await lockStalePendingTelegramDrafts()
 }
+
+/**
+ * The `createdAt` predicate that makes a claim obey the day cutoff ATOMICALLY.
+ *
+ * Recovering a stranded draft, sweeping the cutoff and claiming were three
+ * statements, so two retries on the same prior-day draft could interleave: the
+ * first recovers it to PENDING and pauses, the second sees PENDING, skips
+ * recovery and claims it before the sweep locks it — walking past the
+ * admin-reopen control anyway. Folding the rule into the claim's WHERE removes
+ * the gap: past the cutoff, only a draft created today is claimable at all.
+ *
+ * Returns undefined before the cutoff hour, when every pending draft is fair
+ * game.
+ */
+export function claimableCreatedAtFilter(): { gte: Date } | undefined {
+  const now = tradingBdNow()
+  if (now.getUTCHours() < telegramDraftLockHourBd()) return undefined
+  return { gte: tradingBdDayBounds(now).start }
+}
