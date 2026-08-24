@@ -141,6 +141,18 @@ describe('sendPendingConfirmNudges', () => {
     expect(sendTelegramMessage).not.toHaveBeenCalled()
   })
 
+  it('reclaims the abandoned lease BEFORE reading the cooldown', async () => {
+    auditFindFirst.mockResolvedValue({ id: 'nudge-1' })   // the abandoned row itself
+
+    await sendPendingConfirmNudges('FINAL')
+
+    // Ordered after the cooldown read, the early return fired first and the
+    // lease never ran — leaving the day suppressed by a warning never sent.
+    expect(auditDeleteMany).toHaveBeenCalled()
+    expect(auditDeleteMany.mock.invocationCallOrder[0])
+      .toBeLessThan(auditFindFirst.mock.invocationCallOrder[0])
+  })
+
   it('scopes the cooldown to the chat, so a second group still gets warned', async () => {
     draftFindMany.mockResolvedValue([pending(), pending({ telegramChatId: '-999' })])
 

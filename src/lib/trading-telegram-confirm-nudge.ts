@@ -224,22 +224,19 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
   const skipped: string[] = []
 
   for (const group of groups) {
-    if (await nudgedRecently(group.telegramUserId, group.telegramChatId, urgency)) {
-      skipped.push(group.telegramUserId)
-      continue
-    }
-
     // Reserve BEFORE calling Telegram, and reserve EXCLUSIVELY. A plain insert is
     // not a reservation: two overlapping runs both succeed and staff get the
     // reminder twice. Composing the PRIMARY KEY from (urgency, chat, staffer,
-    // hour) makes the second insert fail on the key itself — atomic, and no new
+    // day) makes the second insert fail on the key itself — atomic, and no new
     // table or unique index. A run that loses the race does not send.
     const claimId = reservationId(urgency, group)
-    // A reservation is a LEASE, not a tombstone. Crashing between the insert and
-    // the send would otherwise leave the id sitting there undelivered, and since
-    // the id is deterministic and the cron has one eligible hour, that staffer's
-    // warning would be suppressed for the rest of the day. Reclaim one that is
-    // still marked SENDING past its lease.
+
+    // Reclaim an abandoned lease FIRST. A reservation is a lease, not a
+    // tombstone: crashing between the insert and the send leaves the id sitting
+    // there undelivered, and with one eligible cron hour that staffer's warning
+    // would be lost for the day. This has to run BEFORE the cooldown read —
+    // the abandoned row is exactly what that read finds, so ordering it after
+    // meant the early return fired and the lease never took effect.
     await prisma.tradingTelegramAuditLog.deleteMany({
       where: {
         id: claimId,
@@ -247,6 +244,11 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
         createdAt: { lt: new Date(Date.now() - RESERVATION_LEASE_MS) },
       },
     }).catch(() => {})
+
+    if (await nudgedRecently(group.telegramUserId, group.telegramChatId, urgency)) {
+      skipped.push(group.telegramUserId)
+      continue
+    }
 
     const detail = `${group.count} pending; oldest ${group.oldestYmd}`
     const reserved = await prisma.tradingTelegramAuditLog.create({

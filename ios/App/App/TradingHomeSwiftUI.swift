@@ -2458,7 +2458,8 @@ struct TradingHomeShotSheet: View {
             // Web ScreenshotUploadModal restores account/date/note. The image is
             // never part of the draft — only the fields typed around it.
             if preselect == nil, let d = TradingFormDrafts.loadScreenshot(),
-               !d.isEmpty(today: TradingHomeDateHelper.today()) {
+               !d.isEmpty(today: TradingHomeDateHelper.today(),
+                          defaultAccountId: vm.accounts.first?.id ?? "") {
                 if !d.accountId.isEmpty, vm.accounts.contains(where: { $0.id == d.accountId }) {
                     accountId = d.accountId
                 }
@@ -2468,7 +2469,8 @@ struct TradingHomeShotSheet: View {
         }
         .onChange(of: TradingFormDrafts.Screenshot(accountId: accountId, shotDate: shotDate, note: note)) { _, snapshot in
             guard preselect == nil else { return }      // scoped sheet: leave the shared draft alone
-            if snapshot.isEmpty(today: TradingHomeDateHelper.today()) {
+            if snapshot.isEmpty(today: TradingHomeDateHelper.today(),
+                                defaultAccountId: vm.accounts.first?.id ?? "") {
                 TradingFormDrafts.clear(TradingFormDrafts.screenshotKey)
             } else {
                 TradingFormDrafts.save(TradingFormDrafts.screenshotKey, snapshot)

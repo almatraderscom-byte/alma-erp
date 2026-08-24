@@ -77,12 +77,14 @@ enum TradingFormDrafts {
             a.accountId == b.accountId && a.shotDate == b.shotDate && a.note == b.note
         }
 
-        /// A backfill date IS the thing worth keeping — treating only the note as
-        /// content meant picking a past date and leaving the note blank threw the
-        /// selection away on the very next keystroke-free render.
-        func isEmpty(today: String) -> Bool {
+        /// A backfill date and a deliberately chosen account are both worth
+        /// keeping — treating only the note as content threw either away on the
+        /// next keystroke-free render. "Default" is what the sheet would have
+        /// picked on its own, so leaving it alone still counts as empty.
+        func isEmpty(today: String, defaultAccountId: String) -> Bool {
             note.trimmingCharacters(in: .whitespaces).isEmpty
                 && (shotDate.isEmpty || shotDate == today)
+                && (accountId.isEmpty || accountId == defaultAccountId)
         }
     }
 
