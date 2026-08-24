@@ -7,6 +7,7 @@ import {
   tradingBdYmdFromInstant,
 } from '@/lib/trading-compliance'
 import { sendTelegramMessage } from '@/lib/trading-telegram-bot'
+import { escapeHtml } from '@/lib/telegram-notification/formatters'
 
 /**
  * Remind staff about drafts that are about to auto-lock.
@@ -122,7 +123,10 @@ export async function collectPendingConfirmGroups(urgency: ConfirmNudgeUrgency):
 }
 
 export function confirmNudgeText(group: PendingGroup, urgency: ConfirmNudgeUrgency): string {
-  const who = group.telegramUsername ? `@${group.telegramUsername}` : group.staffName
+  // sendTelegramMessage posts with parse_mode HTML, so a name carrying & or <
+  // makes Telegram reject the whole message — that staffer would simply never
+  // be warned.
+  const who = escapeHtml(group.telegramUsername ? `@${group.telegramUsername}` : group.staffName)
   const lockHour = telegramDraftLockHourBd()
   const volume = group.totalUsdt > 0 ? ` (মোট ${group.totalUsdt.toFixed(2)} USDT)` : ''
 
@@ -194,6 +198,22 @@ function reservationId(urgency: ConfirmNudgeUrgency, group: PendingGroup): strin
   return `nudge:${urgency}:${group.telegramChatId}:${group.telegramUserId}:${dayStamp}`
 }
 
+/**
+ * One warning, retried in place.
+ *
+ * There is only one eligible hour, so a transient Telegram failure has to be
+ * absorbed here — the next cron run returns no urgency and never looks again.
+ */
+async function sendWithRetry(chatId: string, text: string) {
+  const backoffMs = [0, 1_000, 3_000]
+  let last = await sendTelegramMessage(chatId, text)
+  for (let attempt = 1; attempt < backoffMs.length && !last.ok; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, backoffMs[attempt]))
+    last = await sendTelegramMessage(chatId, text)
+  }
+  return last
+}
+
 export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
   const groups = await collectPendingConfirmGroups(urgency)
   const sent: string[] = []
@@ -228,7 +248,7 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
       continue
     }
 
-    const result = await sendTelegramMessage(group.telegramChatId, confirmNudgeText(group, urgency))
+    const result = await sendWithRetry(group.telegramChatId, confirmNudgeText(group, urgency))
     if (!result.ok) {
       skipped.push(group.telegramUserId)
       // Release so the next hour retries rather than inheriting a phantom warning.
@@ -251,9 +271,6 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
  * say 05:00 while the cutoff had moved. Twenty-two of the twenty-four runs return
  * immediately without touching the database.
  */
-/** How many hours before the cutoff the final warning may be attempted. */
-const FINAL_WINDOW_HOURS = 2
-
 export function confirmNudgeUrgencyForNow(now = tradingBdNow()): ConfirmNudgeUrgency | null {
   const hour = now.getUTCHours()          // tradingBdNow is UTC-shifted: this IS the Dhaka hour
   const lockHour = telegramDraftLockHourBd()
@@ -261,14 +278,14 @@ export function confirmNudgeUrgencyForNow(now = tradingBdNow()): ConfirmNudgeUrg
   // before. Clamping to 0 would have fired the "one hour left" warning when the
   // cutoff was already active and the sweep may already have locked the rows.
   //
-  // A WINDOW, not a single hour: one transient Telegram failure at the only
-  // eligible hour would otherwise lose that day's warning outright, because the
-  // next hourly run returns null and never looks again. The day-keyed
-  // reservation stops the window from sending twice.
-  for (let back = 1; back <= FINAL_WINDOW_HOURS; back += 1) {
-    if (hour === (lockHour + 24 - back) % 24) return 'FINAL'
-  }
-  // When the two collide (cutoff 0 or 1), the urgent one has already won above.
+  // Exactly one hour, so "আর ১ ঘণ্টা" stays true. Widening it to give a failed
+  // send another slot backfired: the earliest eligible run delivered and took
+  // the day's reservation, so the real one-hour warning never fired and every
+  // healthy message went out early. A transient Telegram failure is retried
+  // inside the run instead — see sendWithRetry.
+  const finalHour = (lockHour + 23) % 24
+  // When the two collide (cutoff 0), the urgent one wins.
+  if (hour === finalHour) return 'FINAL'
   if (hour === 23) return 'EVENING'
   return null
 }
