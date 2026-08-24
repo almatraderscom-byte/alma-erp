@@ -60,11 +60,24 @@ seen, and the snapshot re-added console routes main already had:
 | 2 | P1 | hidden replay/tail terminal read as a LIVE contract | `2deafeb1` |
 | 2 | P1 | ON + zero citations left model-authored links clickable | `2deafeb1` |
 | 3 | P2 | early terminals (answer gate, route guard, browser salvage) stated nothing | `1ec96612` |
+| 4 | P1 | ON marked **all pre-contract history** active — the owner's whole link history would have died the moment the flag flipped | `85578db0` |
+| 4 | P1 | ON-mode camera/Mac screenshots still became alt text | `85578db0` |
+| 4 | P2 | iOS table cells stripped legacy links in hidden mode | `85578db0` |
+| 4 | P2 | "Create the report in HTML" was flagged as a violation | `85578db0` |
+| 4 | P2 | CDIT conversations minted `cdit_employee` for Lifestyle rows | `85578db0` |
+| 6 | P1 | the screenshot fix never fired — the real URL is ALMA's own `/api/assistant/files?…&redirect=1`, which the external validator refuses | `d836c398` |
+| 6 | P2 | answer-gate / route-guard / browser-salvage rows saved without the marker | `d836c398` |
+| 6 | P2 | staff-task scope — **did not reproduce**; `AgentStaffTask.businessId` exists (`schema.prisma:3891`) | answered, no change |
+| 7 | P2 | day-shift rows omitted `usage` entirely when they cited nothing | `9c5b4a7f` |
+| 7 | P2 | the office-shift renderer dropped both reference fields | `9c5b4a7f` |
+| 7 | P2 | bare verb `review` made "Review and polish this email" a report request | `9c5b4a7f` |
 
-All five share one root cause: an empty `references` array cannot say *why* it is
-empty. The messages API and every stream terminal now carry `referencesActive`,
-and neither client infers the contract state from the array's shape.
-`references/__tests__/stream-contract.test.ts` fails if any emit site drops it.
+Almost all of them share one root cause: **an empty `references` array cannot say
+why it is empty**, and it is a per-MESSAGE question rather than a global one. The
+messages API, every stream terminal and every persisted row now carry
+`referencesActive`, and neither client infers the contract from the array's
+shape. `references/__tests__/stream-contract.test.ts` fails if any emit site or
+any persisted `usage` block ever drops it.
 
 ## Deployed proof — professional report renderer
 
