@@ -21,6 +21,7 @@ const draftFindFirstOrThrow = vi.fn()
 const draftFindMany = vi.fn()
 const draftUpdate = vi.fn()
 const draftUpdateMany = vi.fn()
+const tradeFindFirst = vi.fn()
 const auditCreate = vi.fn()
 const createTradingTradeRecord = vi.fn()
 
@@ -33,6 +34,7 @@ vi.mock('@/lib/prisma', () => ({
       update: (...args: unknown[]) => draftUpdate(...args),
       updateMany: (...args: unknown[]) => draftUpdateMany(...args),
     },
+    tradingTrade: { findFirst: (...args: unknown[]) => tradeFindFirst(...args) },
     tradingTelegramAuditLog: { create: (...args: unknown[]) => auditCreate(...args) },
   },
 }))
@@ -88,6 +90,7 @@ describe('approveTelegramDraftToLedger', () => {
     vi.clearAllMocks()
     draftUpdateMany.mockResolvedValue({ count: 1 })
     draftUpdate.mockResolvedValue({})
+    tradeFindFirst.mockResolvedValue(null)
     auditCreate.mockResolvedValue({})
   })
 
@@ -180,6 +183,7 @@ describe('editing and rejecting a claimed draft', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     auditCreate.mockResolvedValue({})
+    tradeFindFirst.mockResolvedValue(null)
     draftFindFirstOrThrow.mockResolvedValue(pendingDraft())
   })
 

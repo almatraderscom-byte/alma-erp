@@ -112,6 +112,20 @@ describe('sendPendingConfirmNudges', () => {
     expect(sendTelegramMessage).not.toHaveBeenCalled()
   })
 
+  it('scopes the cooldown to the chat, so a second group still gets warned', async () => {
+    draftFindMany.mockResolvedValue([pending(), pending({ telegramChatId: '-999' })])
+
+    await sendPendingConfirmNudges('FINAL')
+
+    // One staffer, two chats → two independent cooldown lookups.
+    expect(auditFindFirst).toHaveBeenCalledTimes(2)
+    const chats = auditFindFirst.mock.calls.map(
+      c => (c[0] as { where: { telegramChatId: string } }).where.telegramChatId,
+    )
+    expect(chats.sort()).toEqual(['-5157095212', '-999'])
+    expect(sendTelegramMessage).toHaveBeenCalledTimes(2)
+  })
+
   it('does not record a warning Telegram refused to deliver', async () => {
     sendTelegramMessage.mockResolvedValue({ ok: false, errorMessage: 'chat not found' })
 
@@ -140,6 +154,8 @@ describe('confirmNudgeUrgencyForNow', () => {
   })
 
   it('follows the cutoff hour when the owner moves it', () => {
+    // Only safe because the cron fires hourly and this picks the window — two
+    // pinned UTC schedules would still fire at 05:00 and miss the new one.
     process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD = '12'
     expect(confirmNudgeUrgencyForNow(atDhakaHour(11))).toBe('FINAL')
     expect(confirmNudgeUrgencyForNow(atDhakaHour(5))).toBeNull()

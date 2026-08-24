@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const draftFindFirst = vi.fn()
 const draftFindMany = vi.fn()
 const draftUpdateMany = vi.fn()
+const tradeFindFirst = vi.fn()
 const auditCreate = vi.fn()
 const createTradingTradeRecord = vi.fn()
 
@@ -27,6 +28,7 @@ vi.mock('@/lib/prisma', () => ({
       updateMany: (...a: unknown[]) => draftUpdateMany(...a),
       update: vi.fn(),
     },
+    tradingTrade: { findFirst: (...a: unknown[]) => tradeFindFirst(...a) },
     tradingTelegramAuditLog: { create: (...a: unknown[]) => auditCreate(...a) },
   },
 }))
@@ -78,6 +80,7 @@ describe('bulkApproveTelegramDrafts', () => {
     vi.clearAllMocks()
     draftUpdateMany.mockResolvedValue({ count: 1 })
     auditCreate.mockResolvedValue({})
+    tradeFindFirst.mockResolvedValue(null)
     createTradingTradeRecord.mockResolvedValue({ trade: { id: 'trade-x' }, summary: { merchantProgress: 0 } })
   })
 
@@ -128,6 +131,7 @@ describe('bulkApproveTelegramDrafts', () => {
 describe('postDraftToLedger — trade date', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    tradeFindFirst.mockResolvedValue(null)
     createTradingTradeRecord.mockResolvedValue({ trade: { id: 'trade-x' }, summary: { merchantProgress: 0 } })
   })
 
@@ -150,5 +154,21 @@ describe('postDraftToLedger — trade date', () => {
 
     const input = createTradingTradeRecord.mock.calls[0][0] as { tradeDate: Date }
     expect(input.tradeDate.toISOString()).toBe('2026-08-24T00:00:00.000Z')
+  })
+
+  it('refuses to backdate once a newer trade has already priced the inventory', async () => {
+    // A SELL's cost basis comes from the account's CURRENT average inventory. If a
+    // later day's BUY already posted, backdating would price this sell against
+    // stock that did not exist yet and quietly rewrite a past day's profit.
+    draftFindFirst.mockResolvedValue(draft('d-3', '2026-08-23T16:35:00.000Z', { status: 'APPROVED' }))
+    tradeFindFirst.mockResolvedValue({ id: 'trade-from-a-later-day' })
+
+    await postDraftToLedger('d-3', 'reviewer-1')
+
+    const input = createTradingTradeRecord.mock.calls[0][0] as { tradeDate?: Date }
+    expect(input.tradeDate).toBeUndefined()   // falls back to the confirm day
+    const where = (tradeFindFirst.mock.calls[0][0] as { where: Record<string, unknown> }).where
+    expect(where).toMatchObject({ tradingAccountId: 'acct-1', deletedAt: null })
+    expect(where.tradeDate).toEqual({ gt: new Date('2026-08-23T00:00:00.000Z') })
   })
 })

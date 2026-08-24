@@ -155,11 +155,7 @@
     },
     {
       "path": "/api/cron/telegram-confirm-nudge",
-      "schedule": "0 17 * * *"
-    },
-    {
-      "path": "/api/cron/telegram-confirm-nudge",
-      "schedule": "0 23 * * *"
+      "schedule": "0 * * * *"
     }
   ],
   "headers": [

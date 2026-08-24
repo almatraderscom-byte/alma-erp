@@ -108,14 +108,21 @@ export function confirmNudgeText(group: PendingGroup, urgency: ConfirmNudgeUrgen
   ].join('\n')
 }
 
-/** Warned recently? Retries and overlapping runs must not spam the group. */
-async function nudgedRecently(telegramUserId: string): Promise<boolean> {
+/**
+ * Warned recently? Retries and overlapping runs must not spam the group.
+ *
+ * Keyed by staffer AND chat, because the groups are: one staffer with drafts in
+ * two approved chats gets one message per chat, and a user-only key would let
+ * the first send silence the second chat's queue.
+ */
+async function nudgedRecently(telegramUserId: string, telegramChatId: string): Promise<boolean> {
   const since = new Date(Date.now() - NUDGE_COOLDOWN_MS)
   const recent = await prisma.tradingTelegramAuditLog.findFirst({
     where: {
       businessId: TRADING_BUSINESS_ID,
       eventType: NUDGE_EVENT,
       telegramUserId,
+      telegramChatId,
       createdAt: { gte: since },
     },
     select: { id: true },
@@ -129,7 +136,7 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
   const skipped: string[] = []
 
   for (const group of groups) {
-    if (await nudgedRecently(group.telegramUserId)) {
+    if (await nudgedRecently(group.telegramUserId, group.telegramChatId)) {
       skipped.push(group.telegramUserId)
       continue
     }
@@ -159,9 +166,11 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
 /**
  * Which warning this run should send, from the BD clock.
  *
- * One cron entry per window would be tidier, but the schedule lives in
- * vercel.json in UTC while the cutoff is a BD hour — deriving it here keeps the
- * two from drifting apart when `TELEGRAM_DRAFT_LOCK_HOUR_BD` changes.
+ * The cron fires HOURLY and this picks the window. Pinning two UTC schedules
+ * instead would silently drop the final warning the moment
+ * `TELEGRAM_DRAFT_LOCK_HOUR_BD` moves off its default — the schedule would still
+ * say 05:00 while the cutoff had moved. Twenty-two of the twenty-four runs return
+ * immediately without touching the database.
  */
 export function confirmNudgeUrgencyForNow(now = tradingBdNow()): ConfirmNudgeUrgency | null {
   const hour = now.getUTCHours()          // tradingBdNow is UTC-shifted: this IS the Dhaka hour
