@@ -833,8 +833,27 @@ function prismaPort(): SeoArtifactDeliveryPort {
       const dead = outbox.attempts >= outbox.maxAttempts
       const delayMs = Math.min(10 * 60_000, 5_000 * 2 ** Math.min(outbox.attempts, 7))
       await db.$transaction(async (tx: typeof db) => {
-        await tx.agentArtifactDeliveryOutbox.update({
-          where: { id: outbox.id },
+        // Fenced by lease ownership: if this dispatcher overran its 90s lease,
+        // another one may have reclaimed AND delivered the same outbox. An
+        // unconditional update here overwrote that winner's `delivered` with
+        // `retry`/`dead`, hiding an already-created card and burning attempts
+        // (Codex P2, PR #847). Only the current lease owner may record a
+        // failure, and only while the row is still `processing`.
+        // A claimed row always carries its owner; a missing one means this
+        // caller was never the claimant, so it may not record anything.
+        if (!outbox.leaseOwner) {
+          await ledger(tx, outbox.id, 'stale_failure_ignored', {
+            error: error.message.slice(0, 300),
+            leaseOwner: null,
+          })
+          return
+        }
+        const fenced = await tx.agentArtifactDeliveryOutbox.updateMany({
+          where: {
+            id: outbox.id,
+            status: 'processing',
+            leaseOwner: outbox.leaseOwner,
+          },
           data: {
             status: dead ? 'dead' : 'retry',
             availableAt: new Date(now.getTime() + delayMs),
@@ -843,6 +862,13 @@ function prismaPort(): SeoArtifactDeliveryPort {
             lastError: error.message.slice(0, 1000),
           },
         })
+        if (fenced.count !== 1) {
+          await ledger(tx, outbox.id, 'stale_failure_ignored', {
+            error: error.message.slice(0, 300),
+            leaseOwner: outbox.leaseOwner ?? null,
+          })
+          return
+        }
         await ledger(tx, outbox.id, `attempt_failed:${outbox.attempts}`, {
           error: error.message.slice(0, 500),
           retryable: !dead,

@@ -35,7 +35,14 @@ vi.mock('@/lib/prisma', () => {
       if (typeof where.requestId === 'string' && row.requestId !== where.requestId) return false
     }
     if ('continuationExecutionClaimedAt' in where) {
-      if (where.continuationExecutionClaimedAt === null && row.continuationExecutionClaimedAt !== null) return false
+      const expected = where.continuationExecutionClaimedAt
+      if (expected === null && row.continuationExecutionClaimedAt !== null) return false
+      // CAS reclaim (Codex P1): the lease is retaken against the exact stale
+      // timestamp, so the fake must compare Date VALUES like Prisma does.
+      if (expected instanceof Date && (
+        row.continuationExecutionClaimedAt == null
+        || row.continuationExecutionClaimedAt.getTime() !== expected.getTime()
+      )) return false
     }
     if (typeof where.status === 'string' && row.status !== where.status) return false
     return true
@@ -187,6 +194,7 @@ import {
   bindContinuationTurn,
   buildPlanStepContinuationBinding,
   buildSelfContinueBinding,
+  CONTINUATION_EXECUTION_LEASE_MS,
   claimContinuationExecution,
   continuationDomainForWorkflowKind,
   continuationRequestId,
@@ -545,6 +553,62 @@ describe('source validation and execution claim', () => {
     ])
     expect([a.outcome, b.outcome].sort()).toEqual(['claimed', 'observe'])
     expect(renderContinuationDirective(a.binding ?? b.binding!)).toContain('Audit action action-1')
+  })
+
+  it('reclaims a stale claim after executor loss, exactly once', async () => {
+    // Codex P1 (PR #847): the claim was a one-way latch — an executor that died
+    // after claiming left the turn `running` forever, and every retry observed.
+    const bound = await bindContinuationTurn({ binding: SEO_BINDING })
+    const first = await claimContinuationExecution({
+      conversationId: 'conv-1', turnId: bound.turnId, requestId: bound.requestId,
+    })
+    expect(first.outcome).toBe('claimed')
+
+    // Simulate executor death: the claim timestamp ages past the lease with no
+    // terminal event; the turn is still running.
+    const row = state.turns.find((t) => t.id === bound.turnId)!
+    row.continuationExecutionClaimedAt =
+      new Date(Date.now() - CONTINUATION_EXECUTION_LEASE_MS - 60_000)
+
+    const [a, b] = await Promise.all([
+      claimContinuationExecution({
+        conversationId: 'conv-1', turnId: bound.turnId, requestId: bound.requestId,
+      }),
+      claimContinuationExecution({
+        conversationId: 'conv-1', turnId: bound.turnId, requestId: bound.requestId,
+      }),
+    ])
+    expect([a.outcome, b.outcome].sort()).toEqual(['claimed', 'observe'])
+    // the winner refreshed the lease
+    expect(row.continuationExecutionClaimedAt!.getTime())
+      .toBeGreaterThan(Date.now() - 10_000)
+  })
+
+  it('a fresh claim is presumed live and still observes', async () => {
+    const bound = await bindContinuationTurn({ binding: SEO_BINDING })
+    await claimContinuationExecution({
+      conversationId: 'conv-1', turnId: bound.turnId, requestId: bound.requestId,
+    })
+    const retry = await claimContinuationExecution({
+      conversationId: 'conv-1', turnId: bound.turnId, requestId: bound.requestId,
+    })
+    expect(retry.outcome).toBe('observe')
+  })
+
+  it('never reclaims a terminal turn, however stale the claim', async () => {
+    const bound = await bindContinuationTurn({ binding: SEO_BINDING })
+    await claimContinuationExecution({
+      conversationId: 'conv-1', turnId: bound.turnId, requestId: bound.requestId,
+    })
+    const row = state.turns.find((t) => t.id === bound.turnId)!
+    row.status = 'done'
+    row.continuationExecutionClaimedAt =
+      new Date(Date.now() - CONTINUATION_EXECUTION_LEASE_MS - 60_000)
+    const retry = await claimContinuationExecution({
+      conversationId: 'conv-1', turnId: bound.turnId, requestId: bound.requestId,
+    })
+    expect(retry.outcome).toBe('observe')
+    expect(retry.status).toBe('done')
   })
 
   it('loads a valid binding, distinguishes absence, and fails malformed rows closed', async () => {

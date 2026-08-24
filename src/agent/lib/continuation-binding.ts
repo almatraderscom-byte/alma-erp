@@ -1609,6 +1609,22 @@ export function renderContinuationDirective(
   }
 }
 
+/**
+ * The execution claim is a recoverable LEASE, not a one-way latch. If the
+ * executor dies after this transaction commits but before `runOwnerTurn` emits
+ * a terminal event, nothing ever cleared `continuationExecutionClaimedAt` — so
+ * every BullMQ retry hit the non-null claim, returned `observe`, and completed
+ * without executing anything: the turn stayed `running` forever and the bound
+ * open-task/approval/plan work was permanently lost (Codex P1, PR #847).
+ *
+ * A retry may therefore RECLAIM a stale lease: the turn is still `running`
+ * (no terminal was ever written) and the claim is older than every legitimate
+ * executor lifetime — the inline chat route caps at `maxDuration = 800`s and
+ * the worker turn is deadline-salvaged well inside that. The reclaim is a CAS
+ * on the exact observed timestamp, so two racing retries admit exactly one.
+ */
+export const CONTINUATION_EXECUTION_LEASE_MS = 20 * 60 * 1000
+
 export async function claimContinuationExecution(input: {
   conversationId: string
   turnId: string
@@ -1637,7 +1653,14 @@ export async function claimContinuationExecution(input: {
     ) {
       throw new ContinuationBindingError('continuation_turn_identity_mismatch')
     }
-    if (row.status !== 'running' || row.continuationExecutionClaimedAt) {
+    if (row.status !== 'running') {
+      return { outcome: 'observe', binding, status: String(row.status) }
+    }
+    const priorClaim: Date | null = row.continuationExecutionClaimedAt
+    const claimIsStale = priorClaim != null
+      && Date.now() - priorClaim.getTime() > CONTINUATION_EXECUTION_LEASE_MS
+    if (priorClaim && !claimIsStale) {
+      // An executor claimed recently; presume it is live and observe.
       return { outcome: 'observe', binding, status: String(row.status) }
     }
 
@@ -1648,7 +1671,9 @@ export async function claimContinuationExecution(input: {
         conversationId,
         requestId,
         status: 'running',
-        continuationExecutionClaimedAt: null,
+        // Fresh claim: nobody holds it. Stale reclaim: CAS on the exact dead
+        // timestamp so two racing retries admit exactly one.
+        continuationExecutionClaimedAt: priorClaim,
       },
       data: { continuationExecutionClaimedAt: new Date() },
     })
@@ -1670,6 +1695,8 @@ export async function claimContinuationExecution(input: {
           where: { id: binding.source.id },
           select: { status: true },
         })
+        // A stale reclaim finds the source already moved by the dead executor —
+        // `running` is the expected state there, not a failure.
         if (task?.status !== 'running') {
           throw new ContinuationBindingError('continuation_source_claim_failed')
         }

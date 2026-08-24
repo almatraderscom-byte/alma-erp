@@ -381,3 +381,25 @@ describe('SEO artifact durable outbox', () => {
     })
   })
 })
+
+describe('failure updates are fenced by lease ownership (Codex P2, PR #847)', () => {
+  // The fenced branch lives in the Prisma port, whose transaction needs a real
+  // database — so the invariant is pinned at the source level, the same way the
+  // stream-contract guards pin the reference emit sites.
+  it('the prisma port conditions the failure write on processing + leaseOwner', async () => {
+    const { readFileSync } = await import('node:fs')
+    const source = readFileSync(new URL('../seo-artifact-outbox.ts', import.meta.url), 'utf8')
+    const start = source.indexOf('async fail(outbox, error, now)')
+    expect(start).toBeGreaterThan(0)
+    const body = source.slice(start, start + 2400)
+    // fenced update: never an unconditional `update({ where: { id } })`
+    expect(body).toContain('updateMany')
+    expect(body).toContain("status: 'processing'")
+    expect(body).toContain('leaseOwner: outbox.leaseOwner')
+    // a caller with no lease may record nothing
+    expect(body).toContain('if (!outbox.leaseOwner)')
+    // and a lost fence is logged, not silently retried
+    expect(body).toContain("'stale_failure_ignored'")
+    expect(body).not.toMatch(/await tx\.agentArtifactDeliveryOutbox\.update\(\{\s*\n\s*where: \{ id: outbox\.id \},\s*\n\s*data: \{\s*\n\s*status: dead/)
+  })
+})
