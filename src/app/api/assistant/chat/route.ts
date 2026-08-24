@@ -951,7 +951,12 @@ export async function POST(req: NextRequest) {
             askCardId: askCardRef,
             agentProseProtocol: requestedProseProtocol,
           })
-          const jobId = jobData ? await enqueueTurnJob(jobData) : null
+          // This lane fails CLOSED on ambiguity, so the enqueue must never
+          // hop transports: an HTTP attempt whose response was lost may have
+          // delivered the job already (Codex P1 #850 r7).
+          const jobId = jobData
+            ? await enqueueTurnJob(jobData, { allowCrossTransportFallback: false })
+            : null
           if (jobId) {
             clearTimeout(turnCapTimer)
             await traceTurnStage(turnId, 'continuation_enqueued', 'long_turn_worker_lane').catch(() => {})
@@ -1077,8 +1082,14 @@ export async function POST(req: NextRequest) {
     // (Codex P1 #765 round 4). Voice keeps the buffered whole-round emission.
     voiceTurn: body.voice === true,
     businessId,
+    // A worker rerun of an EXISTING web turn keeps the conversation's own
+    // model pin — the internal default silently swapped a picked model for
+    // defaultHeadModelId on every handed-off report (Codex P2 #850 r7). Bound
+    // continuation hops (internalControl) keep the default: their job pin is
+    // restored inside run-owner-turn and must not be outranked by an
+    // 'explicit' conversation pin here.
     modelId: isInternalCall
-      ? defaultHeadModelId
+      ? (internalExistingTurnRerun && !internalControl ? conversationModelId : defaultHeadModelId)
       : (resumeModelId ?? conversationModelId),
     // The chat's thinking level rides every turn of that chat — including an
     // approval continuation, which is the same job and must not silently

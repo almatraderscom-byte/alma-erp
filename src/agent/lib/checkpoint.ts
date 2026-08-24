@@ -164,11 +164,13 @@ export async function resolveCheckpointByTaskRef(taskRef: string): Promise<boole
 
 /**
  * Close every open DEADLINE-SLICE checkpoint of one conversation (the
- * `long_agent_task` rows the salvage path writes as work-remaining evidence).
- * Called when a self-continue chain finishes cleanly: the slices' checkpoints
- * are keyed to their own predecessor turn ids, so the completing slice cannot
- * name them individually — but "this conversation's sliced job is done" is
- * exactly the fact that closes them (Codex P2 #850 r6: they stayed open in
+ * `deadline_slice` rows the salvage path writes as work-remaining evidence —
+ * a DEDICATED task type so this sweep can never touch an unrelated long job's
+ * checkpoint in the same conversation, Codex P2 #850 r7). Called when a
+ * self-continue chain finishes cleanly: the slices' checkpoints are keyed to
+ * their own predecessor turn ids, so the completing slice cannot name them
+ * individually — but "this conversation's sliced job is done" is exactly the
+ * fact that closes them (Codex P2 #850 r6: they stayed open in
  * listUnresolvedCheckpoints and kept feeding stale resume context).
  */
 export async function resolveDeadlineSliceCheckpoints(conversationId: string): Promise<void> {
@@ -186,7 +188,7 @@ export async function resolveDeadlineSliceCheckpoints(conversationId: string): P
         const cp = row.checkpoint && typeof row.checkpoint === 'object' && !Array.isArray(row.checkpoint)
           ? row.checkpoint as Record<string, unknown>
           : {}
-        return cp.taskType === 'long_agent_task'
+        return cp.taskType === 'deadline_slice'
       })
       .map((row) => row.id)
     if (ids.length === 0) return

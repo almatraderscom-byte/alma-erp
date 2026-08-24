@@ -6050,9 +6050,12 @@ async function* runAlternateProviderTurn(
                 sourceTurnId: turnId,
               })
               const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+              // Dedicated task type: the completion sweep must be able to
+              // close THESE rows without touching an unrelated long job's
+              // checkpoint in the same conversation (Codex P2 #850 r7).
               if (!strongEvidence) await writeCheckpoint({
                 taskRef: turnId,
-                taskType: 'long_agent_task',
+                taskType: 'deadline_slice',
                 state: 'continuing',
                 goal: (lastUserText || 'চলমান দীর্ঘ কাজ').slice(0, 120),
                 summaryBn: `টার্নটা সার্ভার-সময়সীমায় থেমেছে — ${okSteps}টা ধাপ হয়ে গেছে; server নিজে থেকেই resume করবে।`,
