@@ -89,44 +89,6 @@ export async function updateTelegramDraft(
   return updated
 }
 
-/**
- * The date to book a draft under — its own BD day, but only when that is safe.
- *
- * Staff confirm in batches "when free", so a draft's day and its confirm day are
- * often different, and booking it on the confirm day puts it on the wrong day's
- * P/L. Backdating is not free, though: `createTradingTradeRecord` derives a
- * SELL's cost basis from the account's CURRENT weighted-average inventory. If a
- * later day's BUY has already posted, a backdated SELL would be priced against
- * inventory that did not exist yet — silently changing a historical day's profit,
- * and changing it differently depending on the order the batch was confirmed in.
- *
- * So: backdate only while nothing newer has touched the account. Then current
- * inventory IS the inventory as of that day and the cost basis is exactly right.
- * Otherwise fall back to the old behaviour (`undefined` → the confirm day), which
- * is at least internally consistent. Confirming a day's backlog oldest-first —
- * which bulk confirm now does — walks forward through the days correctly.
- *
- * Pricing a backdated sell properly in every case needs a chronological inventory
- * replay across the whole account. That is a change to live financial maths and
- * is deliberately NOT done here.
- */
-async function safeDraftTradeDate(
-  tradingAccountId: string,
-  createdAt: Date,
-): Promise<Date | undefined> {
-  const draftDay = telegramDraftTradeDate(createdAt)
-  const newer = await prisma.tradingTrade.findFirst({
-    where: {
-      tradingAccountId,
-      businessId: TRADING_BUSINESS_ID,
-      deletedAt: null,
-      tradeDate: { gt: draftDay },
-    },
-    select: { id: true },
-  })
-  return newer ? undefined : draftDay
-}
-
 export async function postDraftToLedger(draftId: string, reviewerUserId: string) {
   const draft = await prisma.tradingTelegramDraft.findFirst({
     where: { id: draftId, businessId: TRADING_BUSINESS_ID },
@@ -159,9 +121,19 @@ export async function postDraftToLedger(draftId: string, reviewerUserId: string)
     bdtRate: Number(draft.bdtRate),
     feeUsdt: Number(draft.feeUsdt ?? 0),
     // The trade happened when the staffer typed it into Telegram, not when
-    // someone got around to confirming it — but only backdate when doing so
-    // cannot rewrite money that is already booked. See safeDraftTradeDate.
-    tradeDate: await safeDraftTradeDate(draft.tradingAccountId, draft.createdAt),
+    // someone got around to confirming it. Staff confirm in batches "when free",
+    // so booking it on the confirm day puts it on the wrong day's P/L.
+    //
+    // Backdating is not free: a SELL's cost basis comes from the account's
+    // CURRENT weighted-average inventory, so a draft backdated past a later BUY
+    // would be priced against stock that did not exist yet and would quietly
+    // rewrite a past day's profit. `backdateToIfUntouched` therefore only takes
+    // effect while no trade on the account is dated after that day — checked
+    // inside the trade's own transaction, under the account lock, because that
+    // is a read-then-write. Otherwise it falls back to the confirm day, which is
+    // the old behaviour. Confirming oldest-first, which bulk confirm now does,
+    // walks a multi-day backlog forward correctly.
+    backdateToIfUntouched: telegramDraftTradeDate(draft.createdAt),
     notes,
     actorUserId: reviewerUserId,
     linkTelegramDraftId: draft.id,

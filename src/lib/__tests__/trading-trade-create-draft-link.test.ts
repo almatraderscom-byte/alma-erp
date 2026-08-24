@@ -13,6 +13,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  */
 
 const txTradeCreate = vi.fn()
+const txTradeFindFirst = vi.fn()
+const txQueryRaw = vi.fn()
 const txAccountFindUniqueOrThrow = vi.fn()
 const txDraftUpdateMany = vi.fn()
 const runTransaction = vi.fn()
@@ -59,11 +61,20 @@ vi.mock('@/lib/logger', () => ({ logEvent: vi.fn() }))
 import { createTradingTradeRecord } from '@/lib/trading-trade-create'
 
 const tx = {
+  // The account row lock that serialises concurrent confirms.
+  $queryRaw: (...a: unknown[]) => {
+    callOrder.push('lock')
+    return txQueryRaw(...a)
+  },
   tradingAccount: { findUniqueOrThrow: (...a: unknown[]) => txAccountFindUniqueOrThrow(...a) },
   tradingTrade: {
     create: (...a: unknown[]) => {
       callOrder.push('trade.create')
       return txTradeCreate(...a)
+    },
+    findFirst: (...a: unknown[]) => {
+      callOrder.push('backdate.check')
+      return txTradeFindFirst(...a)
     },
   },
   tradingTelegramDraft: {
@@ -92,6 +103,8 @@ describe('createTradingTradeRecord — Telegram draft linkage', () => {
     vi.clearAllMocks()
     callOrder.length = 0
     runTransaction.mockImplementation(async (fn: (t: unknown) => unknown) => fn(tx))
+    txQueryRaw.mockResolvedValue([{ id: 'acct-1' }])
+    txTradeFindFirst.mockResolvedValue(null)
     txAccountFindUniqueOrThrow.mockResolvedValue({ usdtBalance: 500, inventoryCostBdt: 60000 })
     txTradeCreate.mockResolvedValue({ id: 'trade-1', netProfit: 0 })
     txDraftUpdateMany.mockResolvedValue({ count: 1 })
@@ -111,7 +124,7 @@ describe('createTradingTradeRecord — Telegram draft linkage', () => {
     expect(arg.data).toMatchObject({ status: 'POSTED', tradingTradeId: 'trade-1' })
     expect(arg.data.confirmError).toBeNull()
     // Inside the transaction, after the trade row exists.
-    expect(callOrder).toEqual(['trade.create', 'draft.updateMany', 'recalculate'])
+    expect(callOrder).toEqual(['lock', 'trade.create', 'draft.updateMany', 'recalculate'])
   })
 
   it('aborts the transaction when another confirm already took the draft', async () => {
@@ -122,14 +135,46 @@ describe('createTradingTradeRecord — Telegram draft linkage', () => {
     ).rejects.toThrow(/confirmed by someone else/)
 
     // Throwing inside the callback is what rolls the trade back with it.
-    expect(callOrder).toEqual(['trade.create', 'draft.updateMany'])
+    expect(callOrder).toEqual(['lock', 'trade.create', 'draft.updateMany'])
   })
 
   it('leaves non-Telegram trades untouched', async () => {
     await createTradingTradeRecord(buyInput())
 
     expect(txDraftUpdateMany).not.toHaveBeenCalled()
-    expect(callOrder).toEqual(['trade.create', 'recalculate'])
+    expect(callOrder).toEqual(['lock', 'trade.create', 'recalculate'])
+  })
+
+  it('takes the account row lock before reading the balance it guards on', async () => {
+    await createTradingTradeRecord(buyInput())
+
+    // Without this, two confirms racing on one account both read pre-trade
+    // inventory: both pass the balance guard, both price their sell off it.
+    expect(callOrder[0]).toBe('lock')
+    expect(txQueryRaw).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves the backdate inside the transaction, under that lock', async () => {
+    await createTradingTradeRecord(
+      buyInput({ backdateToIfUntouched: new Date('2026-08-23T00:00:00.000Z') }),
+    )
+
+    expect(callOrder.indexOf('backdate.check')).toBeGreaterThan(callOrder.indexOf('lock'))
+    expect(callOrder.indexOf('backdate.check')).toBeLessThan(callOrder.indexOf('trade.create'))
+    const written = (txTradeCreate.mock.calls[0][0] as { data: { tradeDate: Date } }).data
+    expect(written.tradeDate.toISOString()).toBe('2026-08-23T00:00:00.000Z')
+  })
+
+  it('declines the backdate when a newer trade already priced the inventory', async () => {
+    txTradeFindFirst.mockResolvedValue({ id: 'trade-from-a-later-day' })
+
+    await createTradingTradeRecord(
+      buyInput({ backdateToIfUntouched: new Date('2026-08-23T00:00:00.000Z') }),
+    )
+
+    const written = (txTradeCreate.mock.calls[0][0] as { data: { tradeDate: Date } }).data
+    // Falls back to the confirm day rather than rewriting a past day's profit.
+    expect(written.tradeDate.toISOString()).not.toBe('2026-08-23T00:00:00.000Z')
   })
 
   it('still refuses a SELL bigger than the balance, naming both numbers', async () => {
@@ -143,5 +188,6 @@ describe('createTradingTradeRecord — Telegram draft linkage', () => {
 
     expect(txTradeCreate).not.toHaveBeenCalled()
     expect(txDraftUpdateMany).not.toHaveBeenCalled()
+    expect(txQueryRaw).toHaveBeenCalledTimes(1)   // guard runs under the lock
   })
 })

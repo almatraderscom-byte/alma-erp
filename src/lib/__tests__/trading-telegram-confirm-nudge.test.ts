@@ -126,6 +126,15 @@ describe('sendPendingConfirmNudges', () => {
     expect(sendTelegramMessage).toHaveBeenCalledTimes(2)
   })
 
+  it('scopes the cooldown by urgency, so the evening warning cannot eat the final one', async () => {
+    // With TELEGRAM_DRAFT_LOCK_HOUR_BD between 1 and 4 the FINAL run lands inside
+    // the 4-hour cooldown started at 23:00 — the message that matters most.
+    await sendPendingConfirmNudges('FINAL')
+
+    const where = (auditFindFirst.mock.calls[0][0] as { where: { detail: unknown } }).where
+    expect(where.detail).toEqual({ startsWith: 'FINAL' })
+  })
+
   it('does not record a warning Telegram refused to deliver', async () => {
     sendTelegramMessage.mockResolvedValue({ ok: false, errorMessage: 'chat not found' })
 

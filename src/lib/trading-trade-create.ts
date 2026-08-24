@@ -23,6 +23,14 @@ export type CreateTradingTradeInput = {
   notes?: string | null
   actorUserId?: string
   /**
+   * Book the trade on this day, but ONLY if no trade on the account is already
+   * dated after it. Resolved inside the transaction, under the account lock,
+   * because it is a read-then-write: a concurrent confirm committing between an
+   * outside check and this insert would leave the sell priced against inventory
+   * that did not exist on its day. See the caller for why backdating matters.
+   */
+  backdateToIfUntouched?: Date
+  /**
    * Telegram draft to mark POSTED *inside the same transaction* as the trade.
    *
    * Writing the trade and linking the draft in two separate statements leaves a
@@ -45,10 +53,38 @@ export async function createTradingTradeRecord(input: CreateTradingTradeInput) {
   const feeUsdt = usdtDecimal(input.feeUsdt)
 
   const result = await prisma.$transaction(async tx => {
+    // Serialize everything that touches this account's inventory. The balance
+    // guard, the average-cost read and the backdate check below are all
+    // read-then-write: without the lock two confirms racing on one account can
+    // both pass the balance guard, and both price their sell off pre-trade
+    // inventory. Contention is confined to a single account row.
+    await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${input.tradingAccountId} FOR UPDATE`
+
     const currentAccount = await tx.tradingAccount.findUniqueOrThrow({
       where: { id: input.tradingAccountId },
       select: { usdtBalance: true, inventoryCostBdt: true },
     })
+
+    // Under the lock, "nothing newer exists" stays true until this trade lands,
+    // so current inventory IS the inventory as of that day.
+    let effectiveTradeDate = tradeDate
+    if (input.backdateToIfUntouched) {
+      // Normalise in UTC, not server-local: the caller hands over an exact UTC
+      // day boundary (BD calendar day), and re-deriving it with setHours would
+      // shift it a day on any host that is not UTC.
+      const day = new Date(input.backdateToIfUntouched)
+      day.setUTCHours(0, 0, 0, 0)
+      const newer = await tx.tradingTrade.findFirst({
+        where: {
+          tradingAccountId: input.tradingAccountId,
+          businessId: TRADING_BUSINESS_ID,
+          deletedAt: null,
+          tradeDate: { gt: day },
+        },
+        select: { id: true },
+      })
+      if (!newer) effectiveTradeDate = day
+    }
     if (input.tradeType === 'SELL' && Number(currentAccount.usdtBalance) + 0.00000001 < Number(usdtAmount)) {
       // Name both numbers: staff hitting this from a Telegram draft could not tell
       // whether the entry was wrong or the account was short.
@@ -86,7 +122,7 @@ export async function createTradingTradeRecord(input: CreateTradingTradeInput) {
         feeBdt: calc.feeBdt,
         feeAmount: calc.feeBdt,
         netProfit: calc.netProfitBdt,
-        tradeDate,
+        tradeDate: effectiveTradeDate,
         notes: input.notes?.trim() || null,
       },
     })
@@ -108,8 +144,8 @@ export async function createTradingTradeRecord(input: CreateTradingTradeInput) {
       }
     }
     const summary = await recalculateTradingAccount(tx, input.tradingAccountId)
-    await refreshTradingDailySnapshot(tx, input.tradingAccountId, tradeDate, summary)
-    return { trade, summary }
+    await refreshTradingDailySnapshot(tx, input.tradingAccountId, effectiveTradeDate, summary)
+    return { trade, summary, tradeDate: effectiveTradeDate }
   }, { maxWait: 10_000, timeout: 20_000 })
 
   if (input.tradeType === 'SELL') {
@@ -131,7 +167,7 @@ export async function createTradingTradeRecord(input: CreateTradingTradeInput) {
         await postTradingTradeCommission({
           account: commissionAccount,
           tradeId: result.trade.id,
-          tradeDate,
+          tradeDate: result.tradeDate,
           netProfitBdt: Number(result.trade.netProfit),
           actorUserId: input.actorUserId ?? input.userId,
         })

@@ -111,11 +111,17 @@ export function confirmNudgeText(group: PendingGroup, urgency: ConfirmNudgeUrgen
 /**
  * Warned recently? Retries and overlapping runs must not spam the group.
  *
- * Keyed by staffer AND chat, because the groups are: one staffer with drafts in
- * two approved chats gets one message per chat, and a user-only key would let
- * the first send silence the second chat's queue.
+ * Keyed by staffer, chat AND urgency. Chat because the groups are per chat and a
+ * user-only key would let the first send silence the second chat's queue.
+ * Urgency because with the cutoff hour set between 1 and 4 the FINAL warning
+ * falls inside the evening warning's cooldown — the one message that matters
+ * most would be the one suppressed.
  */
-async function nudgedRecently(telegramUserId: string, telegramChatId: string): Promise<boolean> {
+async function nudgedRecently(
+  telegramUserId: string,
+  telegramChatId: string,
+  urgency: ConfirmNudgeUrgency,
+): Promise<boolean> {
   const since = new Date(Date.now() - NUDGE_COOLDOWN_MS)
   const recent = await prisma.tradingTelegramAuditLog.findFirst({
     where: {
@@ -123,6 +129,8 @@ async function nudgedRecently(telegramUserId: string, telegramChatId: string): P
       eventType: NUDGE_EVENT,
       telegramUserId,
       telegramChatId,
+      // Audit detail is written as `${urgency}; …` — see sendPendingConfirmNudges.
+      detail: { startsWith: urgency },
       createdAt: { gte: since },
     },
     select: { id: true },
@@ -136,7 +144,7 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
   const skipped: string[] = []
 
   for (const group of groups) {
-    if (await nudgedRecently(group.telegramUserId, group.telegramChatId)) {
+    if (await nudgedRecently(group.telegramUserId, group.telegramChatId, urgency)) {
       skipped.push(group.telegramUserId)
       continue
     }

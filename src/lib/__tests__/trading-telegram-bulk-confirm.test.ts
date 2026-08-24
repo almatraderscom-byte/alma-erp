@@ -131,44 +131,30 @@ describe('bulkApproveTelegramDrafts', () => {
 describe('postDraftToLedger — trade date', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    tradeFindFirst.mockResolvedValue(null)
     createTradingTradeRecord.mockResolvedValue({ trade: { id: 'trade-x' }, summary: { merchantProgress: 0 } })
   })
 
-  it('books the trade on the BD day it was typed, not the day it was confirmed', async () => {
+  it('asks to backdate to the BD day it was typed, not the day it was confirmed', async () => {
     // 2026-08-23 22:35 Dhaka. Confirmed the next afternoon.
     draftFindFirst.mockResolvedValue(draft('d-1', '2026-08-23T16:35:00.000Z', { status: 'APPROVED' }))
 
     await postDraftToLedger('d-1', 'reviewer-1')
 
-    const input = createTradingTradeRecord.mock.calls[0][0] as { tradeDate: Date }
-    expect(input.tradeDate.toISOString()).toBe('2026-08-23T00:00:00.000Z')
+    const input = createTradingTradeRecord.mock.calls[0][0] as { backdateToIfUntouched: Date; tradeDate?: Date }
+    expect(input.backdateToIfUntouched.toISOString()).toBe('2026-08-23T00:00:00.000Z')
+    // Never an unconditional tradeDate: the safety check belongs to the
+    // transaction, so the caller may only state intent.
+    expect(input.tradeDate).toBeUndefined()
   })
 
   it('keeps a late-evening draft on its own Dhaka day, not the previous UTC one', async () => {
-    // 2026-08-24 00:30 Dhaka is still 2026-08-23 18:30 UTC — the old code booked
-    // this one a day early.
+    // 2026-08-24 00:30 Dhaka is still 2026-08-23 18:30 UTC — booking by the
+    // server's UTC day put this one a day early.
     draftFindFirst.mockResolvedValue(draft('d-2', '2026-08-23T18:30:00.000Z', { status: 'APPROVED' }))
 
     await postDraftToLedger('d-2', 'reviewer-1')
 
-    const input = createTradingTradeRecord.mock.calls[0][0] as { tradeDate: Date }
-    expect(input.tradeDate.toISOString()).toBe('2026-08-24T00:00:00.000Z')
-  })
-
-  it('refuses to backdate once a newer trade has already priced the inventory', async () => {
-    // A SELL's cost basis comes from the account's CURRENT average inventory. If a
-    // later day's BUY already posted, backdating would price this sell against
-    // stock that did not exist yet and quietly rewrite a past day's profit.
-    draftFindFirst.mockResolvedValue(draft('d-3', '2026-08-23T16:35:00.000Z', { status: 'APPROVED' }))
-    tradeFindFirst.mockResolvedValue({ id: 'trade-from-a-later-day' })
-
-    await postDraftToLedger('d-3', 'reviewer-1')
-
-    const input = createTradingTradeRecord.mock.calls[0][0] as { tradeDate?: Date }
-    expect(input.tradeDate).toBeUndefined()   // falls back to the confirm day
-    const where = (tradeFindFirst.mock.calls[0][0] as { where: Record<string, unknown> }).where
-    expect(where).toMatchObject({ tradingAccountId: 'acct-1', deletedAt: null })
-    expect(where.tradeDate).toEqual({ gt: new Date('2026-08-23T00:00:00.000Z') })
+    const input = createTradingTradeRecord.mock.calls[0][0] as { backdateToIfUntouched: Date }
+    expect(input.backdateToIfUntouched.toISOString()).toBe('2026-08-24T00:00:00.000Z')
   })
 })
