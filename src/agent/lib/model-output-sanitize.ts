@@ -140,6 +140,19 @@ const DSML_ELEMENT_BLOCK = new RegExp(
 const DSML_ELEMENT_BLOCK_COMPLETE = new RegExp(
   '<[|｜]DSML[|｜](invoke|parameter)\\b[^>]*>[\\s\\S]*?<\\/[|｜]DSML[|｜]\\1>', 'gi',
 )
+/** DeepSeek's other sentinel dialect: `<｜tool▁calls▁begin｜>…<｜tool▁calls▁end｜>`
+ * (ASCII `|` and full-width `｜`, `_` and `▁`, closing marker with or without a
+ * slash). The MARKER nets below erase the tags but would leave the envelope's
+ * BODY — `functions.x:0<｜tool▁sep｜>{}` — standing as owner prose. `tool_sep` is
+ * a separator INSIDE a quarantined envelope, never a cue to execute its JSON,
+ * so the whole begin..end span is removed as one opaque block. Both variants
+ * require their closing marker, so an unclosed envelope stays held mid-stream
+ * exactly like the DSML openers above. */
+const SENTINEL_TOOL_CALLS_BLOCK =
+  /<([|｜])tool[_▁]calls[_▁]begin\1>[\s\S]*?<\/?\1tool[_▁]calls[_▁]end\1>/gi
+const SENTINEL_TOOL_CALL_BLOCK =
+  /<([|｜])tool[_▁]call[_▁]begin\1>[\s\S]*?<\/?\1tool[_▁]call[_▁]end\1>/gi
+
 const DSML_STRAY = new RegExp(DSML_TAG, 'gi')
 // Streaming strips only the CLOSING sentinel tags: an opener must survive the
 // push-time strip so holdFrom sees it and keeps the body back until the block
@@ -153,7 +166,13 @@ const DSML_STRAY_CLOSING = new RegExp('<\\/[|｜]DSML[|｜][a-z_]+\\b[^>]*>', 'g
  * push-time strip or its body leaks (see createMarkupStreamFilter).
  */
 const STREAMING_SAFE_MARKERS =
-  /<\/tool_call>|<\/arg_key>|<\/arg_value>|<\/function_(?:calls|results)>|<\/invoke>|<\/parameter>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
+  // `begin` is deliberately NOT here. It used to be safe to strip because
+  // `holdFrom` could not hold a pipe sentinel; now that it can (see
+  // toolishOpenerAt), erasing the opener mid-stream deletes it out from under
+  // the hold and the envelope body streams through as prose — the same class of
+  // bug the `<\/?tool_call>` note below describes (incident d00c1a82).
+  // `end`/`sep` are never openers, so they stay.
+  /<\/tool_call>|<\/arg_key>|<\/arg_value>|<\/function_(?:calls|results)>|<\/invoke>|<\/parameter>|<\/?\|?tool[_▁]?calls?[_▁]?(?:end|sep)\|?>|<\/?｜tool▁calls?▁(?:end|sep)｜>/gi
 
 /** Leftovers when a stream is cut mid-call, plus the DeepSeek/Qwen sentinels. */
 const STRAY_MARKERS =
@@ -217,6 +236,10 @@ export function stripToolCallMarkup(
     // A lone sentinel tag (stream cut mid-block, or an unwrapped invoke) is
     // never prose. Streaming strips only closers — an opener stays for
     // holdFrom (see DSML_STRAY_CLOSING).
+    // Sentinel envelopes as one opaque block, before the marker nets below can
+    // strip their tags and strand the body (incident d00c1a82).
+    .replace(SENTINEL_TOOL_CALLS_BLOCK, '')
+    .replace(SENTINEL_TOOL_CALL_BLOCK, '')
     .replace(streaming ? DSML_STRAY_CLOSING : DSML_STRAY, '')
     // Fences first: the block is removed WITH its contents, so a stripped call
     // cannot leave an empty ``` card behind.
@@ -346,13 +369,17 @@ function isToolishTag(name: string): boolean {
  * `<tag>` was recognised here (Codex P1 #771).
  */
 function toolishOpenerAt(s: string): number {
-  // Optional ｜DSML｜ sentinel prefix (sixth shape) — the captured name is what
-  // follows it, so `<｜DSML｜tool_calls>` is judged as `tool_calls`.
+  // DeepSeek's `<｜tool▁calls▁begin｜>` is not an XML-ish name at all (full-width
+  // bars, U+2581 separators), so the generic scan below cannot see it and its
+  // envelope was released as prose one delta at a time (incident d00c1a82).
+  const sentinel = /<[|｜]tool[_▁]calls?[_▁]begin[|｜]>/i.exec(s)
   const re = /<(?:[|｜]DSML[|｜])?([a-z_][a-z0-9_]*)(?:\s[^<>]*)?>/gi
   for (let m = re.exec(s); m; m = re.exec(s)) {
-    if (isToolishTag(m[1])) return m.index
+    if (!isToolishTag(m[1])) continue
+    // The EARLIEST opener wins, whichever dialect it is written in.
+    return sentinel ? Math.min(sentinel.index, m.index) : m.index
   }
-  return -1
+  return sentinel?.index ?? -1
 }
 
 /**
@@ -364,7 +391,7 @@ function toolishOpenerAt(s: string): number {
  * (flush() drops an unclosed block).
  */
 const CONFIRMED_TOOL_OPENER =
-  /^(?:<[|｜]DSML[|｜](?:tool_calls|invoke|parameter)\b|<tool_call>|<function_(?:calls|results)>|<invoke\b|<parameter\b|```[ \t]*(?:tool|tool_call|tool_code|function_calls?)\b|```[ \t]*(?:[a-z0-9_-]*[ \t]*)?(?:tool|function)[ _-]?calls?\b)/i
+  /^(?:<[|｜]DSML[|｜](?:tool_calls|invoke|parameter)\b|<[|｜]tool[_▁]calls?[_▁]begin[|｜]>|<tool_call>|<function_(?:calls|results)>|<invoke\b|<parameter\b|```[ \t]*(?:tool|tool_call|tool_code|function_calls?)\b|```[ \t]*(?:[a-z0-9_-]*[ \t]*)?(?:tool|function)[ _-]?calls?\b)/i
 
 
 /**
