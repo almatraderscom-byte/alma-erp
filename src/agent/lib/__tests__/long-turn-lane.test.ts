@@ -3,12 +3,23 @@
  * belongs on the VPS worker queue. These tests pin the DECISION — which owner
  * turns hand execution to the worker lane and which stay inline.
  */
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const mockPrisma = vi.hoisted(() => ({
+  agentKvSetting: {
+    findUnique: vi.fn(async () => null as unknown),
+    upsert: vi.fn(async (_args: { create: { value: string } }) => ({} as unknown)),
+  },
+}))
+vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
 
 import {
   classifyLongJobOwnerMessage,
+  longTurnLaneCooldownActive,
   longTurnWorkerLaneEnabled,
+  markLongTurnLaneCooldown,
   shouldRouteOwnerTurnToWorker,
+  LONG_TURN_LANE_COOLDOWN_MS,
 } from '@/agent/lib/long-turn-lane'
 
 const baseInput = {
@@ -79,5 +90,31 @@ describe('shouldRouteOwnerTurnToWorker', () => {
     process.env.AGENT_LONG_TURN_WORKER_LANE = 'off'
     expect(longTurnWorkerLaneEnabled()).toBe(false)
     expect(shouldRouteOwnerTurnToWorker(baseInput)).toBe(false)
+  })
+})
+
+describe('post-failure cooldown (Codex P1 #850 — the advertised retry must run inline)', () => {
+  it('marks and reads an active cooldown', async () => {
+    let stored = ''
+    mockPrisma.agentKvSetting.upsert.mockImplementation(async ({ create }: { create: { value: string } }) => {
+      stored = create.value
+      return {}
+    })
+    await markLongTurnLaneCooldown('conv-1')
+    expect(stored).toBeTruthy()
+
+    mockPrisma.agentKvSetting.findUnique.mockResolvedValue({ value: stored })
+    expect(await longTurnLaneCooldownActive('conv-1')).toBe(true)
+  })
+
+  it('an expired cooldown no longer holds the lane', async () => {
+    const old = new Date(Date.now() - LONG_TURN_LANE_COOLDOWN_MS - 1000).toISOString()
+    mockPrisma.agentKvSetting.findUnique.mockResolvedValue({ value: old })
+    expect(await longTurnLaneCooldownActive('conv-1')).toBe(false)
+  })
+
+  it('no cooldown row means the lane is open', async () => {
+    mockPrisma.agentKvSetting.findUnique.mockResolvedValue(null)
+    expect(await longTurnLaneCooldownActive('conv-1')).toBe(false)
   })
 })

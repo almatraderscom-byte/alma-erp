@@ -31,6 +31,39 @@ export function longTurnWorkerLaneEnabled(): boolean {
 }
 
 /**
+ * After an AMBIGUOUS enqueue failure the route fails the turn closed (running
+ * inline could double-execute — Codex P1 #850) and tells the owner to re-send.
+ * That retry must actually run: this cooldown keeps the conversation off the
+ * worker lane briefly, so the retry takes the inline path where no enqueue was
+ * ever attempted (unambiguous, safe).
+ */
+export const LONG_TURN_LANE_COOLDOWN_MS = 10 * 60 * 1000
+const COOLDOWN_KEY_PREFIX = 'long_turn_lane_cooldown:'
+
+export async function markLongTurnLaneCooldown(conversationId: string): Promise<void> {
+  const { prisma } = await import('@/lib/prisma')
+  const key = `${COOLDOWN_KEY_PREFIX}${conversationId}`
+  const value = new Date().toISOString()
+  await prisma.agentKvSetting
+    .upsert({ where: { key }, update: { value }, create: { key, value } })
+    .catch(() => {})
+}
+
+export async function longTurnLaneCooldownActive(conversationId: string): Promise<boolean> {
+  try {
+    const { prisma } = await import('@/lib/prisma')
+    const row = await prisma.agentKvSetting.findUnique({
+      where: { key: `${COOLDOWN_KEY_PREFIX}${conversationId}` },
+    })
+    if (!row?.value) return false
+    const t = Date.parse(String(row.value))
+    return Number.isFinite(t) && Date.now() - t < LONG_TURN_LANE_COOLDOWN_MS
+  } catch {
+    return false
+  }
+}
+
+/**
  * Is this owner message a report/audit-class long job? High-precision on
  * purpose — a false positive costs a queue hop on a quick answer; a false
  * negative just keeps today's serverless behaviour (with the hop-chain safety

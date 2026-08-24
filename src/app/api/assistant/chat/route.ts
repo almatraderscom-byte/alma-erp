@@ -902,17 +902,27 @@ export async function POST(req: NextRequest) {
   // report/audit-class owner turn (or a conversation already in a long_run job)
   // is handed to the SAME BullMQ `long-agent-task` lane the /turn route uses;
   // this function then only TAILS the worker's durable event log back over its
-  // own SSE response, so installed clients see an ordinary /chat stream while
-  // the execution has no serverless deadline under it. If the tail dies at
-  // maxDuration the worker keeps going and the client recovers via the existing
-  // turn-status poll / turn stream replay. Any enqueue problem falls through to
-  // today's inline path — a lost turn is worse than a serverless one.
+  // own SSE response, so installed clients see an ordinary /chat stream. If the
+  // tail dies at maxDuration the worker keeps going and the client recovers via
+  // the existing turn-status poll / turn stream replay.
+  //
+  // Execution-ceiling contract (Codex #850): the worker still executes each
+  // turn by POSTing back into this route, so a single SLICE remains bounded by
+  // this function's budget (maxDuration - 20s — the worker rerun gets the full
+  // budget, not the tuned-down inline cap). A job larger than one slice is NOT
+  // lost at that ceiling: the deadline salvage writes its work-remaining
+  // checkpoint and schedules a bounded SERVER-side self-continue hop through
+  // the durable binding contract, so the job proceeds in full-budget slices —
+  // detached from any client — until it completes or a brake (hop budget /
+  // dry-hop / authority guard) stops it honestly. Moving the model loop
+  // natively onto the VPS process would remove the per-slice ceiling entirely
+  // and stays a follow-up; the durable slice chain is what this PR guarantees.
   if (!isInternalCall && !internalControl && !resume && !autoContinueFromTurnId && message && turnId && conversationId) {
     try {
-      const { shouldRouteOwnerTurnToWorker } = await import('@/agent/lib/long-turn-lane')
+      const { shouldRouteOwnerTurnToWorker, longTurnLaneCooldownActive } = await import('@/agent/lib/long-turn-lane')
       const { loadRememberedWorkClass } = await import('@/agent/lib/turn-work-class')
       const remembered = await loadRememberedWorkClass(conversationId)
-      const routeToWorker = shouldRouteOwnerTurnToWorker({
+      const routeToWorker = !(await longTurnLaneCooldownActive(conversationId)) && shouldRouteOwnerTurnToWorker({
         message,
         rememberedLongRun: remembered?.workClass === 'long_run',
         isInternalCall,
@@ -947,7 +957,31 @@ export async function POST(req: NextRequest) {
               proseProtocol,
             })
           }
-          console.warn('[assistant/chat] long-turn worker enqueue failed — running inline')
+          if (jobData) {
+            // The enqueue was ATTEMPTED and failed ambiguously — an HTTP
+            // handoff whose response was lost/timed out may already have
+            // delivered the job, so running the same turn inline here could
+            // double-execute the model and every tool mutation (Codex P1
+            // #850). Fail the turn closed instead: the worker's own status
+            // guard (index.mjs — "turn already '<status>'") skips any ghost
+            // delivery of a non-running turn, so exactly zero or one
+            // execution can happen. The client retries with a fresh turn.
+            clearTimeout(turnCapTimer)
+            await finalizeTurnIfRunning(turnId, 'error')
+            // The advertised retry must actually run: keep this conversation
+            // off the worker lane briefly so the re-send takes the inline path
+            // (no enqueue attempted there — unambiguous, safe).
+            const { markLongTurnLaneCooldown } = await import('@/agent/lib/long-turn-lane')
+            await markLongTurnLaneCooldown(conversationId)
+            console.warn(`[assistant/chat] long-turn worker enqueue ambiguous-failed — turn ${turnId} failed closed (no inline duplicate)`)
+            return failedWorkerHandoffChatStream({
+              turnId,
+              conversationId,
+              personalMode,
+              businessId: businessId ?? null,
+              proseProtocol,
+            })
+          }
         }
       }
     } catch (err) {
@@ -1590,6 +1624,51 @@ function tailWorkerTurnAsChatStream(input: {
       'X-Conversation-Id': conversationId,
       'X-Personal-Mode': personalMode ? 'true' : 'false',
       'X-Business-Id': personalMode ? 'PERSONAL' : (input.businessId ?? 'ALMA_LIFESTYLE'),
+    },
+  })
+}
+
+/**
+ * Ambiguous worker-enqueue failure (Codex P1 #850): the job MAY exist on the
+ * worker, so this route must not execute inline. The turn was failed closed;
+ * tell the client cleanly over the ordinary SSE wire so it can retry with a
+ * fresh turn (a ghost delivery of this one is skipped by the worker's
+ * non-running status guard).
+ */
+function failedWorkerHandoffChatStream(input: {
+  turnId: string
+  conversationId: string
+  personalMode: boolean
+  businessId: string | null
+  proseProtocol: ProseProtocol
+}): Response {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    start(controller) {
+      const enqueue = (evt: unknown) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`))
+        } catch { /* client gone */ }
+      }
+      enqueue({ type: 'conversation_id', id: input.conversationId })
+      enqueue({ type: 'personal_mode', active: input.personalMode })
+      enqueue({ type: 'turn_id', id: input.turnId })
+      enqueue({ type: 'turn_protocol', agentProseProtocol: input.proseProtocol })
+      enqueue({
+        type: 'error',
+        message: 'দীর্ঘ কাজটা worker queue-তে দেওয়া যায়নি — মেসেজটা আবার পাঠান, এবারে সরাসরি চালিয়ে দেখব।',
+      })
+      try { controller.close() } catch { /* already closed */ }
+    },
+  })
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Conversation-Id': input.conversationId,
+      'X-Personal-Mode': input.personalMode ? 'true' : 'false',
+      'X-Business-Id': input.personalMode ? 'PERSONAL' : (input.businessId ?? 'ALMA_LIFESTYLE'),
     },
   })
 }
