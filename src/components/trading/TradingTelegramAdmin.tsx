@@ -300,6 +300,11 @@ export function TradingTelegramAdmin({
     }
     toast.success(`Posted ${data.posted} trade(s). Failed: ${data.failed}`)
     if (data.failed) toast.error(bulkFailureMessage(data.failureReasons), { duration: 8000 })
+    // A batch bigger than the cap, or one that ran out of time, leaves the rest
+    // untouched — say so, or the reviewer thinks the queue is clear when it isn't.
+    if (data.skipped) {
+      toast(`${data.skipped} draft(s) not attempted — press Bulk confirm again to continue.`, { duration: 8000 })
+    }
     setSelected(new Set())
     void load()
   }

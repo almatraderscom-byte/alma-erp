@@ -722,6 +722,7 @@ final class TradingTelegramVM {
             let posted: Int?
             let rejected: Int?
             let failed: Int?
+            let skipped: Int?
             let failureReasons: [String]?
         }
         do {
@@ -733,11 +734,16 @@ final class TradingTelegramVM {
             let headline = reject ? "Rejected \(res.rejected ?? 0) draft(s). Failed: \(res.failed ?? 0)"
                                   : "Posted \(res.posted ?? 0) trade(s). Failed: \(res.failed ?? 0)"
             // "Failed: 2" with no reason left the owner guessing which and why.
+            var message = headline
             if (res.failed ?? 0) > 0, let reasons = res.failureReasons, !reasons.isEmpty {
-                toast = headline + " — " + reasons.joined(separator: " · ")
-            } else {
-                toast = headline
+                message += " — " + reasons.joined(separator: " · ")
             }
+            // Untouched drafts from an over-cap or timed-out batch: without this
+            // the reviewer walks away thinking the queue is empty.
+            if let skipped = res.skipped, skipped > 0 {
+                message += " · \(skipped)টি বাকি — আবার চাপুন"
+            }
+            toast = message
             selectedDrafts = []
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             await load()

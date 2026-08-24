@@ -33,6 +33,19 @@ export function tradingBdDayBoundsForInstant(instant: Date | string): { start: D
   return { start, end, ymd }
 }
 
+/**
+ * The trade date to book a Telegram draft under: UTC midnight of the BD calendar
+ * day the staffer typed it, matching the shape a manual entry stores for the same
+ * day (`new Date('YYYY-MM-DD')`).
+ *
+ * Confirmation happens whenever the staffer is free — often hours later, often
+ * the next morning — so the confirm timestamp is not the trade's day. This is
+ * also the day the drafts list already groups the row under.
+ */
+export function telegramDraftTradeDate(createdAt: Date | string): Date {
+  return new Date(`${tradingBdYmdFromInstant(createdAt)}T00:00:00.000Z`)
+}
+
 export function tradingScreenshotCutoffHour(): number {
   const raw = Number(process.env.TRADING_SCREENSHOT_CUTOFF_HOUR_BD ?? 18)
   return Number.isFinite(raw) ? Math.min(23, Math.max(0, Math.floor(raw))) : 18

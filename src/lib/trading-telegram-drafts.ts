@@ -14,6 +14,7 @@ import {
 } from '@/lib/trading-telegram-permissions'
 import type { TradingContext } from '@/lib/trading'
 import { createTradingTradeRecord } from '@/lib/trading-trade-create'
+import { telegramDraftTradeDate } from '@/lib/trading-compliance'
 import { resolveProfileImageForUser } from '@/lib/user-display'
 
 export type UpdateTelegramDraftInput = {
@@ -119,6 +120,12 @@ export async function postDraftToLedger(draftId: string, reviewerUserId: string)
     usdtAmount: Number(draft.usdtAmount),
     bdtRate: Number(draft.bdtRate),
     feeUsdt: Number(draft.feeUsdt ?? 0),
+    // The trade happened when the staffer typed it into Telegram, not when
+    // someone got around to confirming it. Staff confirm in batches "when free",
+    // often the next day — without this the trade lands on the wrong day's P/L
+    // and the wrong daily snapshot. Same BD calendar day the drafts list groups
+    // it under, so the books match what staff see.
+    tradeDate: telegramDraftTradeDate(draft.createdAt),
     notes,
     actorUserId: reviewerUserId,
     linkTelegramDraftId: draft.id,
@@ -251,10 +258,44 @@ export async function rejectTelegramDraftRecord(ctx: TradingContext, draftId: st
   return updated
 }
 
+/** Largest batch one request will attempt; the rest come back as `skipped`. */
+export const MAX_BULK_CONFIRM = 40
+/** Stop starting new posts past this, so the caller always gets a report. */
+const BULK_TIME_BUDGET_MS = 90_000
+
+/**
+ * Order a batch the way the day actually happened.
+ *
+ * The client sends whatever order the list was in — which is `createdAt: 'desc'`,
+ * so "select all pending" replayed the day BACKWARDS. A SELL then reached the
+ * ledger before the BUY that funded it and died on the balance guard. Confirming
+ * a day's trades in one go only works oldest-first.
+ */
+async function orderDraftIdsChronologically(ids: string[]): Promise<string[]> {
+  if (ids.length < 2) return ids
+  const rows = await prisma.tradingTelegramDraft.findMany({
+    where: { id: { in: ids }, businessId: TRADING_BUSINESS_ID },
+    select: { id: true },
+    orderBy: [{ createdAt: 'asc' }, { tradeNumber: 'asc' }],
+  })
+  return rows.map(r => r.id)
+}
+
 export async function bulkApproveTelegramDrafts(ctx: TradingContext, draftIds: string[]) {
-  const allowed = await filterDraftIdsForActor(ctx, draftIds)
+  const allowed = await orderDraftIdsChronologically(await filterDraftIdsForActor(ctx, draftIds))
+  const batch = allowed.slice(0, MAX_BULK_CONFIRM)
   const results: Array<{ id: string; ok: boolean; tradeId?: string; error?: string }> = []
-  for (const id of allowed) {
+  let skipped = allowed.length - batch.length
+  const deadline = Date.now() + BULK_TIME_BUDGET_MS
+
+  for (const [index, id] of batch.entries()) {
+    // Each post is a transaction plus an account recalc; a long batch can outrun
+    // the function. Stop early WITH a report rather than dying mid-loop, which
+    // would leave some drafts posted and the reviewer with a network error.
+    if (index > 0 && Date.now() > deadline) {
+      skipped += batch.length - index
+      break
+    }
     try {
       const r = await approveTelegramDraftToLedger(ctx, id)
       results.push({ id, ok: true, tradeId: r.tradeId })
@@ -262,7 +303,8 @@ export async function bulkApproveTelegramDrafts(ctx: TradingContext, draftIds: s
       results.push({ id, ok: false, error: (e as Error).message })
     }
   }
-  return results
+
+  return { results, skipped }
 }
 
 export async function bulkRejectTelegramDrafts(ctx: TradingContext, draftIds: string[], reason: string) {

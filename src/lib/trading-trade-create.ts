@@ -37,7 +37,8 @@ export type CreateTradingTradeInput = {
 }
 
 export async function createTradingTradeRecord(input: CreateTradingTradeInput) {
-  const tradeDate = input.tradeDate ?? new Date()
+  // Clone before normalising — setHours mutates, and callers pass Dates they own.
+  const tradeDate = new Date(input.tradeDate ?? Date.now())
   tradeDate.setHours(0, 0, 0, 0)
   const usdtAmount = usdtDecimal(input.usdtAmount)
   const bdtRate = rateDecimal(input.bdtRate)

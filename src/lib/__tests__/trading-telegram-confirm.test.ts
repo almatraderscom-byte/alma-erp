@@ -75,6 +75,9 @@ function pendingDraft(overrides: Record<string, unknown> = {}) {
     telegramChatId: '-5157095212',
     telegramUsername: 'staffer',
     rawMessage: 'S 127.67 117.72 0.23',
+    // The ledger books a draft on the BD day it was typed, so the fixture needs a
+    // real createdAt — 2026-08-23 22:35 Dhaka, the row this whole file is about.
+    createdAt: new Date('2026-08-23T16:35:00.000Z'),
     tradingAccount: { id: 'acct-1', assignedUserId: 'staff-1' },
     ...overrides,
   }
