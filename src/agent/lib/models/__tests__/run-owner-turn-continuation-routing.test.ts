@@ -53,6 +53,10 @@ describe('runOwnerTurn source-bound continuation routing', () => {
         cacheCreation: 0,
         cacheRead: 0,
         costUsd: 0,
+        // The guard terminal states the reference contract like every other
+        // terminal (stream-contract guard); hidden rollout here → inactive.
+        references: undefined,
+        referencesActive: false,
       },
     ])
     expect(events.some((event) => event.type === 'tool_start' || event.type === 'tool_end')).toBe(false)
