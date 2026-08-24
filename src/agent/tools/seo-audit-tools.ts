@@ -15,10 +15,8 @@
 import { prisma } from '@/lib/prisma'
 import { agentStorageDownload, agentStorageUpload } from '@/agent/lib/storage'
 import {
-  buildClientReportHtml,
   buildClientReportMarkdown,
   buildCompareMarkdown,
-  buildIssuesCsv,
   type AuditJson,
 } from '@/agent/lib/seo-report'
 import {
@@ -26,7 +24,7 @@ import {
   ownerExplicitlyRequestedFreshAudit,
   seoAuditDedupeKey,
 } from '@/agent/lib/seo-audit-idempotency'
-import { saveConversationArtifact } from './artifact-tools'
+import { readSeoArtifactCard } from '@/agent/lib/seo-artifact-outbox'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -39,6 +37,25 @@ const db = prisma as any
 const ownerFileUrl = (path: string) => {
   const base = (process.env.APP_URL || process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app').replace(/\/$/, '')
   return `${base}/api/assistant/files?path=${encodeURIComponent(path)}&redirect=1`
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value != null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function deliveredArtifactReceipt(result: unknown): { artifactId: string; messageId: string } | null {
+  const delivery = objectRecord(objectRecord(result)?.__delivery)
+  const artifactId = typeof delivery?.artifactId === 'string' ? delivery.artifactId.trim() : ''
+  const messageId = typeof delivery?.messageId === 'string' ? delivery.messageId.trim() : ''
+  if (
+    delivery?.state !== 'delivered'
+    || delivery.via !== 'artifact_outbox'
+    || !artifactId
+    || !messageId
+  ) return null
+  return { artifactId, messageId }
 }
 
 const run_website_seo_audit: AgentTool = {
@@ -276,7 +293,10 @@ const check_website_seo_audit: AgentTool = {
       // without perfectly remembering the id across a yield.
       const looksLikeId = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(rawId)
 
-      const actionSelect = { id: true, type: true, status: true, summary: true, result: true, payload: true, createdAt: true }
+      const actionSelect = {
+        id: true, type: true, status: true, summary: true, result: true,
+        payload: true, createdAt: true, conversationId: true,
+      }
       let action = looksLikeId
         ? await db.agentPendingAction.findUnique({ where: { id: rawId }, select: actionSelect })
         : null
@@ -311,15 +331,6 @@ const check_website_seo_audit: AgentTool = {
       }
       const keywordsNote = ((action.payload as Record<string, unknown> | null)?.keywordsNote ?? null) as string | null
       const cap = (text: string, n: number) => (text.length > n ? `${text.slice(0, n)}\n…[truncated ${text.length - n} chars]` : text)
-      // The report is a deliverable — file it as a chat artifact so the owner
-      // gets a clickable FILE card (Claude-app style), not just links/pasted text.
-      let artifactCard: { id: string; title: string; type: string; version: number } | null = null
-      const fileReport = async (title: string, content: string) => {
-        try {
-          artifactCard = await saveConversationArtifact({ conversationId, title, content, type: 'markdown' })
-        } catch { /* no conversation context (e.g. internal call) — links/text still deliver */ }
-      }
-
       if (read && action.status !== 'executed') {
         return { success: false, error: `Audit ${auditStateBn(action.status)} — শেষ হলে (status "executed") read:"${read}" দিয়ে ডাকো।` }
       }
@@ -330,19 +341,7 @@ const check_website_seo_audit: AgentTool = {
           if (!loaded) return { success: false, error: 'Artifact paths পাওয়া যায়নি result-এ।' }
           const reportPath = artifactsOf(action).find((a) => a.endsWith('report.md')) ?? loaded.path.replace(/audit\.json$/, 'report.md')
           const csvPath = reportPath.replace(/report\.md$/, 'issues.csv')
-          // Regenerate the client-grade report + evidence CSV from the raw findings
-          // (upsert: replaces the worker's bare version and any stale copy).
           const htmlPath = reportPath.replace(/report\.md$/, 'report.html')
-          const reportMd = buildClientReportMarkdown(loaded.audit, { keywordsNote })
-          await agentStorageUpload(reportPath, Buffer.from(reportMd, 'utf8'), 'text/markdown', { upsert: true })
-          await agentStorageUpload(csvPath, Buffer.from(buildIssuesCsv(loaded.audit), 'utf8'), 'text/csv', { upsert: true })
-          await agentStorageUpload(
-            htmlPath,
-            Buffer.from(buildClientReportHtml(loaded.audit, { keywordsNote }), 'utf8'),
-            'text/html',
-            { upsert: true },
-          )
-          await fileReport(`SEO অডিট রিপোর্ট — ${new URL(loaded.audit.url).hostname.replace(/^www\./, '')}`, reportMd)
           links = {
             dashboardUrl: ownerFileUrl(htmlPath),
             reportUrl: ownerFileUrl(reportPath),
@@ -385,7 +384,6 @@ const check_website_seo_audit: AgentTool = {
           const md = buildCompareMarkdown(beforeAudit, loaded.audit)
           const comparePath = loaded.path.replace(/audit\.json$/, 'before-after.md')
           await agentStorageUpload(comparePath, Buffer.from(md, 'utf8'), 'text/markdown', { upsert: true })
-          await fileReport(`SEO আগে-পরে রিপোর্ট — ${host}`, md)
           compare = {
             compareMarkdown: cap(md, 30_000),
             compareUrl: ownerFileUrl(comparePath),
@@ -400,7 +398,6 @@ const check_website_seo_audit: AgentTool = {
           if (loaded) {
             const reportMd = buildClientReportMarkdown(loaded.audit, { keywordsNote })
             artifactText = cap(reportMd, 60_000)
-            await fileReport(`SEO অডিট রিপোর্ট — ${new URL(loaded.audit.url).hostname.replace(/^www\./, '')}`, reportMd)
           } else {
             // Very old audits without audit.json: fall back to the stored report.md.
             const stored = artifactsOf(action).find((a) => a.endsWith('report.md'))
@@ -420,6 +417,27 @@ const check_website_seo_audit: AgentTool = {
           return { success: false, error: `Artifact পড়া গেল না: ${String(err)}` }
         }
       }
+
+      // A successful poll is not delivery proof. Only the terminal outbox
+      // receipt may expose the canonical card, and its artifact identity must
+      // match the card read from the durable message link. Polling stays read-
+      // only and can never create another artifact/version.
+      const deliveryReceipt = action.status === 'executed'
+        ? deliveredArtifactReceipt(action.result)
+        : null
+      const durableCard = deliveryReceipt
+        ? await readSeoArtifactCard({
+            actionId: action.id,
+            conversationId: conversationId ?? action.conversationId ?? null,
+          })
+        : null
+      const artifactCard = durableCard && deliveryReceipt && durableCard.id === deliveryReceipt.artifactId
+        ? {
+            ...durableCard,
+            canonicalMessageDelivered: true as const,
+            canonicalMessageId: deliveryReceipt.messageId,
+          }
+        : null
 
       return {
         success: true,

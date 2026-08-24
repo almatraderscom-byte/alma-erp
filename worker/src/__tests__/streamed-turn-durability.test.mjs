@@ -122,6 +122,94 @@ function fakeFetch(events, { ok = true } = {}) {
 const job = { id: 'job-1', data: { turnId: 'turn-1', conversationId: 'conv-1', message: 'হ্যালো', agentProseProtocol: 2 } }
 const noSleep = async () => {}
 
+test('a source-bound continuation sends only turn/request references to chat authority', async () => {
+  const supabase = fakeSupabase()
+  const publisher = fakePublisher()
+  const requests = []
+  const boundJob = {
+    id: 'bound-job',
+    data: {
+      turnId: 'turn-bound',
+      conversationId: 'conv-1',
+      internalControl: true,
+      continuationRequestId: 'continuation:v1:job_result:pending_action:action-1:artifact_delivered',
+    },
+  }
+  const fetch = async (_url, init) => {
+    requests.push(JSON.parse(init.body))
+    return { ok: true, status: 200, body: sseBody([{ type: 'done', messageId: 'm-bound' }]), text: async () => '' }
+  }
+
+  await runStreamedTurn({ supabase, job: boundJob, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch, publisher, sleep: noSleep } })
+
+  assert.equal(requests.length, 1)
+  assert.deepEqual(requests[0], {
+    conversationId: 'conv-1',
+    turnId: 'turn-bound',
+    internalControl: true,
+    continuationRequestId: 'continuation:v1:job_result:pending_action:action-1:artifact_delivered',
+  })
+})
+
+test('a child-bound continuation request id keeps its exact subidentity segment', async () => {
+  const supabase = fakeSupabase()
+  const publisher = fakePublisher()
+  const requests = []
+  const continuationRequestId =
+    'continuation:v1:plan_driver:plan_step:step-1:step_dispatch:attempt-1'
+  const boundJob = {
+    id: 'plan-bound-job',
+    data: {
+      turnId: 'turn-plan',
+      conversationId: 'conv-1',
+      internalControl: true,
+      continuationRequestId,
+    },
+  }
+  const fetch = async (_url, init) => {
+    requests.push(JSON.parse(init.body))
+    return {
+      ok: true, status: 200,
+      body: sseBody([{ type: 'done', messageId: 'message-plan' }]),
+      text: async () => '',
+    }
+  }
+
+  await runStreamedTurn({
+    supabase, job: boundJob, redisUrl: 'redis://unused', telegramBot: null,
+    deps: { fetch, publisher, sleep: noSleep },
+  })
+
+  assert.equal(requests[0].continuationRequestId, continuationRequestId)
+  assert.equal('message' in requests[0], false)
+})
+
+test('a duplicate source-bound continuation observes the existing turn without synthesizing events', async () => {
+  const supabase = fakeSupabase()
+  const publisher = fakePublisher()
+  const boundJob = {
+    id: 'bound-duplicate',
+    data: {
+      turnId: 'turn-bound',
+      conversationId: 'conv-1',
+      internalControl: true,
+      continuationRequestId: 'continuation:v1:job_result:pending_action:action-1:artifact_delivered',
+    },
+  }
+  const fetch = async () => ({
+    ok: true,
+    status: 202,
+    headers: { get: (name) => name === 'x-agent-continuation-observe' ? '1' : null },
+    body: sseBody([]),
+    text: async () => '',
+  })
+
+  await runStreamedTurn({ supabase, job: boundJob, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch, publisher, sleep: noSleep } })
+
+  assert.deepEqual(supabase.rows, [])
+  assert.deepEqual(publisher.published, [])
+})
+
 test('happy path: every event is stored, published, and bumps agent_turns.last_seq (F-10)', async () => {
   const supabase = fakeSupabase()
   const publisher = fakePublisher()

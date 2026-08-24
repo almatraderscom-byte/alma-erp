@@ -28,14 +28,18 @@ import {
   imageResultQcWarnings,
   signImageResultPreviews,
 } from '@/agent/lib/image-result-contract'
+import {
+  dispatchSeoArtifactDeliveryForAction,
+  enqueueSeoArtifactDeliveryTx,
+  ensureSeoArtifactDeliveryOutbox,
+  seoArtifactOutboxEnabled,
+} from '@/agent/lib/seo-artifact-outbox'
+import {
+  continuationDomainForPendingActionType,
+  type ContinuationBindingV1,
+} from '@/agent/lib/continuation-binding'
 
 const IMAGE_SIGNED_URL_TTL_SEC = 3600
-const IMAGE_RESULT_CONTINUATION_MESSAGE =
-  '[সিস্টেম নোট — অনুমোদিত ছবি তৈরি হয়েছে] Boss-এর approve-করা ছবিটি এইমাত্র তৈরি হয়ে কনভারসেশনে যোগ হয়েছে। ' +
-  '**আগে PREVIEW CONFIRM (বাধ্যতামূলক — Boss-এর নিয়ম 2026-07-13):** ছবিটা Boss এখনো নিজের চোখে দেখেননি — ' +
-  'reply-তে ছবিটা উল্লেখ করে ask_user card দাও: "ছবিটা ঠিক আছে?" (অপশন: "ঠিক আছে, পোস্ট রেডি করো" / "ছবি change চাই")। ' +
-  'Boss "ঠিক আছে" বললে তবেই post_to_facebook/publish_to_instagram card দেবে — ছবি confirm হওয়ার আগে পোস্টের card দেওয়া নিষেধ। ' +
-  'ছবিটা আর নতুন করে generate কোরো না।'
 
 export const runtime = 'nodejs'
 // The continuation may run INLINE here (up to 90s) when the VPS worker's turn
@@ -70,6 +74,33 @@ function normalizeJobStatus(raw: string): 'success' | 'failed' | null {
     return 'success'
   }
   return null
+}
+
+function deliveredArtifactContinuationBinding(input: {
+  actionId: string
+  actionType: string
+  conversationId: string
+  workflowRunId?: string | null
+  artifact: 'seo' | 'image'
+}): ContinuationBindingV1 {
+  return {
+    v: 1,
+    origin: 'job_result',
+    source: { kind: 'pending_action', id: input.actionId },
+    conversationId: input.conversationId,
+    domain: continuationDomainForPendingActionType(input.actionType),
+    event: 'artifact_delivered',
+    ...(input.workflowRunId ? { workflowRunId: input.workflowRunId } : {}),
+    directive: {
+      kind: input.artifact === 'seo' ? 'seo_artifact_delivered' : 'image_artifact_delivered',
+      version: 1,
+    },
+    expected: {
+      sourceStatus: ['executed'],
+      sourceType: input.actionType,
+      deliveryState: input.artifact === 'seo' ? 'delivered' : 'message_delivered',
+    },
+  }
 }
 
 interface JobResultBody {
@@ -171,6 +202,7 @@ async function reconcileTerminalImageDelivery(
     type: string
     status: string
     conversationId?: string | null
+    workflowRunId?: string | null
     payload: unknown
     result: unknown
   },
@@ -297,6 +329,7 @@ async function reconcileTerminalImageRuntimeEffects(
     status: string
     summary?: string | null
     conversationId?: string | null
+    workflowRunId?: string | null
     payload: unknown
     result: unknown
   },
@@ -353,7 +386,13 @@ async function reconcileTerminalImageRuntimeEffects(
     await enqueueAgentContinuation({
       conversationId,
       turnId: progressTurnId,
-      message: IMAGE_RESULT_CONTINUATION_MESSAGE,
+      binding: deliveredArtifactContinuationBinding({
+        actionId: action.id,
+        actionType: action.type,
+        conversationId,
+        workflowRunId: action.workflowRunId,
+        artifact: 'image',
+      }),
     })
   } else if (progressTurnId) {
     await finalizeTurnIfRunning(progressTurnId, 'done')
@@ -429,6 +468,77 @@ export async function POST(req: NextRequest) {
   if (action.status === 'executed' || action.status === 'failed') {
     if (action.status === 'executed') {
       await settlePlanStepsLinkedToPendingAction(pendingActionId)
+    }
+    // A duplicate SEO callback is also the repair signal after any crash past
+    // the terminal transaction. Recreate a missing additive outbox row (rolling
+    // deploy compatibility), then replay storage/artifact/message delivery
+    // before acknowledging the worker's durable callback.
+    if (action.type === 'seo_audit' && action.status === 'executed' && seoArtifactOutboxEnabled()) {
+      const enqueued = await ensureSeoArtifactDeliveryOutbox(pendingActionId)
+      if (!enqueued) {
+        return Response.json({ error: 'seo_artifact_outbox_not_ready', retryable: true }, { status: 503 })
+      }
+
+      // The first callback can crash immediately after terminal+enqueue. Replay
+      // must still release/sync the workflow and resume the ordered SEO batch;
+      // artifact delivery alone is not the whole terminal reconciliation.
+      try {
+        const wf = await import('@/agent/lib/workflow-run')
+        await wf.releaseWorkflowLease(pendingActionId)
+        await wf.syncWorkflowWithPendingAction(pendingActionId, 'worker')
+      } catch (workflowError) {
+        console.warn('[job-result] SEO replay workflow reconcile failed:', workflowError instanceof Error ? workflowError.message : workflowError)
+        return Response.json({ error: 'seo_workflow_reconcile_failed', retryable: true }, { status: 503 })
+      }
+      const priorDelivery = action.result && typeof action.result === 'object'
+        ? (action.result as Record<string, unknown>).__delivery
+        : null
+      if (!priorDelivery || typeof priorDelivery !== 'object' || (priorDelivery as Record<string, unknown>).state !== 'delivered') {
+        await markDeliveryPending(pendingActionId, action.type)
+      }
+
+      const delivery = await dispatchSeoArtifactDeliveryForAction(pendingActionId)
+      if (delivery.status === 'dead') {
+        return Response.json({
+          ok: false,
+          idempotent: true,
+          status: action.status,
+          artifactDelivery: 'dead',
+          error: 'seo_artifact_delivery_dead',
+        })
+      }
+      if (delivery.status !== 'delivered') {
+        return Response.json({ error: 'seo_artifact_delivery_pending', retryable: true }, { status: 503 })
+      }
+
+      const conversationId = resolveConversationId(action)
+      const replayPayload = action.payload as Record<string, unknown> | null
+      const progressTurnId = typeof replayPayload?.progressTurnId === 'string' ? replayPayload.progressTurnId : null
+      if (conversationId && !await hasUnansweredAskCard(conversationId)) {
+        try {
+          await enqueueAgentContinuation({
+            conversationId,
+            force: true,
+            turnId: progressTurnId,
+            binding: deliveredArtifactContinuationBinding({
+              actionId: pendingActionId,
+              actionType: action.type,
+              conversationId,
+              workflowRunId: action.workflowRunId,
+              artifact: 'seo',
+            }),
+          })
+        } catch (continuationError) {
+          console.warn('[job-result] SEO replay continuation reconcile failed:', continuationError instanceof Error ? continuationError.message : continuationError)
+          return Response.json({ error: 'seo_continuation_reconcile_failed', retryable: true }, { status: 503 })
+        }
+      }
+      return Response.json({
+        ok: true,
+        idempotent: true,
+        status: action.status,
+        artifactDelivery: delivery.status,
+      })
     }
     if (action.type === 'image_gen' && !action.jobResultPending) {
       await settlePlanStepsLinkedToPendingAction(pendingActionId)
@@ -586,6 +696,23 @@ export async function POST(req: NextRequest) {
         retryable: true,
       }, { status: 503 })
     }
+  } else if (
+    action.type === 'seo_audit'
+    && status === 'success'
+    && seoArtifactOutboxEnabled()
+    && resolveConversationId(action)
+  ) {
+    const conversationId = resolveConversationId(action)!
+    // The terminal source fact and its owner-delivery obligation are one
+    // commit. Storage/network work starts only after this transaction closes.
+    await db.$transaction(async (tx: typeof db) => {
+      await tx.agentPendingAction.update({
+        where: { id: pendingActionId },
+        data: terminalData,
+      })
+      await enqueueSeoArtifactDeliveryTx(tx, { actionId: pendingActionId, conversationId })
+    })
+    await settlePlanStepsLinkedToPendingAction(pendingActionId)
   } else {
     await db.agentPendingAction.update({
       where: { id: pendingActionId },
@@ -653,15 +780,34 @@ export async function POST(req: NextRequest) {
   // SEO: build the client report, the issues CSV and the live HTML dashboard
   // NOW and file the dashboard as a chat artifact. Report quality no longer
   // depends on the head remembering to ask for it (incident 2026-07-25).
+  let seoArtifactDeliveryStatus: string | null = null
   if (status === 'success' && action.type === 'seo_audit') {
-    try {
-      const { buildSeoDeliverables } = await import('@/agent/lib/seo-deliverables')
-      const built = await buildSeoDeliverables(pendingActionId)
-      if (built) console.log(`[job-result] seo deliverables ready for ${built.host} (${built.pagesCrawled} pages)`)
-    } catch (err) {
-      // The raw result stays durable; the head's read:"report" path can still
-      // build everything on demand.
-      console.warn('[job-result] seo deliverables build failed:', err instanceof Error ? err.message : err)
+    if (seoArtifactOutboxEnabled()) {
+      const delivery = await dispatchSeoArtifactDeliveryForAction(pendingActionId)
+      seoArtifactDeliveryStatus = delivery.status
+      if (delivery.status === 'dead') {
+        return Response.json({
+          ok: false,
+          status: 'executed',
+          artifactDelivery: 'dead',
+          error: 'seo_artifact_delivery_dead',
+        })
+      }
+      // The terminal+enqueue commit is already durable. A non-2xx tells the
+      // worker to replay promptly; the cron sweeper is the independent safety
+      // net if that acknowledgement is lost too.
+      if (delivery.status !== 'delivered') {
+        return Response.json({ error: 'seo_artifact_delivery_pending', retryable: true }, { status: 503 })
+      }
+    } else {
+      // Rollback path: old deployments keep their title-based artifact builder.
+      try {
+        const { buildSeoDeliverables } = await import('@/agent/lib/seo-deliverables')
+        const built = await buildSeoDeliverables(pendingActionId)
+        if (built) console.log(`[job-result] legacy seo deliverables ready for ${built.host} (${built.pagesCrawled} pages)`)
+      } catch (err) {
+        console.warn('[job-result] legacy seo deliverables build failed:', err instanceof Error ? err.message : err)
+      }
     }
   }
 
@@ -958,7 +1104,13 @@ export async function POST(req: NextRequest) {
         // so the app's spinner runs from the owner's tap straight through to
         // this reply (Claude-Code-parity progress, owner ask 2026-07-13).
         turnId: progressTurnId,
-        message: IMAGE_RESULT_CONTINUATION_MESSAGE,
+        binding: deliveredArtifactContinuationBinding({
+          actionId: pendingActionId,
+          actionType: action.type,
+          conversationId: convId,
+          workflowRunId: action.workflowRunId,
+          artifact: 'image',
+        }),
       })
     } catch (err) {
       console.warn('[job-result] agent continuation enqueue failed (result unaffected):', err instanceof Error ? err.message : err)
@@ -975,6 +1127,11 @@ export async function POST(req: NextRequest) {
       // still gets the finished report — the server posts it and the card keeps
       // waiting (owner ruling 2026-07-25).
       if (await hasUnansweredAskCard(convId)) {
+        if (seoArtifactOutboxEnabled()) {
+          // The outbox-linked message/card is already the durable delivery; an
+          // open question stays open and no second plain server bubble is made.
+          return Response.json({ success: true, deliveredWhileAwaitingOwner: true, artifactDelivery: seoArtifactDeliveryStatus })
+        }
         const fresh = await db.agentPendingAction.findUnique({
           where: { id: pendingActionId },
           select: { type: true, summary: true, result: true },
@@ -992,18 +1149,18 @@ export async function POST(req: NextRequest) {
       // deliverable-build time — post THAT first, mark the job delivered, and let
       // the head add only the extra it verified. A deadline can now truncate the
       // commentary, never the report.
-      const freshForSpine = await db.agentPendingAction.findUnique({
-        where: { id: pendingActionId },
-        select: { type: true, summary: true, result: true },
-      })
-      let spinePosted = false
-      if (freshForSpine) {
-        try {
-          await postAssistantMessage(convId, buildFallbackDeliveryMessage(freshForSpine))
-          await markDelivered(pendingActionId, 'server_spine')
-          spinePosted = true
-        } catch (err) {
-          console.warn('[job-result] delivery spine post failed:', err instanceof Error ? err.message : err)
+      if (!seoArtifactOutboxEnabled()) {
+        const freshForSpine = await db.agentPendingAction.findUnique({
+          where: { id: pendingActionId },
+          select: { type: true, summary: true, result: true },
+        })
+        if (freshForSpine) {
+          try {
+            await postAssistantMessage(convId, buildFallbackDeliveryMessage(freshForSpine))
+            await markDelivered(pendingActionId, 'server_spine')
+          } catch (err) {
+            console.warn('[job-result] delivery spine post failed:', err instanceof Error ? err.message : err)
+          }
         }
       }
 
@@ -1015,18 +1172,13 @@ export async function POST(req: NextRequest) {
         // unbroken span from his request to the report.
         force: true,
         turnId: progressTurnId,
-        message:
-          `[INTERNAL SEO JOB RESULT] Audit action ${pendingActionId} is now executed. ` +
-          (spinePosted
-            ? 'The score, coverage, severity counts and every download link have ALREADY been posted to Boss ' +
-              'by the server — do NOT repeat them. Add only what you can verify yourself on top of that: the ' +
-              'critical/high issues with their concrete fix, and what to do first. Keep it under ~15 lines so ' +
-              'the turn finishes inside its deadline. Then resume the canonical client_seo_batch at its exact next tool. '
-            : 'Resume the canonical client_seo_batch at its exact next tool. Read the full report (read:"report") ' +
-              'and the links (read:"links"), then PRESENT them in this reply: score, every critical/high issue with ' +
-              'its fix, what to do first, and the download links. ') +
-          'Never rerun a completed audit, never ask Boss ' +
-          'whether he wants the report, and never end this turn with only a progress line.',
+        binding: deliveredArtifactContinuationBinding({
+          actionId: pendingActionId,
+          actionType: action.type,
+          conversationId: convId,
+          workflowRunId: action.workflowRunId,
+          artifact: 'seo',
+        }),
       })
     } catch (err) {
       console.warn('[job-result] SEO continuation enqueue failed (result remains durable):', err instanceof Error ? err.message : err)

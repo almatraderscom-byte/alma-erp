@@ -127,6 +127,19 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
         {
           getReplay: (after, limit) => getReplayEvents(turnId, after, limit, { throwOnError: true }),
           subscribe: (onEvent, signal) => subscribeTurnEvents(turnId, onEvent, { signal }),
+          getStatus: async () => {
+            const current = await getTurnSnapshot(turnId)
+            return current
+              ? {
+                  turnId: current.id,
+                  conversationId: current.conversationId,
+                  status: current.status,
+                  lastSeq: current.lastSeq,
+                  assistantMessageId: current.assistantMessageId,
+                  continuationNeeded: current.continuationNeeded,
+                }
+              : null
+          },
           poll: (after, onEvent) => pollTurnEvents(turnId, after, onEvent),
           emit: (evt) => emitEvent(evt.seq, evt.payload),
           control: (payload) => safeEnqueue(`data: ${JSON.stringify(payload)}\n\n`),
@@ -147,6 +160,9 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
           afterSeq,
           snapshotLastSeq: snap?.lastSeq ?? null,
           snapshotStatus: snap?.status ?? null,
+          snapshotConversationId: snap?.conversationId ?? null,
+          snapshotAssistantMessageId: snap?.assistantMessageId ?? null,
+          snapshotContinuationNeeded: snap?.continuationNeeded === true,
         },
       )
       await tail.ready

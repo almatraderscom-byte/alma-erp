@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage, type TimelineEntry } from './AgentThread'
+import type { OpenTaskContinuation } from './AgentOpenTasksChip'
 import { markTimelinePreamble, supersedeLatestTimelineDraft } from './agent-timeline'
 import AgentComposer, { type PendingFile } from './AgentComposer'
 import AgentLiveDock from './AgentLiveDock'
@@ -55,6 +56,18 @@ import {
   saveOutbox,
   type SteeringOutboxEntry,
 } from '@/agent/lib/steering-outbox'
+import {
+  consumeJsonSseResponse,
+  createDurableReplayResetGate,
+  createExactTurnConversationBinding,
+  loadPersistedDurableTurn,
+  reconcilePersistedDurableTurn,
+  releaseExactTurnObserver,
+  savePersistedDurableTurn,
+  SseEventConsumerError,
+  suspendExactTurnObserverForNavigation,
+  tailExactTurnStream,
+} from '@/agent/lib/durable-turn-stream-client'
 
 interface AgentAppProps {
   userName: string
@@ -83,6 +96,25 @@ async function readAssistantError(res: Response, fallback: string): Promise<stri
     /* non-JSON body */
   }
   return fallback
+}
+
+const loadBrowserDurableTurn = () => (
+  typeof window === 'undefined' ? null : loadPersistedDurableTurn(window.localStorage)
+)
+
+const persistBrowserDurableTurn = (
+  turnId: string,
+  conversationId: string,
+  lastSeq: number,
+  activeConversationId?: string,
+) => {
+  if (typeof window === 'undefined') return
+  savePersistedDurableTurn(window.localStorage, {
+    turnId,
+    conversationId,
+    lastSeq,
+    ...(activeConversationId && activeConversationId !== conversationId ? { activeConversationId } : {}),
+  })
 }
 
 type MessageRow = {
@@ -322,29 +354,6 @@ function finalizeTool(
   )
 }
 
-function parseSseChunks(buf: string): { remaining: string; events: Array<Record<string, unknown>> } {
-  const parts = buf.split('\n\n')
-  const remaining = parts.pop() ?? ''
-  const events: Array<Record<string, unknown>> = []
-  for (const chunk of parts) {
-    if (!chunk.startsWith('data: ')) continue
-    try {
-      events.push(JSON.parse(chunk.slice(6)) as Record<string, unknown>)
-    } catch { /* skip malformed */ }
-  }
-  return { remaining, events }
-}
-
-function parseTrailingSseEvent(buf: string): Record<string, unknown> | null {
-  const trimmed = buf.trim()
-  if (!trimmed.startsWith('data: ')) return null
-  try {
-    return JSON.parse(trimmed.slice(6)) as Record<string, unknown>
-  } catch {
-    return null
-  }
-}
-
 export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const isMobile = useMediaQuery('(max-width: 767px)')
 
@@ -354,6 +363,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [activeConvId, setActiveConvId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
+  const [durableRecoveryNonce, setDurableRecoveryNonce] = useState(0)
   // Brief "সংযোগ হচ্ছে…" glass pill on cold open / return-from-background (Claude-app
   // feel — confirms the session reconnected). Auto-hides after a short confirmation.
   const [reconnecting, setReconnecting] = useState(false)
@@ -467,6 +477,25 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // Durable server-side turn id (from the chat stream) — used by the Stop button to
   // issue a real cross-instance cancel, and to poll a backgrounded turn to completion.
   const activeTurnIdRef = useRef<string | null>(null)
+  const coldTurnRecoveryRef = useRef<{ turnId: string; controller: AbortController } | null>(null)
+  const coldRecoveryRetryTimerRef = useRef<number | null>(null)
+  const scheduleExactTurnRetry = useCallback((turnId: string, delayMs = 5_000) => {
+    if (typeof window === 'undefined') return
+    if (coldRecoveryRetryTimerRef.current != null) {
+      window.clearTimeout(coldRecoveryRetryTimerRef.current)
+    }
+    coldRecoveryRetryTimerRef.current = window.setTimeout(() => {
+      coldRecoveryRetryTimerRef.current = null
+      if (loadBrowserDurableTurn()?.turnId === turnId) {
+        setDurableRecoveryNonce((value) => value + 1)
+      }
+    }, delayMs)
+  }, [])
+  useEffect(() => () => {
+    if (coldRecoveryRetryTimerRef.current != null) {
+      window.clearTimeout(coldRecoveryRetryTimerRef.current)
+    }
+  }, [])
   const ownerStoppedTurnRef = useRef(false)
   // Auto-continue: a long browser task dies at the ~280s serverless cap; the server
   // marks the turn `needContinue` and the client claims a structured continuation
@@ -539,6 +568,35 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     const mapped = mapMessageRows(rows)
     setMessages((prev) => (mapped.length === 0 && prev.length > 0 ? prev : mapped))
   }, [])
+
+  /**
+   * A status-derived `turn_terminal` names the exact persisted assistant row.
+   * Reconcile to that row directly instead of asking conversation-latest which
+   * turn happens to be running (a newer concurrent turn must not steal recovery).
+   */
+  const resyncTerminalAssistant = useCallback(async (
+    convId: string | null,
+    turnId: string,
+    assistantMessageId: string | null,
+    allowNoAssistantRow: boolean,
+  ): Promise<boolean> => {
+    if (!convId || typeof window === 'undefined') return false
+    const reconciled = await reconcilePersistedDurableTurn<MessageRow>({
+      storage: window.localStorage,
+      turnId,
+      assistantMessageId,
+      allowNoAssistantRow,
+      readRows: async () => {
+        const res = await fetch(`/api/assistant/conversations/${convId}/messages`)
+        if (!res.ok) throw new Error(`message_reconcile_${res.status}`)
+        return res.json() as Promise<MessageRow[]>
+      },
+      onRows: (rows) => {
+        if (activeConvIdRef.current === convId) applyServerMessages(rows)
+      },
+    })
+    return reconciled
+  }, [applyServerMessages])
 
   const resyncActiveConversation = useCallback(async (convId: string | null) => {
     if (!convId) return
@@ -663,22 +721,213 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           permissionMode?: string | null
           effortLevel?: string | null
         }
-        if (!data.conversationId) return
+        const persistedTurn = loadBrowserDurableTurn()
+        const conversationId = persistedTurn?.activeConversationId
+          ?? persistedTurn?.conversationId
+          ?? data.conversationId
+        if (!conversationId) return
         if (streamingRef.current || activeConvIdRef.current) return
         await loadConversation({
-          id: data.conversationId,
+          id: conversationId,
           title: null,
-          projectId: data.projectId,
-          modelId: data.modelId ?? undefined,
-          effortLevel: data.effortLevel ?? null,
-          chatMode: data.chatMode,
-          permissionMode: data.permissionMode,
+          // The shared pointer metadata belongs only to its own conversation;
+          // an exact cold-recovery descriptor may deliberately target another.
+          projectId: conversationId === data.conversationId ? data.projectId : null,
+          modelId: conversationId === data.conversationId ? data.modelId ?? undefined : undefined,
+          effortLevel: conversationId === data.conversationId ? data.effortLevel ?? null : undefined,
+          chatMode: conversationId === data.conversationId ? data.chatMode : undefined,
+          permissionMode: conversationId === data.conversationId ? data.permissionMode : undefined,
           archived: false,
           updatedAt: '',
         })
       } catch { /* offline / transient — start blank */ }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Cold reload: localStorage carries the exact durable turn and last observed
+  // seq. Reattach that turn directly (without a POST/rerun and without consulting
+  // conversation-latest), then reconcile its named assistant row on terminal.
+  useEffect(() => {
+    const descriptor = loadBrowserDurableTurn()
+    const recoveryActiveConversationId = descriptor?.activeConversationId ?? descriptor?.conversationId
+    if (!descriptor || recoveryActiveConversationId !== activeConvId || streamingRef.current) return
+    if (coldTurnRecoveryRef.current?.turnId === descriptor.turnId) return
+
+    const controller = new AbortController()
+    if (coldRecoveryRetryTimerRef.current != null) {
+      window.clearTimeout(coldRecoveryRetryTimerRef.current)
+      coldRecoveryRetryTimerRef.current = null
+    }
+    coldTurnRecoveryRef.current = { turnId: descriptor.turnId, controller }
+    activeTurnIdRef.current = descriptor.turnId
+    // A bound open-task turn has no optimistic owner bubble, but it is still a
+    // first-class running turn: disable duplicate sends and show the same live
+    // connection state while we follow its exact durable stream.
+    streamingRef.current = true
+    setStreaming(true)
+    setStreamStatus('চলতি কাজটির সাথে যুক্ত হচ্ছি…')
+    flashReconnecting(1_400)
+    let assistantMessageId: string | null = null
+    let authoritativeTerminal = false
+    let terminalStatus: string | null = null
+    let continuationNeeded = false
+    let modelSwitchRequired = false
+
+    void tailExactTurnStream({
+      turnId: descriptor.turnId,
+      conversationId: descriptor.conversationId,
+      initialAfterSeq: descriptor.lastSeq,
+      signal: controller.signal,
+      open: async (exactTurnId, afterSeq, signal) => {
+        const params = new URLSearchParams({ proto: String(AGENT_PROSE_PROTOCOL) })
+        if (afterSeq >= 0) params.set('afterSeq', String(afterSeq))
+        return fetch(`/api/assistant/turn/${encodeURIComponent(exactTurnId)}/stream?${params}`, { signal })
+      },
+      onCursor: (lastSeq) => {
+        persistBrowserDurableTurn(
+          descriptor.turnId,
+          descriptor.conversationId,
+          lastSeq,
+          descriptor.activeConversationId,
+        )
+      },
+      onEvent: (event) => {
+        if (event.type === 'turn_terminal') {
+          authoritativeTerminal = true
+          terminalStatus = typeof event.status === 'string' ? event.status : null
+          continuationNeeded = event.continuationNeeded === true
+          assistantMessageId = typeof event.assistantMessageId === 'string'
+            ? event.assistantMessageId
+            : null
+        } else if (event.type === 'done') {
+          authoritativeTerminal = true
+          terminalStatus = 'done'
+          continuationNeeded = event.needContinue === true
+          assistantMessageId = typeof event.messageId === 'string' ? event.messageId : null
+        } else if (event.type === 'model_switch_required') {
+          modelSwitchRequired = true
+          if (activeConvIdRef.current === recoveryActiveConversationId) {
+            setMessages((prev) => {
+              const syntheticId = `model-switch-${descriptor.turnId}`
+              if (prev.some((message) => message.id === syntheticId)) return prev
+              return [...prev, {
+                id: syntheticId,
+                role: 'assistant',
+                text: '',
+                streaming: false,
+                modelSwitch: {
+                  toLabel: typeof event.toLabel === 'string' ? event.toLabel : 'Sonnet',
+                  fromLabel: typeof event.fromLabel === 'string' ? event.fromLabel : 'Worker',
+                  fallbackModelId: typeof event.fallbackModelId === 'string' ? event.fallbackModelId : '',
+                },
+              }]
+            })
+          }
+        } else if (event.type === 'error') {
+          const message = typeof event.message === 'string' ? event.message : ''
+          if (message !== 'turn_snapshot_unavailable' && message !== 'turn_replay_unavailable') {
+            authoritativeTerminal = true
+            terminalStatus = 'error'
+            assistantMessageId = typeof event.messageId === 'string' ? event.messageId : null
+          }
+        } else if (event.type === 'canceled') {
+          authoritativeTerminal = true
+          terminalStatus = 'canceled'
+          assistantMessageId = null
+        }
+      },
+    }).then(async () => {
+      // The approval card itself is the durable replayed fact; no assistant row
+      // exists. Keep the descriptor so a kill/reload replays the card until the
+      // owner approves or declines and starts its resume turn.
+      if (modelSwitchRequired) return
+      if (!authoritativeTerminal) return
+      const reconciled = await resyncTerminalAssistant(
+        descriptor.conversationId,
+        descriptor.turnId,
+        assistantMessageId,
+        terminalStatus === 'error' || terminalStatus === 'canceled',
+      )
+      if (!reconciled) {
+        // A successful terminal without its exact persisted row is an anomaly,
+        // never permission to discard recovery. Settle the foreground spinner,
+        // keep the descriptor, and retry this same turn in the background.
+        if (terminalStatus === 'done') {
+          console.warn('[turn-recovery] terminal_done_without_assistant_row', {
+            turnId: descriptor.turnId,
+            convId: descriptor.conversationId,
+          })
+          if (activeConvIdRef.current === recoveryActiveConversationId) {
+            const anomalyId = `terminal-anomaly-${descriptor.turnId}`
+            setMessages((prev) => (
+              prev.some((message) => message.id === anomalyId)
+                ? prev
+                : [...prev, {
+                    id: anomalyId,
+                    role: 'assistant',
+                    text: '⚠️ কাজটি server-এ শেষ দেখাচ্ছে, কিন্তু সংরক্ষিত উত্তরটি এখনো sync হয়নি।',
+                    streaming: false,
+                  }]
+            ))
+          }
+          scheduleExactTurnRetry(descriptor.turnId)
+        }
+        return
+      }
+      if (!continuationNeeded) return
+      if (autoContinueCountRef.current < MAX_AUTO_CONTINUES) {
+        autoContinueCountRef.current += 1
+        setStreamStatus(`⏩ কাজ অসমাপ্ত — নিজে থেকেই চালিয়ে যাচ্ছি (${autoContinueCountRef.current}/${MAX_AUTO_CONTINUES})…`)
+        setTimeout(() => {
+          void handleSendRef.current?.('', [], undefined, descriptor.turnId)
+        }, 1_200)
+      } else {
+        toast.error('কাজটা লম্বা — অটো-continue সীমা শেষ। "continue" লিখলে বাকিটা এগোবে।')
+      }
+    }).catch((error) => {
+      if (error instanceof SseEventConsumerError) console.error('[turn-recovery] consumer failed')
+      // Transport exhaustion/abort keeps the descriptor for the next foreground
+      // or reload. Never substitute conversation-latest here.
+    }).finally(() => {
+      if (releaseExactTurnObserver(coldTurnRecoveryRef, controller)) {
+        streamingRef.current = false
+        setStreaming(false)
+        setStreamStatus(null)
+      }
+      if (activeTurnIdRef.current === descriptor.turnId) activeTurnIdRef.current = null
+    })
+
+    return () => {
+      suspendExactTurnObserverForNavigation(coldTurnRecoveryRef, controller)
+      // Promise.finally owns global streaming/ref cleanup. Clearing the ref here
+      // first made finally miss it and left navigation stuck in `streaming=true`.
+    }
+  }, [activeConvId, durableRecoveryNonce, flashReconnecting, resyncTerminalAssistant, scheduleExactTurnRetry])
+
+  const attachOpenTaskContinuation = useCallback(async (continuation: OpenTaskContinuation) => {
+    if (continuation.conversationId !== activeConvIdRef.current) {
+      toast.error('কাজটি অন্য কথোপকথনের — ওই চ্যাট থেকে আবার চেষ্টা করুন')
+      return false
+    }
+    if (streamingRef.current && coldTurnRecoveryRef.current?.turnId !== continuation.turnId) {
+      toast.error('আরেকটি কাজ চলছে — সেটি শেষ হলে আবার চেষ্টা করুন')
+      return false
+    }
+    const existing = loadBrowserDurableTurn()
+    if (existing && existing.turnId !== continuation.turnId) {
+      toast.error('আগের চলতি কাজটির recovery শেষ হয়নি')
+      return false
+    }
+    persistBrowserDurableTurn(
+      continuation.turnId,
+      continuation.conversationId,
+      existing?.turnId === continuation.turnId ? existing.lastSeq : -1,
+    )
+    // Persistence happens before the attach trigger. A reload at any later
+    // instruction follows this exact turn/cursor and never repeats the request.
+    setDurableRecoveryNonce((value) => value + 1)
+    return true
   }, [])
 
   // Keep the active main thread live: poll its messages on a slow cadence so
@@ -994,6 +1243,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       await deliverSteeringRef.current?.(clientMessageId)
       return
     }
+    // A deliberate new owner turn supersedes this browser's background
+    // observation (the older server turn itself keeps running). Avoid sharing
+    // activeTurnIdRef between two simultaneous exact tails.
+    coldTurnRecoveryRef.current?.controller.abort()
+    coldTurnRecoveryRef.current = null
     // Only a real owner turn resets the bounded continuation budget.
     if (!resumeOpts && !autoContinueFromTurnId) autoContinueCountRef.current = 0
     pendingAutoContinueRef.current = null
@@ -1119,6 +1373,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     ])
 
     let finalConvId = convIdForUpload ?? activeConvId
+    const turnConversationBinding = createExactTurnConversationBinding(finalConvId)
     let compactAfterStream: string | null = null
     let serverCompacted = false
 
@@ -1130,6 +1385,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     let goLong = false
     let gotAnyEvent = false
     let firstByteTimer: ReturnType<typeof setTimeout> | undefined
+    let gotStreamDone = false
+    let toolInFlight = false
+    let terminalAssistantMessageId: string | null = null
+    let terminalNeedsResync = false
+    let terminalStatus: string | null = null
+    let terminalConversationId: string | null = null
+    let durableRecoveryAttempted = false
+    let durableLastSeq = -1
 
     try {
       const body: Record<string, unknown> = { agentProseProtocol: AGENT_PROSE_PROTOCOL }
@@ -1170,10 +1433,6 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           }
         }, LONG_TURN_SWITCH_MS)
       }
-
-      const decoder = new TextDecoder()
-      let gotStreamDone = false
-      let toolInFlight = false
 
       const flushStreamBuffer = () => {
         const buf = streamBufferRef.current
@@ -1240,6 +1499,30 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         }
       }
 
+      const resetOptimisticReplyForDurableReplay = () => {
+        // A direct /chat connection can carry minutes of unsequenced deltas and
+        // then hit the 300s proxy EOF. Its first exact durable attach starts at
+        // -1, so discard that optimistic projection once at turn_snapshot before
+        // replaying rows 0..N; subsequent cursor reconnects must not reset again.
+        streamBufferRef.current = null
+        thinkingBufferRef.current = null
+        proseState = createLiveProseState()
+        proseFlushScheduled = false
+        toolInFlight = false
+        setMessages((prev) => prev.map((message) => (
+          message.id === assistantMsgId
+            ? {
+                id: assistantMsgId,
+                role: 'assistant' as const,
+                text: '',
+                streaming: true,
+                toolActivity: [],
+                createdAt: message.createdAt,
+              }
+            : message
+        )))
+      }
+
       const applySseEvent = (evt: Record<string, unknown>) => {
         if (!gotAnyEvent) {
           gotAnyEvent = true
@@ -1247,9 +1530,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         }
         if (evt.type === 'conversation_id') {
           finalConvId = evt.id as string
+          turnConversationBinding.observeSource(finalConvId)
           setActiveConvId(finalConvId)
+          if (activeTurnIdRef.current) {
+            persistBrowserDurableTurn(activeTurnIdRef.current, finalConvId, durableLastSeq)
+          }
         } else if (evt.type === 'turn_id') {
           activeTurnIdRef.current = evt.id as string
+          if (finalConvId) persistBrowserDurableTurn(activeTurnIdRef.current, finalConvId, durableLastSeq)
         } else if (evt.type === 'turn_protocol' || evt.type === 'turn_snapshot') {
           // Reducer selection comes from this server fact alone — never from
           // the shape of individual events (mixed-version safety).
@@ -1590,6 +1878,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           }))
         } else if (evt.type === 'done') {
           gotStreamDone = true
+          terminalNeedsResync = true
+          terminalStatus = 'done'
+          terminalConversationId = turnConversationBinding.sourceConversationId
+          terminalAssistantMessageId = typeof evt.messageId === 'string' ? evt.messageId : null
           // Serverless deadline cut the task mid-flight → queue a structured,
           // exactly-once continuation after this stream fully closes.
           if (evt.needContinue === true && activeTurnIdRef.current) {
@@ -1633,6 +1925,53 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                 }
               : m
           ))
+        } else if (evt.type === 'turn_terminal') {
+          // This unsequenced control is status-derived when a provider/Redis
+          // path produced no mirrored `done` row. Identity was verified by the
+          // exact-turn tail client before this reducer is called.
+          gotStreamDone = true
+          terminalNeedsResync = true
+          terminalStatus = typeof evt.status === 'string' ? evt.status : null
+          terminalConversationId = typeof evt.conversationId === 'string'
+            ? evt.conversationId
+            : turnConversationBinding.sourceConversationId
+          terminalAssistantMessageId = typeof evt.assistantMessageId === 'string'
+            ? evt.assistantMessageId
+            : null
+          if (evt.continuationNeeded === true && activeTurnIdRef.current) {
+            pendingAutoContinueRef.current = activeTurnIdRef.current
+          }
+          setStreamStatus(null)
+          flushThinkingBuffer()
+          flushStreamBuffer()
+          setMessages((prev) => prev.flatMap((message) => {
+            if (message.id !== assistantMsgId) return [message]
+            const hasVisibleDraft = Boolean(
+              message.text
+              || message.thinking
+              || message.prose?.length
+              || message.toolActivity?.length
+              || message.timeline?.length,
+            )
+            if (!terminalAssistantMessageId && (evt.status === 'error' || evt.status === 'canceled')) {
+              const fallback = evt.status === 'canceled'
+                ? 'কাজটি বাতিল হয়েছে।'
+                : '⚠️ কাজটি server-এ ব্যর্থ হয়েছে।'
+              return [{
+                ...message,
+                streaming: false,
+                ...withClientErrorBlock(message, fallback),
+              }]
+            }
+            if (!terminalAssistantMessageId && !hasVisibleDraft) {
+              return []
+            }
+            return [{
+              ...message,
+              ...(terminalAssistantMessageId ? { id: terminalAssistantMessageId } : {}),
+              streaming: false,
+            }]
+          }))
         } else if (evt.type === 'model_switch_required') {
           // The turn paused for owner approval before upgrading to a premium model.
           // Attach the approval card to this reply; mark the stream done so the
@@ -1656,6 +1995,15 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           compactAfterStream = evt.conversationId as string
         } else if (evt.type === 'conversation_compacted') {
           finalConvId = evt.conversationId as string
+          turnConversationBinding.compactTo(finalConvId)
+          if (activeTurnIdRef.current && turnConversationBinding.sourceConversationId) {
+            persistBrowserDurableTurn(
+              activeTurnIdRef.current,
+              turnConversationBinding.sourceConversationId,
+              durableLastSeq,
+              finalConvId,
+            )
+          }
           setActiveConvId(finalConvId)
           compactAfterStream = null
           serverCompacted = true
@@ -1670,11 +2018,23 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           flushThinkingBuffer()
           flushStreamBuffer()
           const salvagedId = evt.messageId as string
+          terminalNeedsResync = true
+          terminalStatus = 'error'
+          terminalConversationId = turnConversationBinding.sourceConversationId
+          terminalAssistantMessageId = salvagedId
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId ? { ...m, id: salvagedId, streaming: false } : m
           ))
         } else if (evt.type === 'error') {
           gotStreamDone = true
+          const protocolUnavailable = evt.message === 'turn_snapshot_unavailable'
+            || evt.message === 'turn_replay_unavailable'
+          if (!protocolUnavailable) {
+            terminalNeedsResync = true
+            terminalStatus = 'error'
+            terminalConversationId = turnConversationBinding.sourceConversationId
+            terminalAssistantMessageId = null
+          }
           flushThinkingBuffer()
           flushStreamBuffer()
           const errText = evt.message as string
@@ -1695,26 +2055,66 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               ? { ...m, streaming: false, ...withClientErrorBlock(m, `⚠️ ${banglaMsg}`) }
               : m
           ))
+        } else if (evt.type === 'canceled') {
+          gotStreamDone = true
+          terminalNeedsResync = true
+          terminalStatus = 'canceled'
+          terminalConversationId = turnConversationBinding.sourceConversationId
+          terminalAssistantMessageId = null
+          flushThinkingBuffer()
+          flushStreamBuffer()
+          setMessages((prev) => prev.map((message) => (
+            message.id === assistantMsgId
+              ? { ...message, streaming: false, ...withClientErrorBlock(message, 'কাজটি বাতিল হয়েছে।') }
+              : message
+          )))
         }
       }
 
-      const consumeSseReader = async (rdr: ReadableStreamDefaultReader<Uint8Array>) => {
-        let lbuf = ''
-        while (true) {
-          const { done, value } = await rdr.read()
-          if (value) lbuf += decoder.decode(value, { stream: true })
+      const consumeSseResponse = async (response: Response) => {
+        await consumeJsonSseResponse({ response, onEvent: applySseEvent })
+      }
 
-          const { remaining, events } = parseSseChunks(lbuf)
-          lbuf = remaining
-          for (const evt of events) applySseEvent(evt)
-
-          if (done) {
-            lbuf += decoder.decode()
-            const trailing = parseTrailingSseEvent(lbuf)
-            if (trailing) applySseEvent(trailing)
-            break
-          }
-        }
+      const tailDurableExactTurn = async (turnId: string, resetDirectProjection: boolean) => {
+        if (!finalConvId) return false
+        durableRecoveryAttempted = true
+        // Persist before opening the stream: a zero-event turn can be killed
+        // after enqueue/snapshot but before any sequenced row advances onCursor.
+        persistBrowserDurableTurn(
+          turnId,
+          turnConversationBinding.sourceConversationId ?? finalConvId,
+          durableLastSeq,
+          turnConversationBinding.activeConversationId ?? finalConvId,
+        )
+        const replayReset = createDurableReplayResetGate(resetDirectProjection)
+        const streamCtrl = new AbortController()
+        abortRef.current = streamCtrl
+        await tailExactTurnStream({
+          turnId,
+          conversationId: finalConvId,
+          signal: streamCtrl.signal,
+          open: async (exactTurnId, afterSeq, signal) => {
+            const params = new URLSearchParams({ proto: String(AGENT_PROSE_PROTOCOL) })
+            if (afterSeq >= 0) params.set('afterSeq', String(afterSeq))
+            return fetch(`/api/assistant/turn/${encodeURIComponent(exactTurnId)}/stream?${params}`, { signal })
+          },
+          onEvent: (event) => {
+            if (replayReset.shouldReset(event)) resetOptimisticReplyForDurableReplay()
+            applySseEvent(event)
+          },
+          onCursor: (lastSeq) => {
+            durableLastSeq = lastSeq
+            if (finalConvId) {
+              persistBrowserDurableTurn(
+                turnId,
+                turnConversationBinding.sourceConversationId ?? finalConvId,
+                lastSeq,
+                turnConversationBinding.activeConversationId ?? finalConvId,
+              )
+            }
+          },
+        })
+        return gotStreamDone
       }
 
       // A2 fallback: re-run the turn on the VPS worker and tail its event stream.
@@ -1736,37 +2136,17 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           }),
         })
         if (!enqRes.ok) return false
-        const { turnId: workerTurnId, alreadyRunning, jobId } = await enqRes.json() as {
+        const { turnId: workerTurnId } = await enqRes.json() as {
           turnId: string | null
           alreadyRunning?: boolean
           jobId?: string | null
         }
         if (!workerTurnId) return false
         activeTurnIdRef.current = workerTurnId
-        if (alreadyRunning || !jobId) {
-          // Another path already owns (or completed) this logical request. Observe
-          // its durable turn and reload the one persisted result; never rerun it.
-          for (let attempt = 0; attempt < 100; attempt++) {
-            if (alreadyRunning) await new Promise((r) => setTimeout(r, 3000))
-            const statusRes = await fetch(`/api/assistant/conversations/${finalConvId}/turn-status`).catch(() => null)
-            if (!statusRes?.ok) continue
-            const status = ((await statusRes.json()) as { status?: string }).status
-            if (status === 'running') continue
-            const msgRes = await fetch(`/api/assistant/conversations/${finalConvId}/messages`).catch(() => null)
-            if (msgRes?.ok) {
-              const rows: MessageRow[] = await msgRes.json()
-              applyServerMessages(rows)
-            }
-            return true
-          }
-          return false
-        }
-        const streamCtrl = new AbortController()
-        abortRef.current = streamCtrl
-        const sres = await fetch(`/api/assistant/turn/${workerTurnId}/stream?proto=${AGENT_PROSE_PROTOCOL}`, { signal: streamCtrl.signal })
-        if (!sres.ok || !sres.body) return false
-        await consumeSseReader(sres.body.getReader())
-        return true
+        // Whether the enqueue was new, already owned, or already complete, tail
+        // the returned exact turn. Never fall back to conversation-latest: a
+        // newer concurrent turn is allowed to exist in this conversation.
+        return tailDurableExactTurn(workerTurnId, false)
       }
 
       try {
@@ -1787,12 +2167,31 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           throw new Error(errMsg)
         }
 
-        await consumeSseReader(res.body.getReader())
+        await consumeSseResponse(res)
+        // A platform/proxy may end a healthy direct response at 300s without a
+        // terminal frame. Reattach the already-created exact turn; do not rerun.
+        if (!gotStreamDone && activeTurnIdRef.current && finalConvId) {
+          const recovered = await tailDurableExactTurn(activeTurnIdRef.current, true)
+          if (!recovered) throw new Error('চলতি কাজটির durable stream terminal পাওয়া যায়নি।')
+        }
       } catch (innerErr) {
         // First-byte timeout tripped the guard → run it on the worker instead.
         if ((innerErr as Error).name === 'AbortError' && goLong) {
           const recovered = await runWorkerFallback()
           if (!recovered) throw new Error('দীর্ঘ কাজের server handoff যাচাই করা যায়নি। কাজটি আবার চালানো হয়নি।')
+        } else if (innerErr instanceof SseEventConsumerError) {
+          throw innerErr
+        } else if (
+          activeTurnIdRef.current
+          && finalConvId
+          && !ownerStoppedTurnRef.current
+          && !durableRecoveryAttempted
+        ) {
+          // A raw reader/network failure after turn_id is the same recovery case
+          // as clean EOF. The first exact replay starts at -1 and replaces the
+          // unsequenced optimistic draft once at its turn_snapshot.
+          const recovered = await tailDurableExactTurn(activeTurnIdRef.current, true)
+          if (!recovered) throw innerErr
         } else {
           throw innerErr
         }
@@ -1876,8 +2275,21 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       streamingRef.current = false
       setStreamStatus(null)
       abortRef.current = null
+      const completedTurnId = activeTurnIdRef.current
       activeTurnIdRef.current = null
       pendingFiles.forEach((pf) => URL.revokeObjectURL(pf.previewUrl))
+      if (terminalNeedsResync && completedTurnId) {
+        void resyncTerminalAssistant(
+          terminalConversationId ?? turnConversationBinding.sourceConversationId ?? finalConvId,
+          completedTurnId,
+          terminalAssistantMessageId,
+          terminalStatus === 'error' || terminalStatus === 'canceled',
+        ).then((reconciled) => {
+          if (!reconciled && terminalStatus === 'done') {
+            scheduleExactTurnRetry(completedTurnId)
+          }
+        })
+      }
       if (ownerStoppedTurnRef.current) {
         ownerStoppedTurnRef.current = false
         void resyncActiveConversation(finalConvId)
@@ -1910,7 +2322,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         toast.error('কাজটা লম্বা — অটো-continue সীমা শেষ। "continue" লিখলে বাকিটা এগোবে।')
       }
     }
-  }, [streaming, activeConvId, activeModelId, activeEffort, resyncActiveConversation])
+  }, [streaming, activeConvId, activeModelId, activeEffort, resyncActiveConversation, resyncTerminalAssistant])
 
   // Keep a stable ref so the auto-continue timer always calls the LATEST
   // handleSend (the useCallback identity changes with its deps).
@@ -2088,89 +2500,75 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       heldReply = reduceHeldVoiceReply(heldReply, { type: 'transport_error' })
       return settleVoiceReply()
     }
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
     let convId = activeConvId
     let parsedDone = false
     let interruptedBeforeDone = false
     try {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (value) buf += decoder.decode(value, { stream: true })
-        const parts = buf.split('\n\n')
-        buf = parts.pop() ?? ''
-        for (const chunk of parts) {
-          if (!chunk.startsWith('data: ')) continue
-          try {
-            const evt = JSON.parse(chunk.slice(6)) as Record<string, unknown>
-            if (evt.type === 'conversation_id') {
-              convId = evt.id as string
-              setActiveConvId(convId)
-            } else if (evt.type === 'text_delta') {
-              heldReply = reduceHeldVoiceReply(heldReply, {
-                type: 'text_delta',
-                delta: evt.delta as string,
-              })
-            } else if (evt.type === 'tool_start') {
-              onEvent?.({ type: 'tool_start', id: evt.id as string, name: evt.name as string })
-            } else if (evt.type === 'tool_end') {
-              onEvent?.({
-                type: 'tool_end',
-                id: evt.id as string,
-                success: evt.success as boolean,
-                resultPreview: typeof evt.resultPreview === 'string' ? evt.resultPreview : undefined,
-              })
-            } else if (evt.type === 'subagent_start') {
-              onEvent?.({ type: 'subagent_start', id: evt.id as string, roleLabel: String(evt.roleLabel ?? 'সহকারী') })
-            } else if (evt.type === 'subagent_end') {
-              onEvent?.({ type: 'subagent_end', id: evt.id as string, success: evt.success !== false })
-            } else if (evt.type === 'confirm_card') {
-              onEvent?.({
-                type: 'confirm_card',
-                pendingActionId: typeof evt.pendingActionId === 'string' ? evt.pendingActionId : undefined,
-                summary: typeof evt.summary === 'string' ? evt.summary : undefined,
-                costEstimate: typeof evt.costEstimate === 'number' ? evt.costEstimate : undefined,
-                actionType: typeof evt.actionType === 'string' ? evt.actionType : undefined,
-              })
-            } else if (evt.type === 'ask_card') {
-              // The head is ASKING the owner something — in voice this must be
-              // spoken, or the turn dies in silence (owner-reported gap #1).
-              onEvent?.({
-                type: 'ask_card',
-                askCardId: String(evt.askCardId ?? ''),
-                question: String(evt.question ?? ''),
-                options: Array.isArray(evt.options) ? (evt.options as unknown[]).map(String) : [],
-                questions: Array.isArray((evt as { questions?: unknown }).questions)
-                  ? ((evt as { questions?: unknown }).questions as Array<{ question: string; options: string[] }>)
-                  : undefined,
-              })
-            } else if (evt.type === 'error') {
-              if (requireAuthoritativeDone && !parsedDone) {
-                heldReply = reduceHeldVoiceReply(heldReply, { type: 'transport_error' })
-                interruptedBeforeDone = true
-              } else {
-                onEvent?.({ type: 'error', message: typeof evt.message === 'string' ? evt.message : undefined })
-              }
-            } else if (evt.type === 'verification_retry') {
-              const categories = Array.isArray(evt.categories) ? evt.categories.map(String) : []
-              heldReply = reduceHeldVoiceReply(heldReply, { type: 'verification_retry', categories })
-              onEvent?.({ type: 'verification_retry', categories })
-            } else if (evt.type === 'model_switch_required') {
-              onEvent?.({ type: 'model_switch_required' })
-            } else if (evt.type === 'done') {
-              heldReply = reduceHeldVoiceReply(heldReply, { type: 'done' })
-              parsedDone = true
+      await consumeJsonSseResponse({
+        response: res,
+        onEvent: (evt) => {
+          if (evt.type === 'conversation_id') {
+            convId = evt.id as string
+            setActiveConvId(convId)
+          } else if (evt.type === 'text_delta') {
+            heldReply = reduceHeldVoiceReply(heldReply, {
+              type: 'text_delta',
+              delta: evt.delta as string,
+            })
+          } else if (evt.type === 'tool_start') {
+            onEvent?.({ type: 'tool_start', id: evt.id as string, name: evt.name as string })
+          } else if (evt.type === 'tool_end') {
+            onEvent?.({
+              type: 'tool_end',
+              id: evt.id as string,
+              success: evt.success as boolean,
+              resultPreview: typeof evt.resultPreview === 'string' ? evt.resultPreview : undefined,
+            })
+          } else if (evt.type === 'subagent_start') {
+            onEvent?.({ type: 'subagent_start', id: evt.id as string, roleLabel: String(evt.roleLabel ?? 'সহকারী') })
+          } else if (evt.type === 'subagent_end') {
+            onEvent?.({ type: 'subagent_end', id: evt.id as string, success: evt.success !== false })
+          } else if (evt.type === 'confirm_card') {
+            onEvent?.({
+              type: 'confirm_card',
+              pendingActionId: typeof evt.pendingActionId === 'string' ? evt.pendingActionId : undefined,
+              summary: typeof evt.summary === 'string' ? evt.summary : undefined,
+              costEstimate: typeof evt.costEstimate === 'number' ? evt.costEstimate : undefined,
+              actionType: typeof evt.actionType === 'string' ? evt.actionType : undefined,
+            })
+          } else if (evt.type === 'ask_card') {
+            // The head is ASKING the owner something — in voice this must be
+            // spoken, or the turn dies in silence (owner-reported gap #1).
+            onEvent?.({
+              type: 'ask_card',
+              askCardId: String(evt.askCardId ?? ''),
+              question: String(evt.question ?? ''),
+              options: Array.isArray(evt.options) ? (evt.options as unknown[]).map(String) : [],
+              questions: Array.isArray((evt as { questions?: unknown }).questions)
+                ? ((evt as { questions?: unknown }).questions as Array<{ question: string; options: string[] }>)
+                : undefined,
+            })
+          } else if (evt.type === 'error') {
+            if (requireAuthoritativeDone && !parsedDone) {
+              heldReply = reduceHeldVoiceReply(heldReply, { type: 'transport_error' })
+              interruptedBeforeDone = true
+            } else {
+              onEvent?.({ type: 'error', message: typeof evt.message === 'string' ? evt.message : undefined })
             }
-          } catch { /* skip */ }
-        }
-        if (requireAuthoritativeDone && (parsedDone || interruptedBeforeDone)) break
-        if (done) {
-          if (requireAuthoritativeDone && !parsedDone) {
-            heldReply = reduceHeldVoiceReply(heldReply, { type: 'transport_end' })
+          } else if (evt.type === 'verification_retry') {
+            const categories = Array.isArray(evt.categories) ? evt.categories.map(String) : []
+            heldReply = reduceHeldVoiceReply(heldReply, { type: 'verification_retry', categories })
+            onEvent?.({ type: 'verification_retry', categories })
+          } else if (evt.type === 'model_switch_required') {
+            onEvent?.({ type: 'model_switch_required' })
+          } else if (evt.type === 'done') {
+            heldReply = reduceHeldVoiceReply(heldReply, { type: 'done' })
+            parsedDone = true
           }
-          break
-        }
+        },
+      })
+      if (requireAuthoritativeDone && !parsedDone && !interruptedBeforeDone) {
+        heldReply = reduceHeldVoiceReply(heldReply, { type: 'transport_end' })
       }
     } catch (error) {
       if (!requireAuthoritativeDone) throw error
@@ -2557,6 +2955,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               else stopResultPolling()
             }}
             onQuickSend={(text, askCardId) => { if (!streaming) void handleSend(text, [], undefined, undefined, askCardId) }}
+            onContinueOpenTask={attachOpenTaskContinuation}
             onModelSwitchResolve={(opts) => { if (!streaming) void handleSend('', [], opts) }}
             onStartVoiceSession={() => setVoiceOpen(true)}
             streamMode={streamMode}

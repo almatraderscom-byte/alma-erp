@@ -25,6 +25,8 @@
  * src/agent/protocol/fixtures/prose-lifecycle-v2/.
  */
 
+import { stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
+
 export const PROSE_PROTOCOL_V1 = 1 as const
 export const PROSE_PROTOCOL_V2 = 2 as const
 export type ProseProtocol = 1 | 2
@@ -216,7 +218,9 @@ export class ProseLifecycleTracker {
           kind: b.kind,
           state: b.state === 'superseded' ? 'superseded' : 'committed',
           revision: b.revision,
-          text: b.state === 'superseded' ? b.text.slice(0, SUPERSEDED_TEXT_CAP) : b.text,
+          text: stripToolCallMarkup(
+            b.state === 'superseded' ? b.text.slice(0, SUPERSEDED_TEXT_CAP) : b.text,
+          ),
           ...(timelineIndex != null ? { timelineIndex } : {}),
           ...(b.replaces ? { replaces: b.replaces } : {}),
           ...(b.reason ? { reason: b.reason } : {}),
@@ -235,7 +239,7 @@ export class ProseLifecycleTracker {
   /** Owner-visible prose in order (lead, progress…, final), for previews. */
   ownerVisibleText(): string {
     return this.visibleBlocks()
-      .map((b) => b.text.trim())
+      .map((b) => stripToolCallMarkup(b.text).trim())
       .filter(Boolean)
       .join('\n\n')
   }
@@ -246,7 +250,7 @@ export class ProseLifecycleTracker {
       .filter((b) => b.text.trim() && (b.state !== 'superseded' || b.awaitingReplacement))
       // A replacement stays off-screen until it commits (the target is still shown).
       .filter((b) => !(b.state === 'streaming' && b.replaces))
-      .map((b) => ({ id: b.id, kind: b.kind, text: b.text }))
+      .map((b) => ({ id: b.id, kind: b.kind, text: stripToolCallMarkup(b.text) }))
   }
 
   /**
@@ -270,7 +274,7 @@ export class ProseLifecycleTracker {
    * exactly the transcript a reload shows (Codex P1 #834 r4).
    */
   salvage(text: string, opts?: { suffix?: string }): void {
-    const wanted = text.trim()
+    const wanted = stripToolCallMarkup(text).trim()
     if (!wanted) return
     this.settle()
     const visible = this.ownerVisibleText().trim()
@@ -426,6 +430,11 @@ export class ProseLifecycleTracker {
   private commit(block: TrackerBlock, kind: Exclude<ProseKind, 'draft'>): WireEvent[] {
     if (block.state === 'superseded') return []
     if (this.open === block) this.open = null
+    // Persistence/commit boundary defense. Provider content has already crossed
+    // the incremental normalizer, but the authoritative v2 document and its
+    // prose_commit event independently enforce machine-syntax-zero. This is what
+    // prevents a bypassed/raw d00c p8 block from surviving a cold reload.
+    block.text = stripToolCallMarkup(block.text)
     if (!block.text.trim()) {
       // An opened block that never received prose: retire it so a v2 client does
       // not keep an empty streaming block (and its fingerprint stays in parity).

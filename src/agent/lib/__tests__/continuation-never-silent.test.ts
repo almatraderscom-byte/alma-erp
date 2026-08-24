@@ -22,6 +22,7 @@ vi.mock('@/agent/lib/conversation-note', () => ({
 vi.mock('@/agent/lib/turn-status', () => ({
   createTurn: async () => 'turn-1',
   finalizeTurnIfRunning: async () => {},
+  linkTurnAssistantMessage: async () => {},
 }))
 
 vi.mock('@/agent/lib/turn-queue', () => ({
@@ -31,6 +32,34 @@ vi.mock('@/agent/lib/turn-queue', () => ({
 }))
 
 vi.mock('@/lib/prisma', () => ({ prisma: {} }))
+vi.mock('@/agent/lib/continuation-binding', async (loadOriginal) => {
+  const original = await loadOriginal<typeof import('@/agent/lib/continuation-binding')>()
+  return {
+    ...original,
+    claimContinuationExecution: async () => ({
+      outcome: 'claimed',
+      binding: {
+        v: 1,
+        origin: 'approval',
+        source: { kind: 'pending_action', id: 'action-1' },
+        conversationId: 'c1',
+        domain: 'generic',
+        event: 'action_executed',
+        directive: { kind: 'approved_action_completed', version: 1 },
+        expected: { sourceStatus: ['executed'] },
+      },
+      directive: '[server-bound test directive]',
+      status: 'running',
+    }),
+  }
+})
+vi.mock('@/agent/lib/turn-events', () => ({
+  createTurnEventPublisher: () => ({
+    emit: (event: Record<string, unknown>) => events.push(event),
+    finish: async () => events.length - 1,
+    durabilityHoles: () => 0,
+  }),
+}))
 
 vi.mock('@/agent/lib/models/run-owner-turn', () => ({
   // eslint-disable-next-line require-yield
@@ -46,6 +75,10 @@ vi.mock('@/agent/lib/models/run-owner-turn', () => ({
 }))
 
 const { runContinuationInline } = await import('@/agent/lib/approval-continuation')
+const boundOpts = {
+  conversationId: 'c1',
+  continuationRequestId: 'continuation:v1:approval:pending_action:action-1:action_executed',
+}
 
 beforeEach(() => {
   notes.length = 0
@@ -56,19 +89,19 @@ beforeEach(() => {
 describe('an approval continuation never ends in silence', () => {
   it('a turn that speaks needs no note — the reply IS the answer', async () => {
     turnBehaviour = 'speaks'
-    await runContinuationInline({ conversationId: 'c1', message: 'go on' }, 'turn-1')
+    await runContinuationInline(boundOpts, 'turn-1')
     expect(notes).toHaveLength(0)
   })
 
   it('a turn that stages a CARD counts as speaking — the job visibly moved', async () => {
     turnBehaviour = 'card'
-    await runContinuationInline({ conversationId: 'c1', message: 'go on' }, 'turn-1')
+    await runContinuationInline(boundOpts, 'turn-1')
     expect(notes).toHaveLength(0)
   })
 
   it('a turn that completes saying NOTHING gets an honest note', async () => {
     turnBehaviour = 'silent'
-    await runContinuationInline({ conversationId: 'c1', message: 'go on' }, 'turn-1')
+    await runContinuationInline(boundOpts, 'turn-1')
     expect(notes).toHaveLength(1)
     expect(notes[0].conversationId).toBe('c1')
     // it must not read as success
@@ -78,7 +111,7 @@ describe('an approval continuation never ends in silence', () => {
 
   it('the 90s abort is reported as a timeout, in words, not a console line', async () => {
     turnBehaviour = 'throws'
-    await runContinuationInline({ conversationId: 'c1', message: 'go on' }, 'turn-1')
+    await runContinuationInline(boundOpts, 'turn-1')
     expect(notes).toHaveLength(1)
     expect(notes[0].text).toContain('সময়সীমা')
     expect(notes[0].text).toContain('শেষ হয়নি')
@@ -88,7 +121,7 @@ describe('an approval continuation never ends in silence', () => {
     for (const b of ['silent', 'throws'] as const) {
       notes.length = 0
       turnBehaviour = b
-      await runContinuationInline({ conversationId: 'c1', message: 'go on' }, 'turn-1')
+      await runContinuationInline(boundOpts, 'turn-1')
       expect(notes[0].text).not.toContain('সম্পন্ন হয়েছে')
       expect(notes[0].text).not.toContain('হয়ে গেছে')
     }

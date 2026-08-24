@@ -9,6 +9,7 @@
 
 import { AGENT_GROUNDING_GATE } from '@/agent/config'
 import { isDirectYouTubeBrowserTask } from '@/agent/lib/live-browser/intent'
+import { hasExplicitChromeModality } from '@/agent/lib/live-browser/modality'
 import { DEEP_SCOPE_RE } from '@/agent/lib/turn-authorization'
 
 export interface OwnerTurnRequirements {
@@ -195,6 +196,7 @@ export function deriveOwnerTurnRequirements(text: string): OwnerTurnRequirements
   const t = text.trim()
   const targets = extractOrderedWebTargets(t)
   const liveBrowser = isDirectYouTubeBrowserTask(t)
+    || hasExplicitChromeModality(t)
     || /\blive[\s_-]*browser\b|আমার\s*(?:chrome|ক্রোম|browser|ব্রাউজার)|(?:chrome|ক্রোম|browser|ব্রাউজার)\s*(?:use|ব্যবহার|দিয়ে|diye)/i.test(t)
   // A FIX order is not an audit order (owner bug 2026-07-26). "almatraders.com
   // এর SEO অডিটে পাওয়া ছবির alt সমস্যা ঠিক করো" armed the audit contract purely

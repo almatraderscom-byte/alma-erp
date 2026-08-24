@@ -39,6 +39,8 @@ async function handle(req: NextRequest) {
   if (!isAgentEnabled()) return NextResponse.json({ ok: false, disabled: true })
 
   const businessId = req.nextUrl.searchParams.get('businessId')?.trim() || DEFAULT_BUSINESS
+  // Reserve time for retention/response work under the 60-second route cap.
+  const deliveryDeadlineAt = Date.now() + 45_000
   try {
     const result = await runOpenTaskNudgeTick(businessId)
     // P0 watchdog rides the same cron: stuck worker jobs → checkpoint + one ping.
@@ -51,10 +53,13 @@ async function handle(req: NextRequest) {
     }
     // Delivery sweep: a job that FINISHED but whose result was never presented to
     // the owner (the watchdog above only sees jobs still waiting on the worker).
-    let delivery = { scanned: 0, alreadyDelivered: 0, retried: 0, forced: 0 }
+    let delivery = {
+      scanned: 0, alreadyDelivered: 0, retried: 0, forced: 0,
+      artifactDelivery: { scanned: 0, delivered: 0, retried: 0, dead: 0, repaired: 0 },
+    }
     try {
       const { runJobDeliverySweep } = await import('@/agent/lib/job-delivery')
-      delivery = await runJobDeliverySweep()
+      delivery = await runJobDeliverySweep({ deadlineAt: deliveryDeadlineAt })
     } catch (dlErr) {
       await captureAgentError(dlErr, 'job_delivery_sweep', { route: 'open-task-nudge' })
     }
@@ -73,7 +78,7 @@ async function handle(req: NextRequest) {
       const { cleanupGraphCheckpoints } = await import('@/agent/lib/graph/graph-checkpointer')
       await cleanupGraphCheckpoints()
     } catch { /* best-effort */ }
-    return NextResponse.json({ ok: true, ...result, watchdog, delivery })
+    return NextResponse.json({ ok: true, ...result, watchdog, delivery, artifactDelivery: delivery.artifactDelivery })
   } catch (err) {
     await captureAgentError(err, 'open_task_nudge_tick', { route: 'open-task-nudge' })
     return NextResponse.json({ ok: false, error: 'tick_failed' }, { status: 500 })

@@ -21,10 +21,19 @@
 // is missing/stale, the continuation runs INLINE only when the caller still has
 // the full safe 90s budget (the revise-route pattern). A late caller instead
 // terminalizes with durable continuationNeeded, which the app claims exactly once.
+import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 import { prisma } from '@/lib/prisma'
-import { createTurn, finalizeTurnIfRunning } from '@/agent/lib/turn-status'
+import { finalizeTurnIfRunning, linkTurnAssistantMessage } from '@/agent/lib/turn-status'
 import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
 import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
+import { createTurnEventPublisher } from '@/agent/lib/turn-events'
+import {
+  bindContinuationTurn,
+  claimContinuationExecution,
+  continuationDomainForPendingActionType,
+  sourceBoundContinuationsEnabled,
+  type ContinuationBindingV1,
+} from '@/agent/lib/continuation-binding'
 
 /** Hard cap for an INLINE (serverless) continuation turn — callers' maxDuration
  * must leave headroom above this (approve and job-result both run at 120s). */
@@ -117,12 +126,50 @@ async function postSilenceBreaker(
   }
 }
 
-/** Run the continuation turn in-process (revise-route pattern): persist the directive
- * as a user message, drain one runOwnerTurn pass (it persists its own reply/cards),
- * then finalize the turn row so the app's resume spinner settles. Never silent. */
-export async function runContinuationInline(opts: { conversationId: string; message: string }, turnId: string | null): Promise<void> {
+export type ContinuationInlineResult = {
+  outcome: 'completed' | 'observe' | 'failed'
+  turnId: string | null
+  status: 'done' | 'error' | 'running' | string
+}
+
+/**
+ * Run one continuation in-process. A source-bound run first wins the same DB
+ * execution CAS used by the worker chat route, then renders its directive from
+ * the persisted source. Internal control is never persisted as an owner message.
+ */
+export async function runContinuationInline(opts: {
+  conversationId: string
+  message?: string
+  continuationRequestId?: string
+  /** Execution SCOPE the caller already validated. A Plan-Driver step for
+   * ALMA_TRADING must not silently run in the ALMA_LIFESTYLE tool/data context,
+   * and the owner's autodrive model must not be re-triaged away (Codex P1 #847:
+   * the pre-source-binding inline path supplied both explicitly). */
+  businessId?: AgentBusinessId
+  modelId?: string
+}, turnId: string | null): Promise<ContinuationInlineResult> {
   let spoke = false
+  let terminal: 'done' | 'error' | null = null
+  const boundRequestId = opts.continuationRequestId?.trim() ?? ''
+  let directive = ''
+  let durable: ReturnType<typeof createTurnEventPublisher> | null = null
   try {
+    if (boundRequestId) {
+      if (!turnId) throw new Error('continuation_turn_missing')
+      const claim = await claimContinuationExecution({
+        conversationId: opts.conversationId,
+        turnId,
+        requestId: boundRequestId,
+      })
+      if (claim.outcome === 'observe') {
+        return { outcome: 'observe', turnId, status: claim.status }
+      }
+      directive = claim.directive
+      durable = createTurnEventPublisher(turnId)
+    } else {
+      if (turnId) await finalizeTurnIfRunning(turnId, 'error')
+      return { outcome: 'failed', turnId, status: 'binding_required' }
+    }
     const { runOwnerTurn } = await import('@/agent/lib/models/run-owner-turn')
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), INLINE_CONTINUATION_MAX_MS)
@@ -133,28 +180,54 @@ export async function runContinuationInline(opts: { conversationId: string; mess
         // inline path re-triaged from scratch, so the model that planned the
         // work was not the model that finished it after the owner's tap.
         continuation: true,
-        projectSystemInstructions:
-          `[INTERNAL WORKFLOW CONTINUATION — NOT an owner-authored message and never display/quote it as one.]\n${opts.message}`,
+        projectSystemInstructions: directive,
+        // Validated execution scope rides through the continuation; dropping it
+        // ran the wrong business context and ignored the pinned driver model.
+        ...(opts.businessId ? { businessId: opts.businessId } : {}),
+        ...(opts.modelId ? { modelId: opts.modelId } : {}),
+        // Bound internal turns need their exact DB identity all the way through routing.
+        ...(boundRequestId ? { turnId } : {}),
       })) {
+        durable?.emit(ev as { type: string; [k: string]: unknown })
         // A card counts as speaking too — an approval that stages the next card
         // has visibly moved the job on, even with no prose.
         if (ev.type === 'text_delta' && ev.delta.trim()) spoke = true
         if (ev.type === 'ask_card' || ev.type === 'confirm_card') spoke = true
         if (ev.type === 'error') {
+          terminal = 'error'
           console.warn('[approval-continuation] inline turn error event:', ev.message)
+        }
+        if (ev.type === 'done') {
+          terminal = 'done'
+          const messageId = (ev as { messageId?: string }).messageId
+          if (messageId && turnId) await linkTurnAssistantMessage(turnId, messageId)
         }
       }
     } finally {
       clearTimeout(timer)
     }
-    if (turnId) await finalizeTurnIfRunning(turnId, 'done')
+    if (boundRequestId && !terminal) {
+      durable?.emit({ type: 'error', message: 'continuation_stream_ended_without_terminal' })
+      terminal = 'error'
+    }
+    await durable?.finish()
+    if (turnId) await finalizeTurnIfRunning(turnId, terminal === 'error' ? 'error' : 'done')
     if (!spoke) {
       console.warn('[approval-continuation] inline continuation produced no reply')
       await postSilenceBreaker(opts.conversationId, 'empty', '')
     }
+    return {
+      outcome: terminal === 'error' ? 'failed' : 'completed',
+      turnId,
+      status: terminal === 'error' ? 'error' : 'done',
+    }
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
     console.warn('[approval-continuation] inline continuation failed:', detail)
+    if (boundRequestId && !terminal) {
+      durable?.emit({ type: 'error', message: detail.slice(0, 300) })
+      try { await durable?.finish() } catch { /* the visible breaker is the final net */ }
+    }
     if (turnId) await finalizeTurnIfRunning(turnId, 'error')
     // Text already streamed and persisted is not silence — only add the note when
     // the owner would otherwise be left with nothing.
@@ -165,7 +238,15 @@ export async function runContinuationInline(opts: { conversationId: string; mess
         detail.includes('abort') ? 'সময়সীমা পেরিয়ে গেছে (৯০ সেকেন্ড)' : detail.slice(0, 160),
       )
     }
+    return { outcome: 'failed', turnId, status: 'error' }
   }
+}
+
+export type ContinuationEnqueueResult = {
+  outcome: 'queued' | 'completed' | 'failed' | 'observe' | 'deferred' | 'disabled' | 'rejected'
+  turnId: string | null
+  requestId: string | null
+  status: string
 }
 
 /**
@@ -180,7 +261,10 @@ export async function runContinuationInline(opts: { conversationId: string; mess
  */
 export async function enqueueAgentContinuation(opts: {
   conversationId: string
-  message: string
+  /** Compile-time compatibility only. Never used as execution authority. */
+  message?: string
+  /** Immutable persisted authority for the continuation. */
+  binding?: ContinuationBindingV1
   /** Transport correctness (e.g. a last-moment owner steer) is not an optional
    * approval convenience and must ignore the auto-continue preference. */
   force?: boolean
@@ -201,11 +285,24 @@ export async function enqueueAgentContinuation(opts: {
    * instead of letting the platform kill a still-running progress turn.
    */
   inlineDeadlineAtMs?: number
-}): Promise<void> {
-  if (!opts.conversationId) return
+  /** Test/driver fallback: use the same bound+flagged contract but skip Redis. */
+  forceInline?: boolean
+  /** Caller-validated execution scope, carried into the inline path. */
+  businessId?: AgentBusinessId
+  modelId?: string
+}): Promise<ContinuationEnqueueResult> {
+  if (!opts.conversationId) {
+    return { outcome: 'rejected', turnId: null, requestId: null, status: 'invalid_conversation' }
+  }
+  if (!sourceBoundContinuationsEnabled()) {
+    // Rollback stops unattended execution. It must never restore the historical
+    // free-form/history path that caused cross-domain continuation routing.
+    if (opts.turnId) await finalizeTurnIfRunning(opts.turnId, 'done')
+    return { outcome: 'disabled', turnId: opts.turnId ?? null, requestId: null, status: 'source_binding_disabled' }
+  }
   if (!opts.force && !(await autoContinueEnabled())) {
     if (opts.turnId) await finalizeTurnIfRunning(opts.turnId, 'done')
-    return
+    return { outcome: 'disabled', turnId: opts.turnId ?? null, requestId: null, status: 'done' }
   }
   // An unanswered question BLOCKS the agent (owner rule 2026-07-25). Boss
   // watched a whole new turn start under a card he had not touched — a
@@ -216,17 +313,29 @@ export async function enqueueAgentContinuation(opts: {
     if (await hasUnansweredAskCard(opts.conversationId)) {
       console.log('[approval-continuation] skipped — Boss has an unanswered question in this conversation')
       if (opts.turnId) await finalizeTurnIfRunning(opts.turnId, 'done')
-      return
+      return { outcome: 'disabled', turnId: opts.turnId ?? null, requestId: null, status: 'awaiting_owner' }
     }
   }
 
-  const turnId = opts.turnId ?? (await createTurn(opts.conversationId))
+  if (!opts.binding) {
+    console.error('[approval-continuation] rejected unbound internal continuation')
+    if (opts.turnId) await finalizeTurnIfRunning(opts.turnId, 'error')
+    return { outcome: 'rejected', turnId: opts.turnId ?? null, requestId: null, status: 'binding_required' }
+  }
+  const bound = await bindContinuationTurn({
+    binding: opts.binding,
+    preferredTurnId: opts.turnId,
+    ...(opts.forceInline ? { executionMode: 'inline' as const } : {}),
+  })
+  const turnId = bound.turnId
+  const requestId = bound.requestId
 
-  if (isTurnHandoffConfigured() && (await workerTurnConsumerAlive())) {
-    const jobData = buildTurnJobData(turnId ?? '', opts.conversationId, {
-      message: opts.message,
-      internalControl: true,
-    })
+  if (!opts.forceInline && isTurnHandoffConfigured() && (await workerTurnConsumerAlive())) {
+    const jobData = buildTurnJobData(
+      turnId ?? '',
+      opts.conversationId,
+      { internalControl: true, continuationRequestId: bound.requestId },
+    )
     if (jobData && turnId) {
       const jobId = await enqueueTurnJob(jobData)
       if (jobId) {
@@ -234,7 +343,7 @@ export async function enqueueAgentContinuation(opts: {
         // to `route_received` IS the queue hop — the part the audit could only
         // call "unverified".
         await traceTurnStage(turnId, 'continuation_enqueued', 'worker')
-        return                                   // worker will drain it
+        return { outcome: 'queued', turnId, requestId, status: 'running' }
       }
     }
     console.warn('[approval-continuation] worker enqueue failed — falling back to inline turn')
@@ -242,17 +351,26 @@ export async function enqueueAgentContinuation(opts: {
 
   if (!hasSafeInlineContinuationBudget(opts.inlineDeadlineAtMs)) {
     await traceTurnStage(turnId, 'continuation_enqueued', 'client_budget')
-    if (turnId) {
-      // Durable fallback already consumed by the native/web turn-status loop:
-      // claimContinuationTurn atomically creates at most one successor. The
-      // progress turn is terminal now, never left for the 30-minute ghost heal.
-      await finalizeTurnIfRunning(turnId, 'done', { continuationNeeded: true })
-    }
-    return
+    // A bound turn stays unclaimed and retryable by the same request id. Its
+    // source (notably an open task) is still open because execution never won.
+    return { outcome: 'deferred', turnId, requestId, status: 'running' }
   }
 
   await traceTurnStage(turnId, 'continuation_enqueued', 'inline')
-  await runContinuationInline(opts, turnId)
+  const inline = await runContinuationInline({
+    conversationId: opts.conversationId,
+    continuationRequestId: bound.requestId,
+    ...(opts.businessId ? { businessId: opts.businessId } : {}),
+    ...(opts.modelId ? { modelId: opts.modelId } : {}),
+  }, turnId)
+  return {
+    outcome: inline.outcome === 'observe'
+      ? 'observe'
+      : inline.outcome === 'completed' ? 'completed' : 'failed',
+    turnId,
+    requestId,
+    status: inline.status,
+  }
 }
 
 /**
@@ -281,7 +399,7 @@ export async function enqueueApprovedActionContinuation(
   const db = prisma as any
   const action = await db.agentPendingAction.findUnique({
     where: { id: actionId },
-    select: { conversationId: true, status: true, summary: true, type: true, result: true },
+    select: { conversationId: true, status: true, type: true, workflowRunId: true },
   })
   const conversationId: string | null = action?.conversationId ?? null
   if (!conversationId) { await settleProgress(action?.type); return }
@@ -294,29 +412,22 @@ export async function enqueueApprovedActionContinuation(
   // owns the continuation after the artifact/call report is durable.
   if (action.type === 'image_gen' || action.type === 'video_gen' || action.type === 'agent_voice_call') return
 
-  const summary = (action.summary ?? '').toString().slice(0, 200)
-  const applied = (() => {
-    const r = action.result as { applied?: unknown[]; failed?: unknown[] } | null
-    if (!r || !Array.isArray(r.applied)) return ''
-    const failed = Array.isArray(r.failed) ? r.failed.length : 0
-    return ` (${r.applied.length}টি প্রয়োগ হয়েছে${failed ? `, ${failed}টি ব্যর্থ` : ''})`
-  })()
-  const stillPending: number = await db.agentPendingAction.count({
-    where: { conversationId, status: 'pending' },
-  }).catch(() => 0)
-  const message =
-    '[সিস্টেম নোট — Boss approve করেছেন] একটা pending কাজ Boss approve করেছেন এবং সেটা সম্পন্ন হয়েছে' +
-    (summary ? `: "${summary}"` : '') + applied +
-    '। এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও, অথবা সব শেষ হলে সংক্ষেপে Boss-কে জানাও। ' +
-    'যে কাজটা এইমাত্র approve হয়ে সম্পন্ন হয়েছে সেটা আর নতুন করে কোরো না। ' +
-    (stillPending > 0
-      ? `এই চ্যাটে আরও ${stillPending}টি card এখনো Boss-এর সিদ্ধান্তের অপেক্ষায় আছে।`
-      : 'এই চ্যাটে আর কোনো card অপেক্ষায় নেই — তাই "অনুমোদনের অপেক্ষায় আছি" বোলো না; ' +
-        'বাকি কাজ থাকলে নিজেই এগোও, না থাকলে গুনে ফল জানাও।')
-
   await enqueueAgentContinuation({
     conversationId,
-    message,
+    binding: {
+      v: 1,
+      origin: 'approval',
+      source: { kind: 'pending_action', id: actionId },
+      conversationId,
+      domain: continuationDomainForPendingActionType(action.type),
+      event: 'action_executed',
+      ...(action.workflowRunId ? { workflowRunId: String(action.workflowRunId) } : {}),
+      directive: { kind: 'approved_action_completed', version: 1 },
+      expected: {
+        sourceStatus: [String(action.status)],
+        sourceType: String(action.type),
+      },
+    },
     turnId: reuseTurnId,
     ignoreAwaitingOwner: true,
     inlineDeadlineAtMs: options.inlineDeadlineAtMs,

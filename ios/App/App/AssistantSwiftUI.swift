@@ -1046,7 +1046,14 @@ struct AgentOpenTask: Decodable, Identifiable, Equatable {
     let pendingActionId: String?
 }
 struct AgentOpenTasksResponse: Decodable { let tasks: [AgentOpenTask]? }
-struct AgentOpenTaskActionResponse: Decodable { let ok: Bool?; let action: String?; let resumeNote: String?; let title: String? }
+struct AgentOpenTaskActionResponse: Decodable {
+    let ok: Bool?
+    let action: String?
+    let conversationId: String?
+    let turnId: String?
+    let lastSeq: Int?
+    let status: String?
+}
 
 /// S8 additive — per-conversation artifacts (web AgentArtifactsPanel wire shape).
 /// GET /api/assistant/conversations/[id]/artifacts returns a plain array.
@@ -4299,6 +4306,10 @@ final class AssistantVM {
         var effortLevel: String? = nil
         var projectId: String? = nil
         var askCardId: String? = nil
+        /// Exact server source for an ID-bound machine continuation. Its resume
+        /// directive never enters `message`; this id survives kill/relaunch so
+        /// recovery can only follow the turn created for that source.
+        var openTaskId: String? = nil
         /// Local attachment transaction identities bound to this exact request.
         /// They are removed from the composer only after server acceptance.
         var attachmentIds: [UUID]? = nil
@@ -4310,6 +4321,55 @@ final class AssistantVM {
         /// turn that acceptance-unknown request into a tight network loop.
         var preTurnEOFRetryCount: Int? = nil
         var preTurnRetryNotBefore: Date? = nil
+    }
+
+    static func openTaskRecoveryDescriptor(
+        from response: AgentOpenTaskActionResponse,
+        openTaskId: String,
+        expectedConversationId: String? = nil,
+        startedAt: Date = Date()
+    ) -> RecoverableTurn? {
+        let sourceId = openTaskId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let conversationId = response.conversationId?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let turnId = response.turnId?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let status = response.status?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let validStatuses: Set<String> = ["running", "done", "error", "canceled"]
+        guard response.ok == true, response.action == "continue",
+              !sourceId.isEmpty, !conversationId.isEmpty, !turnId.isEmpty,
+              validStatuses.contains(status),
+              response.lastSeq == -1,
+              expectedConversationId == nil || conversationId == expectedConversationId else {
+            return nil
+        }
+        return RecoverableTurn(
+            conversationId: conversationId,
+            turnId: turnId,
+            clientMessageId: "open-task:\(sourceId)",
+            lastSeq: -1,
+            startedAt: startedAt,
+            openTaskId: sourceId,
+            sessionIdentity: "server:\(conversationId)")
+    }
+
+    static func pendingOpenTaskRecoveryDescriptor(
+        openTaskId: String,
+        conversationId: String,
+        startedAt: Date = Date()
+    ) -> RecoverableTurn? {
+        let sourceId = openTaskId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceConversationId = conversationId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourceId.isEmpty, !sourceConversationId.isEmpty else { return nil }
+        return RecoverableTurn(
+            conversationId: sourceConversationId,
+            turnId: nil,
+            clientMessageId: "open-task:\(sourceId)",
+            lastSeq: -1,
+            startedAt: startedAt,
+            openTaskId: sourceId,
+            sessionIdentity: "server:\(sourceConversationId)")
     }
     private static let recoverableTurnKey = "alma.assistant.recoverableTurn"
     private var recoverableTurn: RecoverableTurn? = AssistantVM.loadRecoverableTurn() {
@@ -4331,14 +4391,26 @@ final class AssistantVM {
     /// int reads are race-benign) — persisted into the descriptor on background.
     final class SeqBox: @unchecked Sendable { var value: Int = -1 }
     private let seqBox = SeqBox()
+    /// `seqBox` is reused by the transport, so name the turn whose durable seq it
+    /// currently represents. A cursor from another conversation must never be
+    /// compared with (or written into) the persisted exact-turn descriptor.
+    private var seqBoxTurnId: String?
     /// A terminal done/error event flowed through apply() for the current watch —
     /// distinguishes "stream closed because finished" from "replay page ended".
     private var sawTerminalEvent = false
+    /// Exact identity carried by `turn_terminal` (or synthesized only after a
+    /// legacy done/error arrives on an already-bound exact-turn stream). Recovery
+    /// never accepts a conversation-latest terminal in place of this value.
+    private var acceptedExactTerminal: AgentTurnTerminal?
     /// Wall-clock of the last send — recovery uses it to tell OUR turn's terminal
     /// status apart from a PREVIOUS turn's stale terminal row (until Phase 3's
     /// clientMessageId gives exact identity).
     private var lastSendAt: Date?
     private var recoveryTask: Task<Void, Never>?
+    /// Prevent foreground/poll observers from replacing a healthy exact-turn
+    /// follower with another follower for the same descriptor.
+    private var recoveringExactTurnId: String?
+    private var exactRecoveryGeneration: UUID?
     private var recoveryInFlight = false
     private static let maxPreTurnEOFRetries = 3
     static func preTurnEOFRetryDelay(for attempt: Int) -> TimeInterval? {
@@ -5295,7 +5367,22 @@ final class AssistantVM {
     /// descriptor for a finished turn is dropped after normal reconciliation.
     private func recoverFromPersistedDescriptor() async {
         guard let rt = recoverableTurn else { return }
-        if isStreaming { return }   // active-conversation recovery already took it
+        if isStreaming {
+            let alreadyFollowingExactTurn = rt.turnId != nil
+                && rt.turnId == currentTurnId
+                && rt.conversationId == conversationId
+            let alreadyRetryingPreTurn = rt.turnId == nil
+                && rt.clientMessageId == currentClientMessageId
+            if alreadyFollowingExactTurn || alreadyRetryingPreTurn { return }
+            // Bootstrap may have noticed an unrelated conversation-latest turn
+            // before reading this descriptor. The persisted owner turn wins the
+            // screen; stopping the transport does not cancel either server turn.
+            stopStreaming(cancelServer: false)
+        }
+        if rt.turnId == nil, rt.openTaskId != nil {
+            await resumePersistedOpenTaskDescriptor(rt)
+            return
+        }
         // The process can die after POST begins but before conversation_id/turn_id
         // arrives. Re-submit the exact body with the same idempotency key; the
         // server either returns the existing turn or creates the one missing turn.
@@ -5334,28 +5421,30 @@ final class AssistantVM {
             resumePreTurnDescriptor(descriptor)
             return
         }
-        guard let recoverConversationId = rt.conversationId else {
-            recoverableTurn = nil
-            scheduleQueuedOwnerMessage()
+        guard let recoverConversationId = rt.conversationId,
+              let recoverTurnId = rt.turnId else {
+            // A descriptor that already has one server identity but not the other
+            // is acceptance-unknown, never proof that the prompt failed. Keep it
+            // for an owner-visible retry instead of silently deleting it.
+            await failRecovery(
+                preserveDescriptor: true,
+                ownerRetryable: true,
+                message: "চলতি কাজের পরিচয় অসম্পূর্ণ — বার্তাটি সুরক্ষিত আছে, আবার যাচাই হবে")
             return
         }
+        seqBox.value = DurableTurnRecoveryContract.boundCursor(
+            cachedTurnId: seqBoxTurnId, cached: seqBox.value,
+            expectedTurnId: recoverTurnId, persisted: rt.lastSeq)
+        seqBoxTurnId = recoverTurnId
+        currentTurnId = recoverTurnId
         if conversationId != recoverConversationId {
-            let st: TurnStatusResponse? = try? await AlmaAPI.shared.get(
-                "/api/assistant/conversations/\(recoverConversationId)/turn-status")
-            guard st?.status == "running" else {
-                recoverableTurn = nil
-                scheduleQueuedOwnerMessage()
-                return
-            }
             await openConversation(recoverConversationId, recoveringPersistedTurn: true)
         } else {
-            currentTurnId = rt.turnId ?? currentTurnId
             await recoverTurnState(trigger: "relaunch")
         }
-        if !isStreaming {
-            recoverableTurn = nil        // nothing running — stale
-            scheduleQueuedOwnerMessage()
-        }
+        // `openConversation`/recoverTurnState now follows recoverTurnId directly.
+        // Never clear here based on conversation-latest state; only exact terminal
+        // + assistant-row reconciliation may retire the persisted descriptor.
     }
 
     private func resumePreTurnDescriptor(_ rt: RecoverableTurn) {
@@ -5385,6 +5474,7 @@ final class AssistantVM {
         lastSendAt = rt.startedAt
         currentClientMessageId = rt.clientMessageId
         seqBox.value = rt.lastSeq
+        seqBoxTurnId = rt.turnId
         ensureStreamingTail()
         let body = ChatBody(
             conversationId: rt.conversationId, message: text, files: files,
@@ -5418,7 +5508,10 @@ final class AssistantVM {
                 // PR 5: stamp the replay cursor into the persisted descriptor —
                 // if iOS kills the process, relaunch recovers from here.
                 if var rt = self.recoverableTurn {
-                    rt.lastSeq = self.seqBox.value
+                    if rt.turnId == nil || rt.turnId == self.seqBoxTurnId {
+                        rt.lastSeq = DurableTurnRecoveryContract.advancedCursor(
+                            persisted: rt.lastSeq, observed: self.seqBox.value)
+                    }
                     self.recoverableTurn = rt
                 }
                 AlmaTurnLog.event("turn.background", self.isStreaming ? "streaming" : "idle")
@@ -5583,6 +5676,10 @@ final class AssistantVM {
     static let historyCacheLimit = historyWindow * 12
     /// Max createdAt seen in the last window (ISO — lexicographic order works).
     private var lastSyncStamp: String?
+    /// Assistant identities observed in an actual server `/messages` response.
+    /// A live placeholder may already carry `serverId`, so mounted UI rows alone
+    /// are not proof that the terminal assistant row is queryable after a kill.
+    private var lastFetchedAssistantRows: (conversationId: String, ids: Set<String>)?
     /// Rows evicted from either side of the mounted window. They remain ordered
     /// and searchable, and can be promoted back without another network hop.
     private var olderHistoryCache: [AgentChatMessage] = []
@@ -5757,6 +5854,9 @@ final class AssistantVM {
                 clearSpinnerIfOwned()
                 return false
             }
+            lastFetchedAssistantRows = (
+                cid,
+                Set(wire.lazy.filter { $0.role == "assistant" }.map(\.id)))
             // Never clobber an in-flight optimistic/streaming tail with the poll.
             guard !isStreaming else {
                 clearSpinnerIfOwned()
@@ -5970,6 +6070,22 @@ final class AssistantVM {
             return false
         }
         localIdByServerId[serverId] = localId
+        // Recovery cold-reload duplicate (production incident, sim-verified
+        // 2026-08-24). `openConversation(recoveringPersistedTurn:)` mounts
+        // history FIRST, so the finished row is already on screen under its own
+        // server id; the exact-turn replay tail then learns that same id from
+        // the replayed `done` and claims it here. The claim renames the INCOMING
+        // copy to `localId`, which leaves the already-mounted row with no
+        // counterpart in `incomingById` — reconciliation keeps it, and one
+        // durable message renders twice (identical tokens and cost, one DB row).
+        // The claiming row now owns that identity, so retire the stale twin.
+        if serverId != localId, messages.contains(where: { $0.id == localId }) {
+            let before = messages.count
+            messages.removeAll { $0.id == serverId }
+            if messages.count != before {
+                AlmaTurnLog.event("sync.duplicateServerRowRetired", "server=\(serverId.suffix(8))")
+            }
+        }
         return true
     }
 
@@ -6318,10 +6434,14 @@ final class AssistantVM {
         settleLiveMode()
         justSettledId = messages.last(where: { $0.role == .assistant })?.id
         guard let cid = conversationId else { return false }
+        var reconciledServerAssistantIds = Set<String>()
         if let wire: [AgentMessageWire] = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/messages") {
             guard streamTaskGeneration == expectedGeneration,
                   selectedSessionIdentity == expectedSessionIdentity,
                   conversationId == cid else { return false }
+            reconciledServerAssistantIds = Set(
+                wire.lazy.filter { $0.role == "assistant" }.map(\.id))
+            lastFetchedAssistantRows = (cid, reconciledServerAssistantIds)
             mergeServerMessages(wire)
             scheduleGeneratedImageQCRefresh()
             justSettledId = messages.last(where: { $0.role == .assistant })?.id
@@ -6333,8 +6453,27 @@ final class AssistantVM {
         guard streamTaskGeneration == expectedGeneration,
               selectedSessionIdentity == expectedSessionIdentity,
               conversationId == cid else { return false }
+        if let descriptor = recoverableTurn,
+           let descriptorTurnId = descriptor.turnId,
+           let terminal = acceptedExactTerminal,
+           !DurableTurnRecoveryContract.canClearDescriptor(
+            terminal: terminal,
+            expectedTurnId: descriptorTurnId,
+            expectedConversationId: cid,
+            reconciledAssistantIds: reconciledServerAssistantIds) {
+            // `done` may beat message visibility by a small persistence window.
+            // The exact descriptor remains authoritative until that named row is
+            // mounted; a later poll re-opens the same turn, never the prompt.
+            reconnecting = true
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                await self?.recoverTurnState(trigger: "direct-terminal-row-reconcile")
+            }
+            return false
+        }
         // PR 5: terminal + reconciled — the descriptor has done its job.
         recoverableTurn = nil
+        acceptedExactTerminal = nil
         currentClientMessageId = nil
         // Open tasks/artifacts/global counters are refreshed by the existing quiet
         // poll. Keeping them out of this suspended ownership boundary prevents an
@@ -6465,6 +6604,13 @@ final class AssistantVM {
             return
         }
         guard let cid = conversationId else { return }
+        if let descriptor = recoverableTurn,
+           descriptor.conversationId != cid {
+            // Cold bootstrap can restore a different active pointer first. Do
+            // not attach its conversation-latest turn while an exact persisted
+            // owner turn is waiting to take over the recovery surface.
+            return
+        }
         let matchingDescriptor = recoverableTurn.flatMap {
             $0.conversationId == cid ? $0 : nil
         }
@@ -6490,6 +6636,30 @@ final class AssistantVM {
             if silent <= limit { return }
             reconnecting = true
             AlmaTurnLog.event("turn.streamStallDetected", "\(trigger) after \(Int(silent))s silent")
+        }
+
+        // Once the server assigned a turn id, recovery is addressable without a
+        // conversation-latest lookup. Follow that exact turn and its persisted
+        // cursor; a later turn in the same chat is unrelated and must never settle
+        // this descriptor. The exact stream polls its own DB lifecycle and emits
+        // `turn_terminal`, including for zero-event terminal turns.
+        if let descriptor = matchingDescriptor,
+           let exactTurnId = descriptor.turnId {
+            currentTurnId = exactTurnId
+            seqBox.value = DurableTurnRecoveryContract.boundCursor(
+                cachedTurnId: seqBoxTurnId, cached: seqBox.value,
+                expectedTurnId: exactTurnId, persisted: descriptor.lastSeq)
+            seqBoxTurnId = exactTurnId
+            isStreaming = true
+            reconnecting = true
+            ensureStreamingTail()
+            thinkingLive = true
+            requestLiveMode("thinking")
+            startDurableRecoveryTail(
+                cid: cid,
+                turnId: exactTurnId,
+                initialAfterSeq: descriptor.lastSeq)
+            return
         }
         if recoveryInFlight { return }
         recoveryInFlight = true
@@ -6522,6 +6692,14 @@ final class AssistantVM {
 
         if status.status == "running" {
             currentTurnId = status.turnId
+            if var descriptor = recoverableTurn,
+               descriptor.conversationId == cid,
+               descriptor.turnId == nil,
+               let statusTurnId = status.turnId {
+                descriptor.turnId = statusTurnId
+                recoverableTurn = descriptor
+                markOutgoingAccepted(clientMessageId: descriptor.clientMessageId)
+            }
             isStreaming = true
             ensureStreamingTail()               // P0-C fix: progress needs a row to live on
             thinkingLive = true
@@ -6594,12 +6772,15 @@ final class AssistantVM {
         return matched || !requireEvidence && (lastSendAt == nil || st.startedAt == nil)
     }
 
-    /// PR 5 recovery transport: attach the durable stream — the full activity
-    /// timeline replays (thinking/tools/cards/prose, tail rebuilt authoritatively)
-    /// and then continues live until the terminal event. If the stream closes
-    /// without a terminal (Redis-less replay page) we reconcile via status; if it
-    /// can't be attached at all, plain status polling takes over.
-    private func startDurableRecoveryTail(cid: String, turnId: String) {
+    /// Follow ONE durable turn until exact terminal truth arrives. A clean EOF is
+    /// expected at platform response ceilings (production: 300s), so every EOF or
+    /// retryable transport cut re-opens this same URL from the persisted cursor.
+    /// No branch re-posts the owner prompt or consults conversation-latest state.
+    private func startDurableRecoveryTail(
+        cid: String,
+        turnId: String,
+        initialAfterSeq: Int? = nil
+    ) {
         // Recovery becomes the single transport owner. Without this handoff a
         // stalled direct SSE could resume beside the full replay and both buffers
         // would apply the same prose/tools/done events.
@@ -6610,41 +6791,95 @@ final class AssistantVM {
             directStream.cancel()
             AlmaTurnLog.event("turn.streamHandoff", "direct-to-durable:\(turnId)")
         }
+        if recoveringExactTurnId == turnId, recoveryTask != nil { return }
         recoveryTask?.cancel()
+        let persistedCursor = initialAfterSeq
+            ?? recoverableTurn.flatMap { $0.turnId == turnId ? $0.lastSeq : nil }
+            ?? -1
+        seqBox.value = DurableTurnRecoveryContract.boundCursor(
+            cachedTurnId: seqBoxTurnId, cached: seqBox.value,
+            expectedTurnId: turnId, persisted: persistedCursor)
+        seqBoxTurnId = turnId
+        let recoveryGeneration = UUID()
+        exactRecoveryGeneration = recoveryGeneration
+        recoveringExactTurnId = turnId
         recoveryTask = Task { [weak self] in
             guard let self else { return }
-            self.sawTerminalEvent = false
-            let buffer = AgentEventBuffer { [weak self] evs in self?.apply(evs) }
-            do {
-                try await self.tailDurableTurn(turnId, afterSeq: -1, buffer: buffer)
-                guard !Task.isCancelled else { return }
-                if self.sawTerminalEvent {
-                    await self.finishRecovery(terminalStatus: "stream-terminal")
-                } else {
-                    // Replay ended without done/error — check whether the turn is
-                    // really still running before deciding anything.
-                    let s: TurnStatusResponse? = try? await AlmaAPI.shared.get(
-                        "/api/assistant/conversations/\(cid)/turn-status")
-                    guard !Task.isCancelled else { return }
-                    if s?.status == "running" {
-                        self.startRecoveryPolling(cid: cid)
-                    } else {
-                        // turn-status answers for the conversation's LATEST turn:
-                        // a concurrent/subsequent turn may have finished meanwhile.
-                        // Adopt its assistant id only when it is the turn we tailed
-                        // (or send-time evidence says so) (Codex P1 #839 r6).
-                        if let s {
-                            self.applyTerminalStatusIdentity(
-                                s, matchedOurTurn: s.turnId == turnId
-                                    || self.isTerminalForOurTurn(s, requireEvidence: true))
-                        }
-                        await self.finishRecovery(terminalStatus: s?.status ?? "done")
-                    }
+            defer {
+                if self.exactRecoveryGeneration == recoveryGeneration {
+                    self.exactRecoveryGeneration = nil
+                    self.recoveringExactTurnId = nil
+                    self.recoveryTask = nil
                 }
-            } catch {
+            }
+            self.sawTerminalEvent = false
+            self.acceptedExactTerminal = nil
+            if let initialAfterSeq {
+                self.persistRecoveryCursor(initialAfterSeq, expectedTurnId: turnId)
+            }
+            let buffer = AgentEventBuffer(
+                apply: { [weak self] evs in self?.apply(evs) },
+                onAppliedSeq: { [weak self] seq in
+                    self?.persistRecoveryCursor(seq, expectedTurnId: turnId)
+                })
+            var reconnectAttempt = 0
+            while !Task.isCancelled {
+                let cursor: Int
+                if let descriptor = self.recoverableTurn {
+                    guard descriptor.turnId == turnId,
+                          descriptor.conversationId == cid else { return }
+                    cursor = DurableTurnRecoveryContract.advancedCursor(
+                        persisted: descriptor.lastSeq,
+                        observed: self.seqBox.value)
+                } else {
+                    // Approval/background turns discovered from status have no
+                    // owner-send descriptor, but still retain exact URL identity.
+                    // Preserve that existing behavior while keeping all retries
+                    // bound to this turn rather than conversation-latest.
+                    guard self.currentTurnId == turnId,
+                          self.conversationId == cid else { return }
+                    cursor = max(-1, self.seqBox.value)
+                }
+                do {
+                    try await self.tailDurableTurn(turnId, afterSeq: cursor, buffer: buffer)
+                } catch is CancellationError {
+                    return
+                } catch AlmaAPIError.notAuthenticated {
+                    self.authExpired = true
+                    return
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    AlmaTurnLog.event("turn.recoveryTailFailed", "exact:\(turnId) \(error)")
+                }
                 guard !Task.isCancelled else { return }
-                AlmaTurnLog.event("turn.recoveryTailFailed", "\(error)")
-                self.startRecoveryPolling(cid: cid)
+
+                if let terminal = self.acceptedExactTerminal,
+                   DurableTurnRecoveryContract.matches(
+                    terminal,
+                    expectedTurnId: turnId,
+                    expectedConversationId: cid) {
+                    if self.exactRecoveryGeneration == recoveryGeneration {
+                        self.exactRecoveryGeneration = nil
+                        self.recoveringExactTurnId = nil
+                        self.recoveryTask = nil
+                    }
+                    await self.finishRecovery(
+                        terminalStatus: terminal.status,
+                        exactTerminal: terminal)
+                    return
+                }
+
+                guard DurableTurnRecoveryContract.reconnectAfterEOF(
+                    acceptedTerminal: self.sawTerminalEvent) else { return }
+                let advanced = self.seqBox.value > cursor
+                reconnectAttempt = advanced ? 0 : reconnectAttempt + 1
+                self.persistRecoveryCursor(self.seqBox.value, expectedTurnId: turnId)
+                self.reconnecting = true
+                AlmaTurnLog.event(
+                    "turn.recoveryTailReconnect",
+                    "exact:\(turnId) after=\(self.seqBox.value) attempt=\(reconnectAttempt)")
+                let delay = DurableTurnRecoveryContract.reconnectDelay(attempt: reconnectAttempt)
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
         }
     }
@@ -6654,6 +6889,8 @@ final class AssistantVM {
     /// server ever created our turn; if none appears within ~20s, the send truly
     /// failed and the owner gets a Bangla error instead of a silent lost message.
     private func startRecoveryPolling(cid: String, awaitingTurnCreation: Bool = false) {
+        exactRecoveryGeneration = nil
+        recoveringExactTurnId = nil
         recoveryTask?.cancel()
         recoveryTask = Task { [weak self] in
             var delay = 1.0
@@ -6672,9 +6909,36 @@ final class AssistantVM {
                     if s.status == "running" {
                         sawRunning = true
                         self.currentTurnId = s.turnId
+                        if var descriptor = self.recoverableTurn,
+                           descriptor.conversationId == cid,
+                           descriptor.turnId == nil,
+                           let exactTurnId = s.turnId {
+                            descriptor.turnId = exactTurnId
+                            self.recoverableTurn = descriptor
+                            self.markOutgoingAccepted(clientMessageId: descriptor.clientMessageId)
+                            self.startDurableRecoveryTail(
+                                cid: cid,
+                                turnId: exactTurnId,
+                                initialAfterSeq: descriptor.lastSeq)
+                            return
+                        }
                         if self.reconnecting { self.ensureStreamingTail() }
                     } else if sawRunning || !awaitingTurnCreation
                                 || self.isTerminalForOurTurn(s, requireEvidence: true) {
+                        if var descriptor = self.recoverableTurn,
+                           descriptor.conversationId == cid,
+                           descriptor.turnId == nil,
+                           let exactTurnId = s.turnId,
+                           self.isTerminalForOurTurn(s, requireEvidence: true) {
+                            descriptor.turnId = exactTurnId
+                            self.recoverableTurn = descriptor
+                            self.markOutgoingAccepted(clientMessageId: descriptor.clientMessageId)
+                            self.startDurableRecoveryTail(
+                                cid: cid,
+                                turnId: exactTurnId,
+                                initialAfterSeq: descriptor.lastSeq)
+                            return
+                        }
                         self.adoptAssistantIdentity(s.assistantMessageId)
                         await self.finishRecovery(terminalStatus: s.status ?? "done")
                         return
@@ -6695,7 +6959,12 @@ final class AssistantVM {
 
     /// Terminal: settle the tail, fold in server truth, and only then drop the
     /// reconnect label (roadmap: remove it after the final row appears).
-    private func finishRecovery(terminalStatus: String) async {
+    private func finishRecovery(
+        terminalStatus: String,
+        exactTerminal: AgentTurnTerminal? = nil
+    ) async {
+        exactRecoveryGeneration = nil
+        recoveringExactTurnId = nil
         recoveryTask?.cancel()
         recoveryTask = nil
         isStreaming = false
@@ -6722,13 +6991,84 @@ final class AssistantVM {
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             await loadMessages()
         }
+        let reconciledAssistantIds: Set<String>
+        if let fetched = lastFetchedAssistantRows,
+           fetched.conversationId == exactTerminal?.conversationId {
+            reconciledAssistantIds = fetched.ids
+        } else {
+            reconciledAssistantIds = []
+        }
+        if let exactTerminal {
+            let expectedTurnId = recoverableTurn?.turnId ?? currentTurnId
+            let expectedConversationId = recoverableTurn?.conversationId ?? conversationId
+            guard let expectedTurnId, let expectedConversationId,
+                  DurableTurnRecoveryContract.matches(
+                    exactTerminal,
+                    expectedTurnId: expectedTurnId,
+                    expectedConversationId: expectedConversationId) else {
+                // `loadMessages` suspends. If navigation or another owner turn
+                // replaced this descriptor while it was in flight, the old
+                // terminal has no authority to clear or settle the new one.
+                AlmaTurnLog.event(
+                    "turn.terminalDescriptorChanged",
+                    "turn=\(exactTerminal.turnId)")
+                return
+            }
+            if !DurableTurnRecoveryContract.canClearDescriptor(
+                terminal: exactTerminal,
+                expectedTurnId: expectedTurnId,
+                expectedConversationId: expectedConversationId,
+                reconciledAssistantIds: reconciledAssistantIds) {
+                // Lifecycle can become terminal a beat before the assistant
+                // message query sees its row. Preserve the exact descriptor and
+                // resume only this turn; a newer row cannot satisfy it.
+                reconnecting = true
+                isStreaming = true
+                thinkingLive = true
+                requestLiveMode("thinking")
+                ensureStreamingTail()
+                AlmaTurnLog.event(
+                    "turn.terminalAwaitingExactRow",
+                    "turn=\(exactTerminal.turnId) message=\(exactTerminal.assistantMessageId ?? "-")")
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    await self?.recoverTurnState(trigger: "terminal-row-reconcile")
+                }
+                return
+            }
+        }
+
         reconnecting = false
-        justSettledId = messages.last(where: { $0.role == .assistant })?.id
+        if let exactAssistantId = exactTerminal?.assistantMessageId,
+           let exactRow = messages.first(where: {
+               $0.role == .assistant && ($0.serverId ?? $0.id) == exactAssistantId
+           }) {
+            justSettledId = exactRow.id
+        } else {
+            justSettledId = messages.last(where: { $0.role == .assistant })?.id
+        }
         await markActiveConversationRead()
+        if let exactTerminal {
+            let stillOwnsExactTerminal: Bool
+            if let descriptor = recoverableTurn {
+                stillOwnsExactTerminal = descriptor.turnId == exactTerminal.turnId
+                    && descriptor.conversationId == exactTerminal.conversationId
+            } else {
+                stillOwnsExactTerminal = currentTurnId == exactTerminal.turnId
+                    && conversationId == exactTerminal.conversationId
+            }
+            guard stillOwnsExactTerminal else {
+                // The read-watermark request above is another suspension point.
+                // Re-check exact ownership before mutating durable recovery state.
+                return
+            }
+        }
         if terminalStatus != "error" {
             AlmaAgentTickHaptic.turnCompleted()
         }
-        recoverableTurn = nil            // terminal + reconciled (PR 5)
+        recoverableTurn = nil            // exact terminal + exact row reconciled
+        acceptedExactTerminal = nil
+        currentClientMessageId = nil
         AlmaTurnLog.event("turn.terminal", "recovery:\(terminalStatus)")
         if terminalStatus == "error" {
             errorToast = "সমস্যা হয়েছে — আবার চেষ্টা করুন"
@@ -6749,6 +7089,8 @@ final class AssistantVM {
     private func failRecovery(preserveDescriptor: Bool = false,
                               ownerRetryable: Bool = false,
                               message: String = "পাঠানো যায়নি — আবার চেষ্টা করুন") async {
+        exactRecoveryGeneration = nil
+        recoveringExactTurnId = nil
         recoveryTask?.cancel()
         recoveryTask = nil
         isStreaming = false
@@ -7104,10 +7446,9 @@ final class AssistantVM {
             errorToast = "চলতি উত্তর শেষ হলে অন্য কথোপকথন খুলুন — বর্তমান কাজটি সুরক্ষিত আছে"
             return
         }
-        // Explicit navigation (opening a chat from the cost drill-down) wins over a
-        // background turn: the server work is durable and keeps running; only the
-        // on-screen resume of the PRIOR chat is dropped so the tap always lands.
-        if explicit { recoverableTurn = nil }
+        // Navigation may suspend this screen's observer, but never retires the
+        // exact durable descriptor. Returning to its source chat (or relaunching)
+        // must reconnect the same turn/cursor until exact-row reconciliation.
         persistCurrentComposerDraft()
         // Enter the restore state BEFORE removing the previous timeline. This
         // makes the session switch one atomic visual handoff: the old reply
@@ -7115,7 +7456,7 @@ final class AssistantVM {
         // owns an intermediate empty frame.
         loadingHistory = true
         let surfaceToken = issueSurfaceToken(loading: id)
-        stopStreaming(cancelServer: false)
+        suspendForConversationNavigation()
         currentClientMessageId = nil
         conversationId = id
         selectedSessionIdentity = "server:\(id)"
@@ -7169,6 +7510,14 @@ final class AssistantVM {
                 conversationId: id, requestToken: surfaceToken,
                 message: "কথোপকথন লোড করা যায়নি")
         }
+    }
+
+    /// Navigation changes only the mounted observer. The server turn and its
+    /// persisted exact descriptor remain owned until terminal-row reconciliation.
+    private func suspendForConversationNavigation() {
+        let exactDescriptor = recoverableTurn
+        stopStreaming(cancelServer: false)
+        recoverableTurn = exactDescriptor
     }
 
     /// Retry for `failedHistory` — reloads the exact selected target. The
@@ -7570,15 +7919,136 @@ final class AssistantVM {
         openTasks = resp?.tasks ?? []
     }
 
-    /// Web parity: continue = POST → take resumeNote → send it as the next message.
+    /// Continue is a server-owned control action. The route binds this exact
+    /// open-task id to one durable turn and returns only its attach descriptor;
+    /// native never turns the private resume directive into owner-authored text.
     func continueOpenTask(_ task: AgentOpenTask) async {
+        guard let expectedConversationId = conversationId,
+              !isStreaming, recoverableTurn == nil else {
+            errorToast = "চলতি কাজটি শেষ হলে আরেকটি কাজ চালু করুন"
+            return
+        }
         openTaskBusyId = task.id
         defer { openTaskBusyId = nil }
-        let resp: AgentOpenTaskActionResponse? = try? await AlmaAPI.shared.send(
+        guard let pendingDescriptor = Self.pendingOpenTaskRecoveryDescriptor(
+            openTaskId: task.id,
+            conversationId: expectedConversationId) else {
+            errorToast = "কাজটির source identity পাওয়া যায়নি"
+            return
+        }
+        // Persist source identity before the request begins. If the server claims
+        // and resolves the task but the HTTP response is lost, relaunch retries
+        // this same id and receives the deterministic prior turn.
+        recoverableTurn = pendingDescriptor
+        do {
+            let descriptor = try await requestOpenTaskContinuation(pendingDescriptor)
+            AlmaAgentTickHaptic.ownerSend()
+            AlmaTurnLog.event("turn.submit", "open-task:\(task.id)")
+            await attachOpenTaskContinuationDescriptor(descriptor, trigger: "open-task-continue")
+            await loadOpenTasks()
+        } catch {
+            if Self.openTaskContinuationIsUnrecoverable(error) {
+                // A DEFINITIVE client error means this source can never resume:
+                // the task was deleted (404) or another device already resolved
+                // it (409/410). Retaining the descriptor would block New Chat,
+                // every other open task and ordinary sends forever — and each
+                // relaunch would retry the same dead source and retain it again
+                // (Codex P1 #847). Release it and let the refreshed list stand.
+                if recoverableTurn?.clientMessageId == pendingDescriptor.clientMessageId {
+                    recoverableTurn = nil
+                }
+                errorToast = "কাজটি আর চালু নেই — তালিকা নতুন করে দেখাচ্ছি"
+            } else {
+                // Keep pendingDescriptor. Acceptance is UNKNOWN for transport,
+                // 5xx and auth failures, so the route's deterministic replay
+                // lookup must still resolve it to this same source-bound turn.
+                errorToast = "Response পাওয়া যায়নি — একই কাজটি নিরাপদে আবার যাচাই হবে"
+            }
+            await loadOpenTasks()
+        }
+    }
+
+    /// A server answer that can never become success on retry. Transport, 5xx
+    /// and auth stay RETRYABLE: those leave acceptance genuinely unknown, and a
+    /// claimed-but-lost response must keep its descriptor.
+    static func openTaskContinuationIsUnrecoverable(_ error: Error) -> Bool {
+        guard let api = error as? AlmaAPIError else { return false }
+        switch api {
+        case .http(let status, _):
+            // 401 is excluded on purpose: re-authentication makes it succeed.
+            return (400...499).contains(status) && status != 401 && status != 408 && status != 429
+        case .notAuthenticated, .transport, .decoding:
+            return false
+        }
+    }
+
+    private enum OpenTaskContinuationFailure: Error { case invalidDescriptor }
+
+    private func requestOpenTaskContinuation(
+        _ pendingDescriptor: RecoverableTurn
+    ) async throws -> RecoverableTurn {
+        guard let openTaskId = pendingDescriptor.openTaskId,
+              let expectedConversationId = pendingDescriptor.conversationId else {
+            throw OpenTaskContinuationFailure.invalidDescriptor
+        }
+        let response: AgentOpenTaskActionResponse = try await AlmaAPI.shared.send(
             "POST", "/api/assistant/open-tasks",
-            body: ["id": task.id, "action": "continue"])
-        await loadOpenTasks()
-        if let note = resp?.resumeNote ?? task.note, !note.isEmpty { send(note) }
+            body: ["id": openTaskId, "action": "continue"])
+        guard let descriptor = Self.openTaskRecoveryDescriptor(
+            from: response,
+            openTaskId: openTaskId,
+            expectedConversationId: expectedConversationId) else {
+            throw OpenTaskContinuationFailure.invalidDescriptor
+        }
+        return descriptor
+    }
+
+    private func resumePersistedOpenTaskDescriptor(_ pendingDescriptor: RecoverableTurn) async {
+        reconnecting = true
+        do {
+            let descriptor = try await requestOpenTaskContinuation(pendingDescriptor)
+            await attachOpenTaskContinuationDescriptor(descriptor, trigger: "open-task-relaunch")
+        } catch {
+            reconnecting = false
+            isStreaming = false
+            thinkingLive = false
+            // Same classification as the initial request (Codex P1 #847, round
+            // 2): a DEFINITIVE 4xx here means the task was deleted or another
+            // device resolved it while we were dead. Retaining the descriptor
+            // made every later launch retry the same dead source and kept
+            // ordinary sends blocked behind it forever.
+            if Self.openTaskContinuationIsUnrecoverable(error) {
+                if recoverableTurn?.clientMessageId == pendingDescriptor.clientMessageId {
+                    recoverableTurn = nil
+                }
+                errorToast = "কাজটি আর চালু নেই — নতুন করে শুরু করতে পারেন"
+            } else {
+                errorToast = "চলতি কাজটির response এখনো পাওয়া যায়নি — source id নিরাপদ আছে"
+            }
+        }
+    }
+
+    private func attachOpenTaskContinuationDescriptor(
+        _ descriptor: RecoverableTurn,
+        trigger: String
+    ) async {
+        guard let exactConversationId = descriptor.conversationId,
+              let exactTurnId = descriptor.turnId else { return }
+        // Persist before the first attach suspension. A kill from this point
+        // onward reopens /turn/<exact id>/stream at -1; no prompt is replayed.
+        recoverableTurn = descriptor
+        currentClientMessageId = nil
+        currentTurnId = exactTurnId
+        seqBox.value = descriptor.lastSeq
+        seqBoxTurnId = exactTurnId
+        lastSendAt = descriptor.startedAt
+        sawTerminalEvent = false
+        acceptedExactTerminal = nil
+        if conversationId != exactConversationId {
+            await openConversation(exactConversationId, recoveringPersistedTurn: true)
+        } else {
+            await recoverTurnState(trigger: trigger)
+        }
     }
 
     func cancelOpenTask(_ task: AgentOpenTask) async {
@@ -8182,7 +8652,9 @@ final class AssistantVM {
         reconnecting = false
         lastSendAt = Date()
         seqBox.value = -1
+        seqBoxTurnId = nil
         sawTerminalEvent = false
+        acceptedExactTerminal = nil
         AlmaTurnLog.event("turn.submit", "model-switch-resume")
         ensureStreamingTail()
         let body = ChatBody(conversationId: conversationId, message: "",
@@ -8402,6 +8874,8 @@ final class AssistantVM {
         beginUnderstanding()
         currentTurnId = nil
         reconnecting = false
+        exactRecoveryGeneration = nil
+        recoveringExactTurnId = nil
         recoveryTask?.cancel(); recoveryTask = nil
         lastSendAt = Date()
         ownSendTick += 1
@@ -8409,7 +8883,9 @@ final class AssistantVM {
         // become one server message + one turn + one execution.
         currentClientMessageId = clientMessageId
         seqBox.value = -1
+        seqBoxTurnId = nil
         sawTerminalEvent = false
+        acceptedExactTerminal = nil
         AlmaTurnLog.event("turn.submit", structuredAutoContinue
                           ? "auto-continuation:\(autoContinueFromTurnId!)"
                           : (clientMessageId ?? "manual"))
@@ -8641,6 +9117,7 @@ final class AssistantVM {
             // never re-run (roadmap invariant 2).
             AlmaTurnLog.event("turn.duplicateObserved", dup.turnId)
             currentTurnId = dup.turnId
+            seqBoxTurnId = dup.turnId
             if conversationId == nil, let duplicateConversationId = dup.conversationId {
                 adoptNewConversationId(duplicateConversationId)
             }
@@ -8651,7 +9128,11 @@ final class AssistantVM {
                 markOutgoingAccepted(clientMessageId: descriptor.clientMessageId)
             }
             do {
-                try await tailDurableTurn(dup.turnId, afterSeq: -1, buffer: buffer)
+                let persistedCursor = recoverableTurn.flatMap {
+                    $0.turnId == dup.turnId ? $0.lastSeq : nil
+                } ?? -1
+                try await tailDurableTurn(
+                    dup.turnId, afterSeq: persistedCursor, buffer: buffer)
                 guard !Self.directStreamEndRequiresRecovery(sawTerminalEvent: sawTerminalEvent) else {
                     handedToRecovery = true
                     handoffUnexpectedStreamEnd(
@@ -8847,6 +9328,7 @@ final class AssistantVM {
                            effortLevel: body.conversationId == nil ? body.effortLevel : nil,
                            agentProseProtocol: almaProseProtocolCapability))
         currentTurnId = enq.turnId
+        seqBoxTurnId = enq.turnId
         if conversationId == nil, let enqueuedConversationId = enq.conversationId {
             adoptNewConversationId(enqueuedConversationId)
         }
@@ -8877,6 +9359,20 @@ final class AssistantVM {
     /// snapshot says the server holds rows PAST it (Codex P1 #838 r6).
     private var replayResetAfterSeq = -1
 
+    /// Persist only a monotonic cursor for the descriptor that owns this exact
+    /// stream. A late frame from a canceled/older follower cannot advance the
+    /// descriptor of a newer turn.
+    private func persistRecoveryCursor(_ observed: Int, expectedTurnId: String) {
+        let next = DurableTurnRecoveryContract.advancedCursor(
+            persisted: seqBox.value, observed: observed)
+        seqBox.value = next
+        guard var descriptor = recoverableTurn,
+              descriptor.turnId == expectedTurnId else { return }
+        descriptor.lastSeq = DurableTurnRecoveryContract.advancedCursor(
+            persisted: descriptor.lastSeq, observed: next)
+        recoverableTurn = descriptor
+    }
+
     private func tailDurableTurn(_ turnId: String, afterSeq: Int, buffer: AgentEventBuffer) async throws {
         if afterSeq < 0 {
             pendingReplayReset = true
@@ -8895,9 +9391,20 @@ final class AssistantVM {
         comps.queryItems = query
         var req = URLRequest(url: comps.url!)
         req.httpMethod = "GET"
-        let box = seqBox
-        try await AssistantNet.streamEvents(request: req, buffer: buffer,
-                                            onSeq: { box.value = max(box.value, $0) })
+        guard let exactConversationId = recoverableTurn.flatMap({ descriptor in
+            descriptor.turnId == turnId ? descriptor.conversationId : nil
+        }) ?? conversationId else {
+            throw AssistantNet.ExactStreamError.identityMismatch
+        }
+        await buffer.setOnAppliedSeq { [weak self] seq in
+            self?.persistRecoveryCursor(seq, expectedTurnId: turnId)
+        }
+        try await AssistantNet.streamEvents(
+            request: req,
+            buffer: buffer,
+            expectedTurnId: turnId,
+            expectedConversationId: exactConversationId)
+        persistRecoveryCursor(seqBox.value, expectedTurnId: turnId)
     }
 
     /// Codex P1 #839 r3: a terminal status names OUR assistant row only when it
@@ -8942,6 +9449,34 @@ final class AssistantVM {
         messages[i].pendingProseReplacements = [:]
     }
 
+    private func expectedExactTurnIdentity() -> (turnId: String, conversationId: String)? {
+        if let descriptor = recoverableTurn,
+           let turnId = descriptor.turnId,
+           let conversationId = descriptor.conversationId {
+            return (turnId, conversationId)
+        }
+        guard let turnId = currentTurnId, let conversationId else { return nil }
+        return (turnId, conversationId)
+    }
+
+    @discardableResult
+    private func acceptExactTerminal(_ terminal: AgentTurnTerminal) -> Bool {
+        guard let expected = expectedExactTurnIdentity(),
+              DurableTurnRecoveryContract.matches(
+                terminal,
+                expectedTurnId: expected.turnId,
+                expectedConversationId: expected.conversationId) else {
+            AlmaTurnLog.event(
+                "turn.terminalIdentityRejected",
+                "got=\(terminal.turnId) conversation=\(terminal.conversationId)")
+            return false
+        }
+        persistRecoveryCursor(terminal.lastSeq, expectedTurnId: expected.turnId)
+        acceptedExactTerminal = terminal
+        adoptAssistantIdentity(terminal.assistantMessageId)
+        return true
+    }
+
     /// Phase 2 reducer — applies ONE buffered batch per MainActor hop (roadmap 2.3).
     /// Deltas arrive pre-coalesced; `refreshPhases` runs once per flush, not once
     /// per token. Every wire event has an explicit handler (roadmap 2.1) — unknown
@@ -8981,6 +9516,7 @@ final class AssistantVM {
                 }
             case .turnId(let id):
                 currentTurnId = id
+                seqBoxTurnId = id
                 if computerUseToolStartGeneration > 0,
                    computerUseTurnId == nil, isStreaming {
                     computerUseConversationId = computerUseConversationId ?? conversationId
@@ -9432,6 +9968,18 @@ final class AssistantVM {
                         AlmaTurnLog.event("turn.autoContinueSkipped", "missing-predecessor-turn-id")
                     }
                 }
+                // Historical deployments terminate with `done` before the newer
+                // status-derived control. Accept it only after this stream has an
+                // exact descriptor; the URL binding supplies the missing ids.
+                if let expected = expectedExactTurnIdentity() {
+                    _ = acceptExactTerminal(.init(
+                        turnId: expected.turnId,
+                        conversationId: expected.conversationId,
+                        status: "done",
+                        lastSeq: seqBox.value,
+                        assistantMessageId: doneMessageId,
+                        continuationNeeded: needContinue))
+                }
                 sawTerminalEvent = true
                 thinkingLive = false
                 settleLiveMode()
@@ -9450,14 +9998,51 @@ final class AssistantVM {
                         messages[i].serverId = salvagedMessageId
                     }
                 }
+                if let expected = expectedExactTurnIdentity() {
+                    _ = acceptExactTerminal(.init(
+                        turnId: expected.turnId,
+                        conversationId: expected.conversationId,
+                        status: "error",
+                        lastSeq: seqBox.value,
+                        assistantMessageId: salvagedMessageId,
+                        continuationNeeded: false))
+                }
                 sawTerminalEvent = true
                 thinkingLive = false
                 settleLiveMode()
                 errorToast = message
+            case .recoveryUnavailable(let reason):
+                // Snapshot/replay reads can fail transiently while the exact turn
+                // keeps running. The owning follower will reopen from lastSeq.
+                reconnecting = true
+                AlmaTurnLog.event("turn.recoveryControlRetry", reason)
+            case .turnTerminal(let terminal):
+                // Status truth is useful only when it names the descriptor this
+                // phone is following. A newer concurrent turn in the same chat is
+                // rejected without changing ids, cursor, cards, or continuation.
+                guard acceptExactTerminal(terminal) else { break }
+                if terminal.continuationNeeded {
+                    pendingAutoContinue = true
+                    pendingAutoContinueTurnId = terminal.turnId
+                }
+                sawTerminalEvent = true
+                thinkingLive = false
+                settleLiveMode()
+                if terminal.status == "error" {
+                    errorToast = "সমস্যা হয়েছে — আবার চেষ্টা করুন"
+                }
             case .turnSnapshot(let turnId, let convId, _, let snapshotLastSeq, let snapshotProtocol, let snapshotAssistantId):
                 // Durable-stream hello (PR 5) — reconcile ids on (re)connect, and
                 // NOW (stream provably attached) wipe the frozen partial so the
                 // authoritative replay rebuilds the tail without doubling.
+                if let expected = expectedExactTurnIdentity() {
+                    guard turnId == expected.turnId, convId == expected.conversationId else {
+                        AlmaTurnLog.event(
+                            "turn.snapshotIdentityRejected",
+                            "got=\(turnId ?? "-") conversation=\(convId ?? "-")")
+                        break
+                    }
+                }
                 if let turnId { currentTurnId = turnId }
                 if conversationId == nil, let convId { adoptNewConversationId(convId) }
                 if let clientMessageId = recoverableTurn?.clientMessageId {
@@ -9522,14 +10107,11 @@ final class AssistantVM {
                     touchedStream = true
                 }
             case .replayContinue(let afterSeq):
-                // Page-capped replay: continue from the cursor (no tail reset).
+                // Page-capped replay: the owning exact-turn follower will observe
+                // this response's clean EOF and reopen from the persisted cursor.
+                // Do not spawn a second follower or reset to -1 here.
                 if let tid = currentTurnId {
-                    recoveryTask?.cancel()
-                    recoveryTask = Task { [weak self] in
-                        guard let self else { return }
-                        let buffer = AgentEventBuffer { [weak self] evs in self?.apply(evs) }
-                        try? await self.tailDurableTurn(tid, afterSeq: afterSeq, buffer: buffer)
-                    }
+                    persistRecoveryCursor(afterSeq, expectedTurnId: tid)
                 }
             case .unknown:
                 break   // telemetried at decode (stream.unknownEvent)
@@ -9569,6 +10151,21 @@ final class AssistantVM {
     func debugArmReplayReset(afterSeq: Int = -1) {
         replayResetAfterSeq = afterSeq
         pendingReplayReset = true
+    }
+    func debugSuspendExactRecoveryForNavigation(turnId: String, conversationId: String) {
+        recoverableTurn = RecoverableTurn(
+            conversationId: conversationId,
+            turnId: turnId,
+            clientMessageId: "debug-navigation",
+            lastSeq: 4,
+            startedAt: Date(),
+            sessionIdentity: "server:\(conversationId)")
+        currentTurnId = turnId
+        isStreaming = true
+        suspendForConversationNavigation()
+    }
+    var debugNavigationRecoveryState: (turnId: String?, isStreaming: Bool) {
+        (recoverableTurn?.turnId, isStreaming)
     }
     #endif
 
@@ -9649,6 +10246,8 @@ final class AssistantVM {
         streamTaskGeneration = nil
         // Conversation switch / Stop also ends any reconnect-recovery loop; server
         // work is only cancelled when explicitly asked (roadmap invariant 9).
+        exactRecoveryGeneration = nil
+        recoveringExactTurnId = nil
         recoveryTask?.cancel()
         recoveryTask = nil
         reconnecting = false
@@ -10893,6 +11492,8 @@ final class AssistantVM {
         streamTask?.cancel()
         streamTask = nil
         streamTaskGeneration = nil
+        exactRecoveryGeneration = nil
+        recoveringExactTurnId = nil
         recoveryTask?.cancel()
         recoveryTask = nil
         recoverableTurn = nil
@@ -11214,6 +11815,12 @@ final class AssistantVM {
         if case .turnSnapshot(let tid, _, let st, let seq, _, _)? = decode(#"{"type":"turn_snapshot","turnId":"t9","status":"running","lastSeq":7}"#) {
             check("turn_snapshot", tid == "t9" && st == "running" && seq == 7)
         } else { check("turn_snapshot", false) }
+        if case .turnTerminal(let terminal)? = decode(#"{"type":"turn_terminal","turnId":"t9","conversationId":"c9","status":"done","lastSeq":7,"assistantMessageId":"m9","continuationNeeded":true}"#) {
+            check("turn_terminal exact", terminal.turnId == "t9"
+                  && terminal.conversationId == "c9"
+                  && terminal.assistantMessageId == "m9"
+                  && terminal.continuationNeeded)
+        } else { check("turn_terminal exact", false) }
         if case .progressUpdate(let label)? = decode(#"{"type":"progress_update","label":"স্টক যাচাই করছি"}"#) {
             let block = AgentChatMessage.appendProgressBlock([], label: label, messageId: "unit")
             let isFactualProgress = block.contains {

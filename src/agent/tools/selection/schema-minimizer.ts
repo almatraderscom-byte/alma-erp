@@ -30,7 +30,7 @@ export const MAX_PROP_DESCRIPTION_CHARS = 80
 /** JSON-Schema keys whose value is a structural contract (must be kept). */
 const KEEP_KEYS = new Set(['type', 'properties', 'required', 'enum', 'items', 'additionalProperties', 'anyOf', 'oneOf'])
 /** Verbose annotation keys that are safe to drop for the model view. */
-const DROP_KEYS = new Set(['examples', 'example', '$comment', 'title', 'default', 'readOnly', 'writeOnly', 'deprecated', '$schema', 'format', 'pattern'])
+const DROP_KEYS = new Set(['examples', 'example', '$comment', 'title', 'default', 'readOnly', 'writeOnly', 'deprecated', '$schema'])
 
 function trim(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1).trimEnd() + '…'

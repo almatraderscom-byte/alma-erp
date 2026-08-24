@@ -43,6 +43,17 @@ describe('SPEC-093 schema minimization', () => {
       expect(mt.tokensAfter).toBeLessThanOrEqual(mt.tokensBefore)
     }
   })
+  it('preserves validation-bearing format and pattern constraints', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        url: { type: 'string', format: 'uri' },
+        receipt: { type: 'string', pattern: '^obs_[a-z0-9]+$' },
+      },
+      required: ['url', 'receipt'],
+    }
+    expect(minimizeSchema(schema)).toEqual(schema)
+  })
   it('caps the root description', () => {
     const long = ALL_MANIFESTS[0]
     const mt = minimizeToolSchema(long.name)!

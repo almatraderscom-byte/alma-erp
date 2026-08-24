@@ -101,9 +101,9 @@ export interface SkillManifest {
    * done. `{ tool: 'run_mac_command', argMatch: 'gh workflow run' }` is the
    * dispatch itself.
    *
-   * Deliberately matched on the input and not the output: an input is a stable
-   * shape we control, while a gate that mis-reads an output shape becomes a
-   * warning on every honest claim — the failure mode `check:` already has.
+   * `argMatch` deliberately matches input, never arbitrary output. A named
+   * `check:` may still use a code-owned verifier for a stable result contract
+   * (for example, a durable action/artifact/message delivery receipt).
    */
   done?: Array<{ tool?: string; check?: string; argMatch?: string }>
 }

@@ -25,6 +25,7 @@
  * Silence is no longer a possible outcome.
  */
 import { prisma } from '@/lib/prisma'
+import { continuationDomainForPendingActionType } from '@/agent/lib/continuation-binding'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -56,7 +57,7 @@ export interface JobDeliveryState {
    * the head only adds verified commentary on top (SEO delivery path). Distinct
    * from 'server_fallback', which means the head said nothing at all.
    */
-  via?: 'head' | 'server_fallback' | 'server_spine'
+  via?: 'head' | 'server_fallback' | 'server_spine' | 'artifact_outbox'
 }
 
 export function readDeliveryState(result: unknown): JobDeliveryState | null {
@@ -69,7 +70,9 @@ export function readDeliveryState(result: unknown): JobDeliveryState | null {
     attempts: Number(m.attempts) || 0,
     since: typeof m.since === 'string' ? m.since : new Date().toISOString(),
     deliveredAt: typeof m.deliveredAt === 'string' ? m.deliveredAt : undefined,
-    via: m.via === 'head' || m.via === 'server_fallback' || m.via === 'server_spine' ? m.via : undefined,
+    via: m.via === 'head' || m.via === 'server_fallback' || m.via === 'server_spine' || m.via === 'artifact_outbox'
+      ? m.via
+      : undefined,
   }
 }
 
@@ -271,13 +274,40 @@ export interface JobDeliverySweepResult {
   alreadyDelivered: number
   retried: number
   forced: number
+  artifactDelivery: {
+    scanned: number
+    delivered: number
+    retried: number
+    dead: number
+    repaired: number
+  }
 }
 
 /**
  * Cron tick: no finished job may stay unpresented. Rides the same 10-minute cron
  * as the open-task nudge and the stuck-job watchdog.
  */
-export async function runJobDeliverySweep(): Promise<JobDeliverySweepResult> {
+export async function runJobDeliverySweep(options: { deadlineAt?: number } = {}): Promise<JobDeliverySweepResult> {
+  let durableSeoEnabled = false
+  let ensureSeoOutbox: ((actionId: string) => Promise<boolean>) | null = null
+  let artifactDelivery: JobDeliverySweepResult['artifactDelivery'] = {
+    scanned: 0, delivered: 0, retried: 0, dead: 0, repaired: 0,
+  }
+  try {
+    const seoOutbox = await import('@/agent/lib/seo-artifact-outbox')
+    durableSeoEnabled = seoOutbox.seoArtifactOutboxEnabled()
+    ensureSeoOutbox = seoOutbox.ensureSeoArtifactDeliveryOutbox
+    if (durableSeoEnabled) {
+      // One small network-bearing pass per cron. Additional SEO obligations are
+      // enqueued below and picked up next tick; never run sequential 20× uploads
+      // inside this route's 60-second budget.
+      artifactDelivery = await seoOutbox.runSeoArtifactDeliverySweep(2, {
+        deadlineAt: options.deadlineAt,
+      })
+    }
+  } catch (error) {
+    console.warn('[job-delivery] SEO artifact sweep failed:', error instanceof Error ? error.message : error)
+  }
   const graceCutoff = new Date(Date.now() - DELIVERY_GRACE_MIN * 60 * 1000)
   const ageFloor = new Date(Date.now() - DELIVERY_MAX_AGE_HOURS * 3600 * 1000)
   const rows = await db.agentPendingAction.findMany({
@@ -288,10 +318,21 @@ export async function runJobDeliverySweep(): Promise<JobDeliverySweepResult> {
     },
     orderBy: { resolvedAt: 'asc' },
     take: 20,
-    select: { id: true, type: true, summary: true, result: true, payload: true, conversationId: true, resolvedAt: true },
+    select: {
+      id: true,
+      type: true,
+      summary: true,
+      result: true,
+      payload: true,
+      conversationId: true,
+      resolvedAt: true,
+      workflowRunId: true,
+    },
   })
 
-  const out: JobDeliverySweepResult = { scanned: 0, alreadyDelivered: 0, retried: 0, forced: 0 }
+  const out: JobDeliverySweepResult = {
+    scanned: 0, alreadyDelivered: 0, retried: 0, forced: 0, artifactDelivery,
+  }
   type Row = {
     id: string
     type: string
@@ -300,12 +341,25 @@ export async function runJobDeliverySweep(): Promise<JobDeliverySweepResult> {
     payload: unknown
     conversationId: string | null
     resolvedAt: Date | null
+    workflowRunId: string | null
   }
 
   for (const row of rows as Row[]) {
     const state = readDeliveryState(row.result)
     if (state?.state === 'delivered') continue
     out.scanned++
+
+    // SEO owns a richer durable contract: four storage receipts, one linked
+    // artifact, one canonical card message and its milestone ledger. Never
+    // regress that row to the old plain-message fallback while the outbox is
+    // enabled; replay the same state machine instead.
+    if (row.type === 'seo_audit') {
+      if (durableSeoEnabled && ensureSeoOutbox) {
+        await ensureSeoOutbox(row.id)
+        continue
+      }
+    }
+
     const conversationId = conversationIdOf(row)
     const resolvedAt = row.resolvedAt ?? new Date()
     if (!conversationId) {
@@ -338,11 +392,17 @@ export async function runJobDeliverySweep(): Promise<JobDeliverySweepResult> {
         await enqueueAgentContinuation({
           conversationId,
           force: true,
-          message:
-            `[INTERNAL JOB DELIVERY RETRY] The ${row.type} job ${row.id} finished but Boss was never shown the result. ` +
-            'Read the stored result NOW (for an SEO audit: check_website_seo_audit with read:"report" then read:"links") ' +
-            'and present it IN THIS REPLY — score/outcome, the concrete findings, what to do next, and the download links. ' +
-            'Do not re-run the job, do not ask Boss whether he wants the report, and do not reply with a progress line.',
+          binding: {
+            v: 1,
+            origin: 'job_delivery',
+            source: { kind: 'pending_action', id: row.id },
+            conversationId,
+            domain: continuationDomainForPendingActionType(row.type),
+            event: 'delivery_retry',
+            ...(row.workflowRunId ? { workflowRunId: row.workflowRunId } : {}),
+            directive: { kind: 'job_delivery_retry', version: 1 },
+            expected: { sourceStatus: ['executed'], sourceType: row.type },
+          },
         })
       } catch (err) {
         console.warn('[job-delivery] retry enqueue failed:', err instanceof Error ? err.message : err)

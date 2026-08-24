@@ -35,6 +35,28 @@ export type TurnScopedOwnerInput =
       blockerOwnerText: string
     }
 
+/**
+ * Minimal structural view of the durable continuation binding. Kept local so
+ * the owner-input authority rule does not depend on the binding store: callers
+ * may pass the store's full tri-state result directly.
+ */
+export type TurnContinuationRoutingBinding =
+  | { state: 'bound'; binding: { domain: string } }
+  | { state: 'absent' }
+  | { state: 'invalid'; reason?: string }
+
+export type DirectBrowserOwnerInput =
+  | { state: 'resolve'; ownerRequest: string; askCardId: string | null }
+  | { state: 'none' }
+
+export const OWNER_INPUT_BINDING_BLOCKER =
+  '⚠️ এই turn-এর owner request-টি exact durable message-এর সাথে নিরাপদে bind করা যায়নি। ' +
+  'তাই কোনো tool বা browser action চালাইনি—request-টি নতুন করে পাঠান।'
+
+export const CONTINUATION_BINDING_BLOCKER =
+  '⚠️ এই background continuation-এর exact source/job binding যাচাই করা যায়নি। ' +
+  'তাই পুরনো chat history থেকে কাজ অনুমান করে কোনো tool বা browser action চালাইনি।'
+
 export type TurnHistorySnapshot<T> =
   | { state: 'ready'; rows: T[]; hasLaterRows: boolean }
   | { state: 'unavailable'; rows: []; hasLaterRows: false }
@@ -356,4 +378,43 @@ export function turnScopedOwnerInput(
     }
   }
   return { state: 'none', authoritativeText: historyText }
+}
+
+/**
+ * Admit the durable direct-browser resolver only from this turn's exact owner
+ * message. An unavailable/unbound turn may use transcript history for harmless
+ * legacy prose, but history is never browser authority. Likewise a durable
+ * source continuation owns its execution domain; an old owner utterance cannot
+ * re-route that source event into the YouTube lane.
+ */
+export function directBrowserOwnerInputForTurn(
+  scoped: TurnScopedOwnerInput,
+  continuationBinding?: TurnContinuationRoutingBinding | null,
+): DirectBrowserOwnerInput {
+  if (continuationBinding && continuationBinding.state !== 'absent') {
+    return { state: 'none' }
+  }
+  return scoped.state === 'exact'
+    ? {
+        state: 'resolve',
+        ownerRequest: scoped.authoritativeText,
+        askCardId: scoped.askCardId,
+      }
+    : { state: 'none' }
+}
+
+/**
+ * Source-binding execution fence. Every internal continuation needs a valid
+ * immutable source binding before any history, model, lane, or tool routing is
+ * considered. Disabling automatic continuation must stop automation; it must
+ * never restore the historical free-form fallback.
+ */
+export function continuationBindingBlockerForTurn(
+  continuationRequested: boolean,
+  continuationBinding: TurnContinuationRoutingBinding,
+): string | null {
+  if (!continuationRequested || continuationBinding.state === 'bound') {
+    return null
+  }
+  return CONTINUATION_BINDING_BLOCKER
 }

@@ -1428,6 +1428,70 @@ final class AssistantParityV2Tests: XCTestCase {
                        "the delivered steer remains a separate canonical owner row")
     }
 
+    /// Recovery cold-reload duplicate (production incident, sim-verified 2026-08-24).
+    ///
+    /// `openConversation(recoveringPersistedTurn:)` mounts history FIRST, so the
+    /// finished assistant row is already on screen under its own server id. Then
+    /// `recoverTurnState` attaches an exact-turn replay tail, which learns the
+    /// same server id from the replayed `done`. The claim renames the INCOMING
+    /// copy to the tail's local id, leaving the already-mounted row with no
+    /// incoming counterpart — reconciliation keeps it, and one durable message
+    /// renders twice with identical tokens and cost.
+    /// Codex P1 (#847). A definitive 4xx on Continue means the source can never
+    /// resume; retaining its descriptor left `recoverableTurn` set forever, and
+    /// New Chat / other open tasks / ordinary sends all require it to be nil.
+    func testUnrecoverableOpenTaskContinuationFailuresAreClassifiedForRelease() {
+        // Permanently invalid sources — release the descriptor.
+        for status in [400, 403, 404, 409, 410, 422] {
+            XCTAssertTrue(
+                AssistantVM.openTaskContinuationIsUnrecoverable(
+                    AlmaAPIError.http(status: status, body: "")),
+                "HTTP \(status) can never become success on retry")
+        }
+        // Acceptance UNKNOWN — keep the descriptor so the route can replay the
+        // same source-bound turn.
+        for status in [401, 408, 429, 500, 502, 503, 504] {
+            XCTAssertFalse(
+                AssistantVM.openTaskContinuationIsUnrecoverable(
+                    AlmaAPIError.http(status: status, body: "")),
+                "HTTP \(status) leaves the claim ambiguous and must be retried")
+        }
+        XCTAssertFalse(AssistantVM.openTaskContinuationIsUnrecoverable(AlmaAPIError.notAuthenticated))
+        XCTAssertFalse(AssistantVM.openTaskContinuationIsUnrecoverable(
+            AlmaAPIError.transport(URLError(.networkConnectionLost))))
+        XCTAssertFalse(AssistantVM.openTaskContinuationIsUnrecoverable(
+            AlmaAPIError.decoding(URLError(.cannotParseResponse))))
+    }
+
+    func testRecoveryTailClaimingAnAlreadyMountedServerRowDoesNotDuplicateIt() throws {
+        let vm = AssistantVM()
+        vm.debugClearChronologyAnchors()
+        let owner = AgentChatMessage(
+            id: "server-user", role: .user, text: "ekhon koyta baje")
+        var mountedAnswer = AgentChatMessage(
+            id: "server-answer", role: .assistant, text: "বস, এখন রাত ২টা ৫৪ মিনিট।")
+        mountedAnswer.createdAt = "2026-08-23T20:54:09.000Z"
+        var replayTail = AgentChatMessage(
+            id: "stream-recovered", role: .assistant, text: "বস, এখন রাত ২টা ৫৪ মিনিট।")
+        replayTail.serverId = "server-answer"
+        vm.messages = [owner, mountedAnswer, replayTail]
+
+        let wire = try JSONDecoder().decode([AgentMessageWire].self, from: Data(#"""
+        [
+          {"id":"server-user","role":"user","createdAt":"2026-08-23T20:53:57.000Z","content":[{"type":"text","text":"ekhon koyta baje"}]},
+          {"id":"server-answer","role":"assistant","createdAt":"2026-08-23T20:54:09.000Z","content":[{"type":"text","text":"বস, এখন রাত ২টা ৫৪ মিনিট।"}]}
+        ]
+        """#.utf8))
+
+        vm.debugMergeServerMessages(wire)
+
+        let answers = vm.messages.filter { $0.role == .assistant }
+        XCTAssertEqual(answers.count, 1,
+                       "one durable assistant message must render exactly once after recovery")
+        XCTAssertEqual(answers.first?.serverId ?? answers.first?.id, "server-answer")
+        XCTAssertEqual(vm.messages.map(\.role), [.user, .assistant])
+    }
+
     func testExactSteerAfterAnonymousInitialSendDoesNotMoveInitialBubbleToBottom() throws {
         let vm = AssistantVM()
         vm.debugClearChronologyAnchors()
@@ -2073,6 +2137,207 @@ final class AssistantParityV2Tests: XCTestCase {
     func testDirectStreamEOFWithoutTerminalRequiresDurableRecovery() {
         XCTAssertTrue(AssistantVM.directStreamEndRequiresRecovery(sawTerminalEvent: false))
         XCTAssertFalse(AssistantVM.directStreamEndRequiresRecovery(sawTerminalEvent: true))
+    }
+
+    func testOpenTaskContinueBuildsExactColdRecoveryDescriptorWithoutOwnerText() throws {
+        let response = try JSONDecoder().decode(
+            AgentOpenTaskActionResponse.self,
+            from: Data(#"{"ok":true,"action":"continue","conversationId":"conversation-9598","turnId":"turn-474s","lastSeq":-1,"status":"running","resumeNote":"legacy text must be ignored"}"#.utf8))
+
+        let descriptor = try XCTUnwrap(AssistantVM.openTaskRecoveryDescriptor(
+            from: response, openTaskId: "open-task-seo-1",
+            expectedConversationId: "conversation-9598"))
+
+        XCTAssertEqual(descriptor.openTaskId, "open-task-seo-1")
+        XCTAssertEqual(descriptor.conversationId, "conversation-9598")
+        XCTAssertEqual(descriptor.turnId, "turn-474s")
+        XCTAssertEqual(descriptor.lastSeq, -1)
+        XCTAssertNil(descriptor.message, "a server resume directive must never become owner-authored text")
+        XCTAssertNil(descriptor.files)
+
+        let relaunched = try JSONDecoder().decode(
+            AssistantVM.RecoverableTurn.self,
+            from: JSONEncoder().encode(descriptor))
+        XCTAssertEqual(relaunched.openTaskId, "open-task-seo-1")
+        XCTAssertEqual(relaunched.turnId, "turn-474s")
+        XCTAssertEqual(relaunched.lastSeq, -1)
+    }
+
+    func testOpenTaskIdentityIsDurableBeforeThePOSTCanLoseItsResponse() throws {
+        let pending = try XCTUnwrap(AssistantVM.pendingOpenTaskRecoveryDescriptor(
+            openTaskId: "open-task-seo-1",
+            conversationId: "conversation-9598"))
+
+        XCTAssertEqual(pending.openTaskId, "open-task-seo-1")
+        XCTAssertEqual(pending.conversationId, "conversation-9598")
+        XCTAssertNil(pending.turnId)
+        XCTAssertEqual(pending.lastSeq, -1)
+        XCTAssertNil(pending.message)
+
+        let relaunched = try JSONDecoder().decode(
+            AssistantVM.RecoverableTurn.self,
+            from: JSONEncoder().encode(pending))
+        XCTAssertEqual(relaunched.openTaskId, "open-task-seo-1")
+        XCTAssertNil(relaunched.turnId)
+    }
+
+    func testOpenTaskContinueRejectsLegacyResumeNoteWithoutExactTurnIdentity() throws {
+        let response = try JSONDecoder().decode(
+            AgentOpenTaskActionResponse.self,
+            from: Data(#"{"ok":true,"action":"continue","resumeNote":"do not send me"}"#.utf8))
+        XCTAssertNil(AssistantVM.openTaskRecoveryDescriptor(
+            from: response, openTaskId: "open-task-seo-1"))
+
+        let invalidCursor = try JSONDecoder().decode(
+            AgentOpenTaskActionResponse.self,
+            from: Data(#"{"ok":true,"action":"continue","conversationId":"conversation-1","turnId":"turn-1","lastSeq":-2,"status":"queued"}"#.utf8))
+        XCTAssertNil(AssistantVM.openTaskRecoveryDescriptor(
+            from: invalidCursor, openTaskId: "open-task-seo-1"))
+
+        let serverHighWater = try JSONDecoder().decode(
+            AgentOpenTaskActionResponse.self,
+            from: Data(#"{"ok":true,"action":"continue","conversationId":"conversation-1","turnId":"turn-1","lastSeq":214,"status":"running"}"#.utf8))
+        XCTAssertNil(AssistantVM.openTaskRecoveryDescriptor(
+            from: serverHighWater, openTaskId: "open-task-seo-1",
+            expectedConversationId: "conversation-1"),
+            "a new client has applied no durable rows and must attach from -1")
+
+        let wrongConversation = try JSONDecoder().decode(
+            AgentOpenTaskActionResponse.self,
+            from: Data(#"{"ok":true,"action":"continue","conversationId":"conversation-newer","turnId":"turn-1","lastSeq":-1,"status":"running"}"#.utf8))
+        XCTAssertNil(AssistantVM.openTaskRecoveryDescriptor(
+            from: wrongConversation, openTaskId: "open-task-seo-1",
+            expectedConversationId: "conversation-1"))
+    }
+
+    func testCanonicalTurnTerminalDecodesEveryRecoveryIdentityField() throws {
+        let data = Data(#"""
+        {
+          "type": "turn_terminal",
+          "turnId": "turn-474s",
+          "conversationId": "conversation-9598",
+          "status": "done",
+          "lastSeq": 502,
+          "assistantMessageId": "assistant-d588",
+          "continuationNeeded": true
+        }
+        """#.utf8)
+        let dto = try JSONDecoder().decode(AgentSSEEvent.self, from: data)
+        guard case .turnTerminal(let terminal) = AgentTurnEvent(dto: dto) else {
+            return XCTFail("turn_terminal must stay typed")
+        }
+        XCTAssertEqual(terminal.turnId, "turn-474s")
+        XCTAssertEqual(terminal.conversationId, "conversation-9598")
+        XCTAssertEqual(terminal.status, "done")
+        XCTAssertEqual(terminal.lastSeq, 502)
+        XCTAssertEqual(terminal.assistantMessageId, "assistant-d588")
+        XCTAssertTrue(terminal.continuationNeeded)
+    }
+
+    func testReplayInfrastructureErrorIsRetryableNotTurnTerminal() throws {
+        let dto = try JSONDecoder().decode(
+            AgentSSEEvent.self,
+            from: Data(#"{"type":"error","message":"turn_replay_unavailable"}"#.utf8))
+        guard case .recoveryUnavailable(let reason) = AgentTurnEvent(dto: dto) else {
+            return XCTFail("replay read failure must not terminalize the agent turn")
+        }
+        XCTAssertEqual(reason, "turn_replay_unavailable")
+    }
+
+    func testExactTurnRecoveryRejectsNewerConcurrentTerminal() {
+        let ours = AgentTurnTerminal(
+            turnId: "turn-ours", conversationId: "conversation-1",
+            status: "done", lastSeq: 214,
+            assistantMessageId: "assistant-ours", continuationNeeded: false)
+        let newer = AgentTurnTerminal(
+            turnId: "turn-newer", conversationId: "conversation-1",
+            status: "done", lastSeq: 4,
+            assistantMessageId: "assistant-newer", continuationNeeded: false)
+        let otherConversation = AgentTurnTerminal(
+            turnId: "turn-ours", conversationId: "conversation-2",
+            status: "done", lastSeq: 214,
+            assistantMessageId: "assistant-ours", continuationNeeded: false)
+
+        XCTAssertTrue(DurableTurnRecoveryContract.matches(
+            ours, expectedTurnId: "turn-ours", expectedConversationId: "conversation-1"))
+        XCTAssertFalse(DurableTurnRecoveryContract.matches(
+            newer, expectedTurnId: "turn-ours", expectedConversationId: "conversation-1"))
+        XCTAssertFalse(DurableTurnRecoveryContract.matches(
+            otherConversation,
+            expectedTurnId: "turn-ours", expectedConversationId: "conversation-1"))
+    }
+
+    func testExactTurnRecoveryRejectsWrongSnapshotBeforeAnyLaterFrameCanApply() {
+        let wrong = AgentTurnEvent.turnSnapshot(
+            turnId: "turn-newer", conversationId: "conversation-1",
+            status: "running", lastSeq: 9, agentProseProtocol: 2,
+            assistantMessageId: nil)
+        let ours = AgentTurnEvent.turnSnapshot(
+            turnId: "turn-ours", conversationId: "conversation-1",
+            status: "running", lastSeq: 9, agentProseProtocol: 2,
+            assistantMessageId: nil)
+
+        XCTAssertFalse(DurableTurnRecoveryContract.acceptsExactStreamEvent(
+            wrong, expectedTurnId: "turn-ours", expectedConversationId: "conversation-1"))
+        XCTAssertTrue(DurableTurnRecoveryContract.acceptsExactStreamEvent(
+            ours, expectedTurnId: "turn-ours", expectedConversationId: "conversation-1"))
+    }
+
+    func testNavigationSettlesGlobalStreamingButRetainsExactRecoveryDescriptor() {
+        let vm = AssistantVM()
+        vm.debugSuspendExactRecoveryForNavigation(
+            turnId: "turn-ours",
+            conversationId: "conversation-source")
+
+        XCTAssertEqual(vm.debugNavigationRecoveryState.turnId, "turn-ours")
+        XCTAssertFalse(vm.debugNavigationRecoveryState.isStreaming)
+    }
+
+    func testClean300SecondEOFReconnectsSamePersistedCursorWithoutPromptRerun() {
+        XCTAssertTrue(DurableTurnRecoveryContract.reconnectAfterEOF(acceptedTerminal: false))
+        XCTAssertFalse(DurableTurnRecoveryContract.reconnectAfterEOF(acceptedTerminal: true))
+        XCTAssertEqual(
+            DurableTurnRecoveryContract.advancedCursor(persisted: 214, observed: 208),
+            214)
+        XCTAssertEqual(
+            DurableTurnRecoveryContract.advancedCursor(persisted: 214, observed: 502),
+            502)
+        XCTAssertEqual(
+            DurableTurnRecoveryContract.boundCursor(
+                cachedTurnId: "newer-turn", cached: 900,
+                expectedTurnId: "turn-474s", persisted: 214),
+            214,
+            "another turn's larger cursor must not skip this exact turn")
+        XCTAssertEqual(
+            DurableTurnRecoveryContract.boundCursor(
+                cachedTurnId: "turn-474s", cached: 502,
+                expectedTurnId: "turn-474s", persisted: 214),
+            502)
+        XCTAssertEqual(DurableTurnRecoveryContract.reconnectDelay(attempt: 0), 0.25)
+        XCTAssertEqual(DurableTurnRecoveryContract.reconnectDelay(attempt: 4), 3)
+        XCTAssertEqual(DurableTurnRecoveryContract.reconnectDelay(attempt: 99), 3)
+    }
+
+    func testColdRecoveryClearsOnlyAfterExactAssistantRowReconciliation() {
+        let terminal = AgentTurnTerminal(
+            turnId: "turn-exact", conversationId: "conversation-exact",
+            status: "done", lastSeq: 0,
+            assistantMessageId: "assistant-exact", continuationNeeded: false)
+        XCTAssertFalse(DurableTurnRecoveryContract.canClearDescriptor(
+            terminal: terminal,
+            expectedTurnId: "turn-exact",
+            expectedConversationId: "conversation-exact",
+            reconciledAssistantIds: []))
+        XCTAssertFalse(DurableTurnRecoveryContract.canClearDescriptor(
+            terminal: terminal,
+            expectedTurnId: "turn-exact",
+            expectedConversationId: "conversation-exact",
+            reconciledAssistantIds: ["assistant-newer"]))
+        XCTAssertTrue(DurableTurnRecoveryContract.canClearDescriptor(
+            terminal: terminal,
+            expectedTurnId: "turn-exact",
+            expectedConversationId: "conversation-exact",
+            reconciledAssistantIds: ["assistant-newer", "assistant-exact"]))
     }
 
     func testPreTurnCleanEOFRetryIsBoundedAndBacksOff() {
@@ -5198,6 +5463,11 @@ final class AssistantParityV2Tests: XCTestCase {
     }
 
     func testNewChatInvalidatesInFlightHistoryToken() async {
+        // A durable recoverable turn left in UserDefaults by an EARLIER test is
+        // restored by AssistantVM's initializer and legitimately blocks New Chat
+        // ("finish the running answer first"). Clear the slot so this test
+        // measures token invalidation, not test-order residue.
+        UserDefaults.standard.removeObject(forKey: "alma.assistant.recoverableTurn")
         let vm = AssistantVM()
         let token = vm.debugIssueSurfaceToken(loading: "chat-a")
         let opened = await vm.newChat()
@@ -6420,6 +6690,41 @@ final class ProseLifecycleV2Tests: XCTestCase {
         XCTAssertEqual([second, secondBlock ?? "-"], ["কাল", "t:p2"])
     }
 
+    func testDurableCursorAdvancesOnlyAfterBufferedEventApplication() async {
+        let collected = Batches()
+        var cursors: [Int] = []
+        let buffer = AgentEventBuffer(
+            apply: { evs in collected.append(evs) },
+            onAppliedSeq: { cursors.append($0) })
+
+        await buffer.push(.textDelta("অপেক্ষা", blockId: "t:p1"), sequence: 7)
+        XCTAssertTrue(cursors.isEmpty, "queued typewriter prose is not applied yet")
+        await buffer.finish()
+
+        XCTAssertEqual(cursors, [7])
+        XCTAssertEqual(collected.all.flatMap { $0 }.count, 1)
+    }
+
+    func testTrailingEOFFrameAdvancesCursorAfterItsEventIsApplied() async throws {
+        var parser = AlmaSSEParser()
+        XCTAssertNil(parser.consume(line: "id: 8"))
+        XCTAssertNil(parser.consume(line: #"data: {"type":"text_delta","delta":"শেষ","blockId":"t:p1"}"#))
+        let payload = try XCTUnwrap(parser.flushTrailing())
+        let dto = try JSONDecoder().decode(AgentSSEEvent.self, from: Data(payload.utf8))
+        let collected = Batches()
+        var cursors: [Int] = []
+        let buffer = AgentEventBuffer(
+            apply: { evs in collected.append(evs) },
+            onAppliedSeq: { cursors.append($0) })
+
+        await buffer.push(AgentTurnEvent(dto: dto), sequence: Int(parser.lastEventId ?? ""))
+        XCTAssertTrue(cursors.isEmpty)
+        await buffer.finish()
+
+        XCTAssertEqual(cursors, [8])
+        XCTAssertEqual(collected.all.flatMap { $0 }.count, 1)
+    }
+
     @MainActor
     private final class Batches {
         var all: [[AgentTurnEvent]] = []
@@ -6699,5 +7004,23 @@ final class AgentMessageTimeLabelTests: XCTestCase {
                         "a freshly sent owner message must carry a parseable send time for the divider")
         XCTAssertNil(vm.messages.last?.createdAt,
                      "the optimistic stamp must stay off createdAt — markConversationRead reads that (Codex P1 #841)")
+    }
+}
+
+extension AssistantParityV2Tests {
+    /// Codex P1 #847 round 2: the RELAUNCH retry must classify definitive 4xx
+    /// exactly like the initial request — source assertion, since the relaunch
+    /// path is a private async member driven by app lifecycle.
+    func testRelaunchRecoveryClearsUnrecoverableOpenTaskDescriptors() throws {
+        let source = try String(contentsOf: URL(
+            fileURLWithPath: #filePath + "/../../../App/AssistantSwiftUI.swift").standardizedFileURL, encoding: .utf8)
+        let start = try XCTUnwrap(source.range(of: "private func resumePersistedOpenTaskDescriptor"))
+        let body = String(source[start.lowerBound...].prefix(1800))
+        XCTAssertTrue(body.contains("openTaskContinuationIsUnrecoverable(error)"),
+                      "relaunch retry must classify definitive 4xx like the initial request")
+        XCTAssertTrue(body.contains("recoverableTurn = nil"),
+                      "an unrecoverable descriptor must be released on relaunch too")
+        XCTAssertTrue(body.contains("clientMessageId == pendingDescriptor.clientMessageId"),
+                      "only the matching descriptor may be cleared")
     }
 }

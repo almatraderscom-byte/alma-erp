@@ -41,8 +41,11 @@ describe('filterFindToolResultForTurn — the find_tool → membership_gate dead
     expect(res.data.matches.map((m) => m.name)).toEqual(['get_plan'])
     // …and must be TOLD why they vanished, with an honest way out.
     expect(res.data.note).toContain('existing note')
-    expect(res.data.note).toContain('[হারনেস] এই টার্নে অনুমোদিত নয় বলে বাদ: check_order_issues, get_orders।')
-    expect(res.data.note).toContain('এগুলো call কোরো না')
+    expect(res.data.note).toContain('[হারনেস] 2টি match এই টার্নে অনুমোদিত নয় বলে বাদ।')
+    expect(res.data.note).toContain('বাদ দেওয়া tool call কোরো না')
+    // A preview/timeline built from the filtered result cannot leak refused names.
+    expect(JSON.stringify(res)).not.toContain('check_order_issues')
+    expect(JSON.stringify(res)).not.toContain('get_orders')
   })
 
   it('denylisted matches are refused and edited out the same way', () => {
@@ -55,7 +58,8 @@ describe('filterFindToolResultForTurn — the find_tool → membership_gate dead
     expect(permitted).toEqual(['get_sales_summary'])
     expect(refused).toEqual(['ask_user'])
     expect(res.data.matches.map((m) => m.name)).toEqual(['get_sales_summary'])
-    expect(String(res.data.note)).toContain('ask_user')
+    expect(String(res.data.note)).toContain('[হারনেস] 1টি match')
+    expect(JSON.stringify(res)).not.toContain('ask_user')
   })
 
   it('does not let a direct browser turn rediscover a shell fallback', () => {

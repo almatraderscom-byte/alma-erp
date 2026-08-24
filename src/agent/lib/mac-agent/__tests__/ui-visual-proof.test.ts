@@ -56,11 +56,16 @@ describe('approved Mac action visual proof', () => {
     mocks.markDeferred.mockReset().mockResolvedValue(true)
     mocks.kvFind.mockReset().mockResolvedValue(null)
     mocks.kvUpsert.mockReset().mockResolvedValue({})
-    mocks.pendingFind.mockReset().mockResolvedValue({ conversationId: 'conversation-1', result: {} })
+    mocks.pendingFind.mockReset().mockResolvedValue({
+      conversationId: 'conversation-1', status: 'approved', type: 'mac_command',
+      workflowRunId: 'workflow-mac-1', result: {},
+    })
     mocks.pendingUpdate.mockReset().mockResolvedValue({})
     mocks.appendNote.mockReset().mockResolvedValue(undefined)
     mocks.continueAction.mockReset().mockResolvedValue(undefined)
-    mocks.continueFailure.mockReset().mockResolvedValue(undefined)
+    mocks.continueFailure.mockReset().mockResolvedValue({
+      outcome: 'queued', turnId: 'turn-proof', requestId: 'request-proof', status: 'running',
+    })
     mocks.enqueue
       .mockResolvedValueOnce({ id: 'before' })
       .mockResolvedValueOnce({ id: 'action' })
@@ -199,12 +204,66 @@ describe('approved Mac action visual proof', () => {
     expect(mocks.continueAction).not.toHaveBeenCalled()
     expect(mocks.continueFailure).toHaveBeenCalledWith(expect.objectContaining({
       conversationId: 'conversation-1',
-      message: expect.stringContaining('complete দাবি কোরো না'),
+      ignoreAwaitingOwner: true,
+      binding: {
+        v: 1,
+        origin: 'mac_proof',
+        source: { kind: 'pending_action', id: 'card-1' },
+        conversationId: 'conversation-1',
+        domain: 'browser',
+        event: 'visual_proof_ready',
+        workflowRunId: 'workflow-mac-1',
+        directive: { kind: 'mac_visual_proof', version: 1 },
+        expected: { sourceStatus: ['approved'], sourceType: 'mac_command' },
+      },
     }))
+    expect(mocks.continueFailure.mock.calls[0][0].message).toBeUndefined()
     expect(mocks.appendNote).toHaveBeenCalledWith(
       'conversation-1',
       expect.stringContaining('আসল action সফল হয়নি'),
     )
+  })
+
+  it('does not bind or resume when the durable proof source update fails', async () => {
+    mocks.getCommand.mockResolvedValue({
+      id: 'action-failed', status: 'failed', exitCode: 1, stdout: '', stderr: 'element missing',
+      error: 'element_not_found', timedOut: false,
+    })
+    mocks.share.mockReset().mockResolvedValue({ ok: true, imageUrl: 'https://proof/after', instruction: '' })
+    mocks.pendingUpdate.mockRejectedValue(new Error('db_unavailable'))
+
+    const delivered = await deliverDeferredUiAfterProof({
+      commandId: 'after-source-write-failed',
+      rawStdout: 'data:image/jpeg;base64,BBBB',
+      params: {
+        proofPhase: 'after', proofPendingActionId: 'card-1', proofForCommandId: 'action-failed',
+      },
+    })
+
+    expect(delivered).toBe(false)
+    expect(mocks.continueFailure).not.toHaveBeenCalled()
+    expect(mocks.kvUpsert).not.toHaveBeenCalled()
+  })
+
+  it('keeps failed-action proof retryable when the source-bound continuation is rejected', async () => {
+    mocks.getCommand.mockResolvedValue({
+      id: 'action-failed', status: 'failed', exitCode: 1, stdout: '', stderr: 'element missing',
+      error: 'element_not_found', timedOut: false,
+    })
+    mocks.share.mockReset().mockResolvedValue({ ok: true, imageUrl: 'https://proof/after', instruction: '' })
+    mocks.continueFailure.mockResolvedValue({
+      outcome: 'rejected', turnId: null, requestId: null, status: 'binding_required',
+    })
+
+    await expect(deliverDeferredUiAfterProof({
+      commandId: 'after-binding-rejected',
+      rawStdout: 'data:image/jpeg;base64,BBBB',
+      params: {
+        proofPhase: 'after', proofPendingActionId: 'card-1', proofForCommandId: 'action-failed',
+      },
+    })).rejects.toThrow('mac_proof_continuation_binding_required')
+
+    expect(mocks.kvUpsert).not.toHaveBeenCalled()
   })
 
   it('upgrades already-delivered legacy proof by resuming without reposting it', async () => {

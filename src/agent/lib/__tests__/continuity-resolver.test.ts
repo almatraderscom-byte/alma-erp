@@ -45,6 +45,22 @@ function input(partial: Partial<ContinuityInput>): ContinuityInput {
   }
 }
 
+const YOUTUBE_FOCUS = {
+  id: 'youtube-focus',
+  goal: 'Play Fix You on YouTube',
+  kind: 'direct_youtube_browser',
+  status: 'active' as const,
+  workflowRunId: null,
+}
+
+const SEO_FOCUS = {
+  id: 'seo-focus',
+  goal: 'example.test SEO audit',
+  kind: 'client_seo_batch',
+  status: 'parked' as const,
+  workflowRunId: 'seo-run-1',
+}
+
 describe('text classifiers (wide nets, roadmap targets)', () => {
   it('recognizes the natural continuations the old CONTINUE_RE missed', () => {
     for (const t of ['তারপর?', 'যেখানে ছিলে সেখান থেকে করো', 'ওটাই করো', 'baki ta koro', 'agertar ki obostha?', 'oi kaj ta ses koro', 'হ্যাঁ', 'ok', 'চালিয়ে যাও', 'resume']) {
@@ -157,6 +173,48 @@ describe('resolver rules in roadmap order', () => {
     expect(d.binding).toBe('none')
     expect(d.action).toBe('clarify')
   })
+
+  it('source-bound SEO Continue resumes only its exact workflow focus, never active YouTube', () => {
+    const d = resolveContinuityDecision(input({
+      text: 'Continue',
+      activeFocus: YOUTUBE_FOCUS,
+      parkedFocuses: [SEO_FOCUS],
+      continuationSource: { domain: 'seo', workflowRunId: 'seo-run-1' },
+    }))
+
+    expect(d).toMatchObject({
+      binding: 'active_focus',
+      action: 'resume',
+      focusId: 'seo-focus',
+      reason: 'source_binding_matches_workflow_focus',
+    })
+  })
+
+  it('source-bound SEO Continue cannot fall back to an unrelated YouTube focus', () => {
+    const d = resolveContinuityDecision(input({
+      text: 'Continue',
+      activeFocus: YOUTUBE_FOCUS,
+      continuationSource: { domain: 'seo', workflowRunId: 'missing-seo-run' },
+    }))
+
+    expect(d).toMatchObject({
+      binding: 'none',
+      action: 'proceed',
+      reason: 'source_binding_has_no_matching_focus',
+    })
+    expect(d.focusId).toBeUndefined()
+    expect(d.forbiddenEffects).toEqual([])
+  })
+
+  it('an ordinary exact owner Continue still resumes the current YouTube focus', () => {
+    const d = resolveContinuityDecision(input({ text: 'Continue', activeFocus: YOUTUBE_FOCUS }))
+    expect(d).toMatchObject({
+      binding: 'active_focus',
+      action: 'resume',
+      focusId: 'youtube-focus',
+      reason: 'continuation_binds_active_focus',
+    })
+  })
 })
 
 describe('high-risk guard: zero wrong bindings', () => {
@@ -182,8 +240,8 @@ describe('high-risk guard: zero wrong bindings', () => {
   it('recall has no input into the resolver (advisory-only by construction)', () => {
     // The ContinuityInput type carries no recall/semantic fields; this guard
     // fails to compile if someone adds one without revisiting the contract.
-    const keys: Array<keyof ContinuityInput> = ['text', 'listenMode', 'replyToCardId', 'pendingCards', 'activeFocus', 'parkedFocuses', 'checkpoints']
-    expect(keys.length).toBe(7)
+    const keys: Array<keyof ContinuityInput> = ['text', 'listenMode', 'replyToCardId', 'pendingCards', 'activeFocus', 'parkedFocuses', 'checkpoints', 'continuationSource']
+    expect(keys.length).toBe(8)
   })
 })
 

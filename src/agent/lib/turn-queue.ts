@@ -28,6 +28,9 @@ export interface TurnJobInput {
   /** AGENT-IOS-001 — tapped ask-card id; rides to the worker's internal chat call. */
   askCardId?: string | null
   internalControl?: boolean
+  /** Source-bound internal authority. When present, the queue carries this
+   * deterministic DB identity and deliberately drops caller-authored prose. */
+  continuationRequestId?: string | null
   /** Prose protocol the client advertised (prose-lifecycle.ts); rides to the worker. */
   agentProseProtocol?: number | string | null
 }
@@ -42,6 +45,7 @@ export interface TurnJobData {
   clientRequestId: string | null
   askCardId: string | null
   internalControl: boolean
+  continuationRequestId?: string
   agentProseProtocol: 1 | 2
 }
 
@@ -57,8 +61,22 @@ export function buildTurnJobData(
   body: TurnJobInput,
 ): TurnJobData | null {
   if (!turnId || !conversationId) return null
-  const message = typeof body.message === 'string' ? body.message.trim() : ''
-  if (!message) return null
+  const rawContinuationRequestId = typeof body.continuationRequestId === 'string'
+    ? body.continuationRequestId.trim()
+    : ''
+  const continuationRequestId = rawContinuationRequestId
+    && /^continuation:v1:[a-z_]+:[a-z_]+:[A-Za-z0-9._-]+:[a-z_]+(?::[A-Za-z0-9._-]+)?$/.test(rawContinuationRequestId)
+    && rawContinuationRequestId.length <= 400
+      ? rawContinuationRequestId
+      : null
+  if (rawContinuationRequestId && !continuationRequestId) return null
+  if (continuationRequestId && body.internalControl !== true) return null
+  // A bound internal turn reloads its directive from AgentTurn. Never let a
+  // queue producer smuggle a second, conflicting authority string beside it.
+  const message = continuationRequestId
+    ? ''
+    : typeof body.message === 'string' ? body.message.trim() : ''
+  if (!message && !continuationRequestId) return null
   const files: FileRefInput[] = Array.isArray(body.files)
     ? body.files.filter(
         (f): f is FileRefInput =>
@@ -78,6 +96,7 @@ export function buildTurnJobData(
         ? body.askCardId.trim()
         : null,
     internalControl: body.internalControl === true,
+    ...(continuationRequestId ? { continuationRequestId } : {}),
     agentProseProtocol: body.agentProseProtocol === 2 || body.agentProseProtocol === '2' ? 2 : 1,
   }
 }

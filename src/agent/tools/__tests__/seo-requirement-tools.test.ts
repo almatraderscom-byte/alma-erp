@@ -14,7 +14,7 @@ import { selectToolsAndGroupsForTurnAsync } from '@/agent/tools/select-tools'
 import { resolveToolsByName } from '@/agent/tools/find-tool'
 
 const OWNER_MESSAGE = 'Do a Deep SEO Audit - almatraders.com'
-const REQUIRED = ['run_website_seo_audit', 'check_website_seo_audit', 'save_artifact']
+const REQUIRED = ['run_website_seo_audit', 'check_website_seo_audit']
 
 describe('SEO requirement tools are reachable however the turn was routed', () => {
   it('documents that the legacy selector alone does NOT supply them', async () => {
@@ -37,5 +37,9 @@ describe('SEO requirement tools are reachable however the turn was routed', () =
       expect(tool.description.length).toBeGreaterThan(0)
       expect(tool.input_schema).toBeTruthy()
     }
+  })
+
+  it('does not require the redundant SEO-only save gate', () => {
+    expect(REQUIRED).not.toContain('save_artifact')
   })
 })

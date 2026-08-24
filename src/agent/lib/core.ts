@@ -17,6 +17,7 @@
  */
 import Anthropic from '@anthropic-ai/sdk'
 import { compactTimelineForStorage } from '@/agent/lib/presentation/timeline-compaction'
+import { liveArtifactCard } from '@/agent/lib/artifact-card-visibility'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/config'
 import { getModel } from '@/agent/lib/models/registry'
@@ -26,12 +27,21 @@ import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/mod
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
+  filterToolsForSkill,
+  skillAllowlist,
+  skillDoneGateForClaim,
+} from '@/agent/lib/skill-engine/enforcement'
+import {
   DIRECT_BROWSER_ALLOWED_TOOL_NAMES,
+  DIRECT_BROWSER_SHELL_DENYLIST,
   DIRECT_BROWSER_TOOL_NAMES,
   directBrowserFallbackViolation,
   isDirectBrowserExecutionTool,
-  sanitizeDirectBrowserFallbackMatches,
 } from '@/agent/lib/live-browser/intent'
+import {
+  EXPLICIT_CHROME_MODALITY_TOOLS,
+  hasExplicitChromeModality,
+} from '@/agent/lib/live-browser/modality'
 import {
   DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER,
   DIRECT_YOUTUBE_LANE_UNAVAILABLE_TOOL_NAMES,
@@ -63,7 +73,7 @@ import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-tim
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations, shouldSuppressCrossSurfaceForImage } from '@/agent/lib/cross-surface'
 import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearchDeferral, shouldApplyToolSearchDeferral, TOOL_SEARCH_ENABLED, SLIM_ROUTER_ENABLED } from '@/agent/tools/select-tools'
-import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
+import { getAgentControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool, type ToolResult } from '@/agent/tools/registry'
 import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
 import { runPreToolHooks, runPostToolHooks } from '@/agent/lib/turn-hooks'
@@ -72,10 +82,22 @@ import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
 import { buildOwnerCorrectionNudge } from '@/agent/lib/owner-correction'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
 import { trimToolResultForHistory } from '@/agent/lib/context-trim'
-import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
+import {
+  FIND_TOOL_NAME,
+  resolveToolsByName,
+  MAX_DYNAMIC_TOOLS_PER_TURN,
+} from '@/agent/tools/find-tool'
+import {
+  composeTurnToolAllowlist,
+  filterTurnToolDefinitions,
+  prepareFindToolResultForTurn,
+  type FindToolResultLike,
+} from '@/agent/tools/selection/turn-capability-context'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
 import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
+import { normalizeChatMode } from '@/agent/lib/chat-mode'
+import { normalizePermissionMode } from '@/agent/lib/permission-mode'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -137,7 +159,6 @@ import { mergeAgentReferences } from '@/agent/lib/references/validator'
 import { exposedAgentReferences, shouldRenderAgentReferences, toolResultForReferenceRollout } from '@/agent/lib/references/flags'
 import {
   deriveOwnerTurnAuthorization,
-  filterToolsForOwnerTurn,
   isReadOnlyPlanControlTool,
   ownerTurnAuthorizationNote,
 } from '@/agent/lib/turn-authorization'
@@ -881,6 +902,8 @@ export async function* runAgentTurn(
 ): AsyncGenerator<AgentEvent> {
   const client = getClient()
   const { projectSystemInstructions, signal, turnId, telegramFastPath = false, deadlineAt = null, voiceTurn = false } = options
+  const chatMode = normalizeChatMode(options.chatMode)
+  const permissionMode = normalizePermissionMode(options.permissionMode)
   let personalMode = options.personalMode ?? false
   const chatModel = getModel(options.modelId)
   const apiModel = chatModel.provider === 'anthropic' ? chatModel.apiModel : AGENT_MODEL
@@ -1006,6 +1029,7 @@ export async function* runAgentTurn(
   // the middle of a turn must stop covering the calls that follow it.
   let liveGrant = options.elevationGrant ?? null
   const directBrowserTask = directBrowserLane !== null
+  const explicitChromeModality = !directBrowserTask && hasExplicitChromeModality(browserOwnerText)
   let directBrowserSteeringRevoked = false
   const turnAuthorization = deriveOwnerTurnAuthorization(browserOwnerText)
   // Harness round 2 — refresh the owner's kv-configured hook rules (block/notify)
@@ -1274,7 +1298,43 @@ export async function* runAgentTurn(
     selectToolsAndGroupsForTurnAsync(browserOwnerText, { personalMode, businessId }),
     personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
   ])
-  let selectedTools = filterToolsForOwnerIntent(browserOwnerText, toolSelection.tools)
+  const activeSkills = await activeSkillsPromise
+  const intentGateOn = process.env.AGENT_OWNER_INTENT_GATE !== 'false'
+  let selectedTools = intentGateOn
+    ? filterToolsForOwnerIntent(browserOwnerText, toolSelection.tools)
+    : [...toolSelection.tools]
+  if (activeSkills?.manifest) {
+    selectedTools = filterToolsForSkill(selectedTools, activeSkills.manifest).tools
+    const missing = (activeSkills.manifest.requiredCapabilities ?? []).filter(
+      (name) => !selectedTools.some((tool) => tool.name === name),
+    )
+    if (missing.length > 0) {
+      const required = await resolveToolsByName(missing)
+      selectedTools = [
+        ...selectedTools,
+        ...required.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          input_schema: tool.input_schema,
+        })),
+      ]
+    }
+  }
+  if (explicitChromeModality) {
+    const present = new Set(selectedTools.map((tool) => tool.name))
+    const missing = EXPLICIT_CHROME_MODALITY_TOOLS.filter((name) => !present.has(name))
+    if (missing.length > 0) {
+      const chromeTools = await resolveToolsByName([...missing])
+      selectedTools = [
+        ...selectedTools,
+        ...chromeTools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          input_schema: tool.input_schema,
+        })),
+      ]
+    }
+  }
   if (directBrowserTask) {
     selectedTools = selectedTools.filter((tool) => directBrowserTurnAllowedTools.has(tool.name))
     const present = new Set(selectedTools.map((tool) => tool.name))
@@ -1298,6 +1358,16 @@ export async function* runAgentTurn(
       }
     }
     selectedTools = selectedTools.filter((tool) => directBrowserTurnAllowedTools.has(tool.name))
+  }
+  const turnAllowlist = directBrowserTask
+    ? new Set(directBrowserTurnAllowedTools)
+    : composeTurnToolAllowlist(
+        activeSkills?.manifest ? skillAllowlist(activeSkills.manifest) : null,
+        explicitChromeModality,
+      )
+  const turnDenylist = new Set<string>()
+  if (directBrowserTask) {
+    for (const name of DIRECT_BROWSER_SHELL_DENYLIST) turnDenylist.add(name)
   }
   const activeGroups = toolSelection.groups
 
@@ -1403,7 +1473,7 @@ export async function* runAgentTurn(
 
   // Skill Engine V2 (gated OFF by default) — same on-demand skill selection as the
   // normalized path in run-owner-turn; '' when disabled/personal/no match (fail-open).
-  const activeSkillsBlock = (await activeSkillsPromise)?.block ?? ''
+  const activeSkillsBlock = activeSkills?.block ?? ''
 
   // Parity with run-owner-turn: name the dead capabilities before the first step.
   const deadCapabilityBlock = capabilityPreflightBlock()
@@ -1492,10 +1562,19 @@ export async function* runAgentTurn(
   // Owner Control Center: drop OFF-capability tools and tell the agent (in the
   // prompt) to ask the owner to enable instead of improvising. Fail-open.
   const agentControls = await getAgentControls()
-  const gatedTools = filterToolDefsByControls(
-    filterToolsForOwnerTurn(selectedTools, turnAuthorization),
+  const gatedTools = filterTurnToolDefinitions(selectedTools, {
+    ownerText: browserOwnerText,
+    turnAllowlist,
+    turnDenylist,
+    turnAuthorization: intentGateOn
+      ? turnAuthorization
+      : { allowMutations: true, reason: 'explicit_action' },
     agentControls,
-  )
+    chatMode,
+    permissionMode,
+    actorRoles: ['owner'],
+    ownerIntentGateEnabled: intentGateOn,
+  }).tools
   const controlsNote = controlsPromptNote(agentControls)
   if (controlsNote) systemBlocks.push({ type: 'text', text: controlsNote })
 
@@ -1529,6 +1608,7 @@ export async function* runAgentTurn(
   // Harness Gap 5 — schemas dynamically loaded by find_tool for the REST of this
   // turn. Appended after the base tool list (post cached-prefix), cache-safe.
   const dynamicTools: Anthropic.Messages.Tool[] = []
+  const preparedFindToolCandidates = new Map<string, Anthropic.Messages.Tool[]>()
   let headToolRounds = 0
   let budgetNudgeSent = false
   let deadlineNudgeSent = false
@@ -2191,6 +2271,51 @@ export async function* runAgentTurn(
             ? { ...liveGrant, families: remaining }
             : null
         }
+
+        // Filter discovery at the handler boundary. Raw matches must never
+        // reach toolRecord, timeline, tool_end preview or the model transcript.
+        if (tb.name === FIND_TOOL_NAME && result.success) {
+          const raw = result as FindToolResultLike
+          const query = String(tb.input.query ?? '').trim()
+          const already = new Set<string>([
+            ...toolsForModel.map((tool) => ('name' in tool ? tool.name : '')),
+            ...dynamicTools.map((tool) => tool.name),
+          ])
+          const prepared = await prepareFindToolResultForTurn({
+            result: raw,
+            query,
+            already,
+            max: MAX_DYNAMIC_TOOLS_PER_TURN - dynamicTools.length,
+            policy: {
+              ownerText: currentOwnerInstructions,
+              turnAllowlist,
+              turnDenylist,
+              turnAuthorization: intentGateOn
+                ? turnAuthorization
+                : { allowMutations: true, reason: 'explicit_action' },
+              agentControls,
+              chatMode,
+              permissionMode,
+              actorRoles: ['owner'],
+              ownerIntentGateEnabled: intentGateOn,
+            },
+          })
+          const { refused } = prepared
+          if (refused.length > 0) {
+            console.info('[find-tool] native refused before visibility', {
+              conversationId,
+              count: refused.length,
+            })
+          }
+          preparedFindToolCandidates.set(
+            tb.id,
+            prepared.tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description ?? '',
+              input_schema: tool.input_schema as Anthropic.Messages.Tool['input_schema'],
+            })),
+          )
+        }
         // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).
         runPostToolHooks({
           toolName: tb.name,
@@ -2476,15 +2601,6 @@ export async function* runAgentTurn(
         const exec = resultMap.get(tb.id)!
         const { result, durationMs } = exec
 
-        // Native Anthropic has no shipped-tool membership gate. Remove every
-        // direct-browser fallback from find_tool's REAL result before timeline,
-        // ledger, preview, or model transcript serialization can expose it.
-        if (directBrowserTask && tb.name === FIND_TOOL_NAME && result.success) {
-          sanitizeDirectBrowserFallbackMatches(
-            result.data as { matches?: Array<{ name?: unknown }>; note?: unknown } | undefined,
-          )
-        }
-
         const isDelegate = tb.name === 'delegate_to_specialist'
 
         if (!result.success) {
@@ -2517,12 +2633,10 @@ export async function* runAgentTurn(
         // A tool filed a document as a conversation artifact (save_artifact, SEO
         // report…) → surface it as a FILE CARD in the reply flow, Claude-style.
         const cardRaw = result.success ? (result.data as Record<string, unknown> | undefined)?.artifactCard : undefined
-        if (cardRaw && typeof cardRaw === 'object') {
-          const card = cardRaw as { id?: unknown; title?: unknown; type?: unknown }
-          if (typeof card.id === 'string' && typeof card.title === 'string') {
-            timeline.push({ t: 'file', id: card.id, name: card.title, kind: typeof card.type === 'string' ? card.type : 'markdown' })
-            yield { type: 'artifact_saved', id: card.id, title: card.title, artifactType: typeof card.type === 'string' ? card.type : 'markdown' }
-          }
+        const card = liveArtifactCard(cardRaw)
+        if (card) {
+          timeline.push({ t: 'file', id: card.id, name: card.title, kind: card.type })
+          yield { type: 'artifact_saved', id: card.id, title: card.title, artifactType: card.type }
         }
 
         if (isDelegate) {
@@ -2691,28 +2805,12 @@ export async function* runAgentTurn(
 
       messages = [...messages, { role: 'user', content: toolResultContent }]
 
-      // Harness Gap 5 — after a find_tool round, expose the matched tools'
-      // schemas for the remaining rounds of THIS turn. Execution authority is
-      // unchanged: a loaded tool still passes owner-intent, controls, the AIOS
-      // door and its own approval contract when actually called.
+      // Load only the authoritative schemas vetted at the handler boundary.
       for (const tb of toolUseBlocks) {
         if (tb.name !== FIND_TOOL_NAME) continue
-        const found = resultMap.get(tb.id)?.result.data as { matches?: Array<{ name?: unknown }> } | undefined
-        const matchNames = (found?.matches ?? [])
-          .map((m) => String(m?.name ?? ''))
-          .filter((name) => Boolean(name) && !(directBrowserTask && !directBrowserTurnAllowedTools.has(name)))
-        if (matchNames.length === 0) continue
-        const already = new Set<string>([
-          ...toolsForModel.map((t) => ('name' in t ? t.name : '')),
-          ...dynamicTools.map((t) => t.name),
-        ])
-        for (const tool of await resolveToolsByName(matchNames.filter((n) => !already.has(n)))) {
+        for (const tool of preparedFindToolCandidates.get(tb.id) ?? []) {
           if (dynamicTools.length >= MAX_DYNAMIC_TOOLS_PER_TURN) break
-          dynamicTools.push({
-            name: tool.name,
-            description: tool.description,
-            input_schema: tool.input_schema,
-          })
+          if (!dynamicTools.some((loaded) => loaded.name === tool.name)) dynamicTools.push(tool)
         }
       }
 
@@ -2874,6 +2972,26 @@ export async function* runAgentTurn(
         joinedText = DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER
         timeline.push({ t: 'text', text: joinedText })
         yield { type: 'text_delta', delta: joinedText }
+      }
+    }
+    // Native and alternate heads share the same final completion boundary. A
+    // successful SEO poll while the crawl/delivery is still running cannot make
+    // an owner-visible "done" claim survive persistence.
+    if (activeSkills?.manifest?.done?.length) {
+      const gate = skillDoneGateForClaim({
+        manifest: activeSkills.manifest,
+        skill: activeSkills.pinned?.skill ?? activeSkills.manifest.name,
+        text: joinedText,
+        records: toolRecords.map((r) => ({
+          toolName: r.toolName,
+          status: r.status,
+          input: r.input,
+          output: r.output,
+        })),
+      })
+      if (gate) {
+        joinedText += gate
+        yield { type: 'text_delta', delta: gate }
       }
     }
     // The legacy native-Anthropic loop streams model prose before the final

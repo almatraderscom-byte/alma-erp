@@ -1,0 +1,10 @@
+{
+  "conversationId": "9598d574-4587-4449-abc2-7c6ba47407f2",
+  "pendingActionId": "2617c17a-079f-4f6b-b49e-060e23f4380a",
+  "legacyArtifactId": "69f9c18b-7c8f-4cf9-8c16-c41e6d9ba037",
+  "legacyMessageId": "d588c6c5-acf0-480b-8f5b-42d40d75dcce",
+  "host": "example.test",
+  "title": "SEO অডিট ড্যাশবোর্ড — example.test",
+  "summaryBn": "Boss, **example.test**-এর পূর্ণ SEO অডিট শেষ।\n\n**স্কোর: 61/100** · দেখা হয়েছে 4/7 পেজ (sitemap অনুযায়ী)",
+  "storagePrefix": "seo-audits/2617c17a-079f-4f6b-b49e-060e23f4380a"
+}

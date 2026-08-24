@@ -8,7 +8,7 @@ import { type PendingAction } from './AgentConfirmCard'
 import AgentConfirmCardGroup from './AgentConfirmCardGroup'
 import AgentAskCard, { type AskCard } from './AgentAskCard'
 import { JamaatQuickReply } from './JamaatQuickReply'
-import AgentOpenTasksChip from './AgentOpenTasksChip'
+import AgentOpenTasksChip, { type OpenTaskContinuation } from './AgentOpenTasksChip'
 import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import AgentEmptyState from './AgentEmptyState'
@@ -243,6 +243,8 @@ interface AgentThreadProps {
   onApprovePending?: (pending: boolean) => void
   /** `askCardId` marks the message as the ANSWER to that card (web parity with native). */
   onQuickSend?: (text: string, askCardId?: string) => void
+  /** Attach a server-bound open-task turn without synthesizing owner prose. */
+  onContinueOpenTask?: (continuation: OpenTaskContinuation) => boolean | Promise<boolean>
   /** Owner answered a model-upgrade approval card → rerun the paused turn. */
   onModelSwitchResolve?: (opts: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string }) => void
   onStartVoiceSession?: () => void
@@ -1416,7 +1418,7 @@ function LiveWorkTimer({ startedAt }: { startedAt: string }) {
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onApprovePending, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, streamModelName, streamModelVia, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen, onRetryDelivery }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onApprovePending, onQuickSend, onContinueOpenTask, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, streamModelName, streamModelVia, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen, onRetryDelivery }: AgentThreadProps) {
 
   /**
    * The message whose indicator should animate. It used to be "the last message
@@ -1896,13 +1898,13 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     )}
 
                   {/* "বাকি কাজ" — open-loop tracker at the end of the last reply.
-                      Surfaces unfinished chat tasks + pending approvals; Continue
-                      resumes that exact work in this same chat from its note. */}
-                  {!isOfficeShift && !msg.streaming && onQuickSend &&
+                      Continue attaches the exact server-bound turn; no resume
+                      directive is ever rendered as an owner message. */}
+                  {!isOfficeShift && !msg.streaming && onContinueOpenTask &&
                     msg.id === messages[messages.length - 1]?.id && (
                       <AgentOpenTasksChip
                         conversationId={conversationId}
-                        onContinue={(note) => onQuickSend(note)}
+                        onContinue={onContinueOpenTask}
                       />
                     )}
 

@@ -2,6 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { notifyOwner } from '@/agent/lib/notify-owner'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
+import { continuationDomainForPendingActionType } from '@/agent/lib/continuation-binding'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -241,19 +242,48 @@ async function runDelivery(row: any): Promise<void> {
   }
   if (row.channel === 'continuation') {
     if (!call.conversationId) return
-    let progressTurnId: string | null = null
-    if (call.pendingActionId) {
-      const action = await db.agentPendingAction.findUnique({ where: { id: call.pendingActionId } })
-      const payload = action?.payload && typeof action.payload === 'object' ? action.payload as Record<string, unknown> : {}
-      progressTurnId = typeof payload.progressTurnId === 'string' ? payload.progressTurnId : null
+    if (!call.pendingActionId) {
+      // The terminal report is already an exact, idempotent conversation row.
+      // Without a pending-action source there is no authority for a new turn.
+      console.warn('[voice-call-delivery] continuation skipped: source action missing')
+      return
     }
-    await enqueueAgentContinuation({
+    let progressTurnId: string | null = null
+    const action = await db.agentPendingAction.findUnique({ where: { id: call.pendingActionId } })
+    const actionStatus = String(action?.status ?? '').trim()
+    const actionType = String(action?.type ?? '').trim()
+    if (!action || !actionStatus || !actionType) {
+      console.warn('[voice-call-delivery] continuation skipped: source action unavailable')
+      return
+    }
+    const payload = action.payload && typeof action.payload === 'object'
+      ? action.payload as Record<string, unknown>
+      : {}
+    progressTurnId = typeof payload.progressTurnId === 'string' ? payload.progressTurnId : null
+    const enqueued = await enqueueAgentContinuation({
       conversationId: call.conversationId,
       turnId: progressTurnId,
-      message:
-        `[সিস্টেম নোট — ফোন কলের terminal report database-এ সংরক্ষিত] ${formatted.chat} ` +
-        'এখন নতুন conversation history re-read করে Boss-কে call outcome বলো। Approval-কে completion হিসেবে ধরবে না; এই report-ই source of truth।',
+      binding: {
+        v: 1,
+        origin: 'voice_call',
+        source: { kind: 'pending_action', id: String(action.id) },
+        conversationId: call.conversationId,
+        domain: continuationDomainForPendingActionType(actionType),
+        event: 'call_terminal',
+        ...(action.workflowRunId ? { workflowRunId: String(action.workflowRunId) } : {}),
+        directive: { kind: 'voice_call_terminal', version: 1 },
+        expected: { sourceStatus: [actionStatus], sourceType: actionType },
+      },
     })
+    if (enqueued.outcome === 'disabled') {
+      // The exact terminal report is already persisted; feature rollback
+      // disables only the unattended follow-up and never revives prose routing.
+      console.warn('[voice-call-delivery] continuation disabled by source-bound policy')
+      return
+    }
+    if (!['queued', 'completed', 'observe', 'deferred'].includes(enqueued.outcome)) {
+      throw new Error(`voice_call_continuation_${enqueued.status || enqueued.outcome}`)
+    }
     return
   }
   throw new Error(`unknown_delivery_channel:${row.channel}`)

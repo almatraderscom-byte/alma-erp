@@ -27,8 +27,9 @@ Boss-কে দেখানোর জন্য এই তালিকাটা �
 3. **যাচাই** — সবচেয়ে বড় দাবিটা `fetch_website_page` দিয়ে নিজে দেখে মিলিয়ে নাও
    (নিচের ফাঁদ দেখো — অডিট ভুল হতে পারে)।
 4. **সাজাও** — critical → high → medium → low, প্রতিটার সাথে **কোন পেজ**।
-5. **রিপোর্ট** — `save_artifact`। স্কোর, severity ভাগ, প্রতি সমস্যার পেজ,
-   আর প্রাধান্য অনুযায়ী করণীয়ের তালিকা।
+5. **রিপোর্ট** — `check_website_seo_audit`-এর existing `artifactCard` দাও। সার্ভারের
+   durable outbox স্কোর, severity ভাগ, প্রতি সমস্যার পেজ আর করণীয়সহ dashboard
+   আগেই ফাইল করে; আবার `save_artifact` চালাবে না।
 
 চাইলে যোগ করো: `get_search_console_performance`, `get_indexing_status`,
 `get_ga4_report` — একই সময়সীমার।
@@ -56,5 +57,5 @@ Boss-কে দেখানোর জন্য এই তালিকাটা �
 
 ## শেষ কখন
 
-`check_website_seo_audit` সফল **এবং** রিপোর্ট artifact তৈরি — তবেই "শেষ"।
+`check_website_seo_audit` সফল **এবং** existing `artifactCard` পাওয়া — তবেই "শেষ"।
 এর আগে "হয়ে গেছে" বলা যাবে না।

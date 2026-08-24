@@ -30,6 +30,11 @@ export interface SkillToolRecord {
    * satisfied by a record that does not report its input.
    */
   input?: Record<string, unknown>
+  /**
+   * Code-owned result envelope. Named checks may inspect a deliberately stable
+   * contract here; manifests still cannot regex-match arbitrary provider output.
+   */
+  output?: unknown
 }
 
 /** Tools every skill keeps — discovery and honest escalation are never removed. */
@@ -148,6 +153,45 @@ export interface DoneMiss {
   name: string
 }
 
+export const SEO_ARTIFACT_DELIVERED_CHECK = 'seo_artifact_delivered'
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value != null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+/**
+ * A successful poll is not a delivered SEO report. This verifier consumes the
+ * explicit check-tool contract and cross-checks all three durable identities:
+ * action receipt, artifact card, and canonical background message.
+ */
+function hasDeliveredSeoArtifact(records: SkillToolRecord[]): boolean {
+  return records.some((record) => {
+    if (record.toolName !== 'check_website_seo_audit' || record.status !== 'success') return false
+    const output = objectRecord(record.output)
+    const data = objectRecord(output?.data) ?? output
+    if (!data || data.status !== 'executed') return false
+    const result = objectRecord(data.result)
+    const delivery = objectRecord(result?.__delivery)
+    const card = objectRecord(data.artifactCard)
+    if (!delivery || !card) return false
+    const artifactId = nonEmptyString(delivery.artifactId)
+    const messageId = nonEmptyString(delivery.messageId)
+    return delivery.state === 'delivered'
+      && delivery.via === 'artifact_outbox'
+      && artifactId !== null
+      && messageId !== null
+      && card.canonicalMessageDelivered === true
+      && nonEmptyString(card.id) === artifactId
+      && nonEmptyString(card.canonicalMessageId) === messageId
+  })
+}
+
 /** Does this record's input match the condition's regex? */
 function inputMatches(record: SkillToolRecord, pattern: string): boolean {
   if (!record.input) return false
@@ -176,6 +220,10 @@ export function skillDoneMisses(
   records: SkillToolRecord[],
   passedChecks: string[] = [],
 ): DoneMiss[] {
+  // The SEO delivery check is code-owned: a caller cannot assert it by name and
+  // bypass the linked action/artifact/message proof carried by the tool result.
+  const checks = new Set(passedChecks.filter((name) => name !== SEO_ARTIFACT_DELIVERED_CHECK))
+  if (hasDeliveredSeoArtifact(records)) checks.add(SEO_ARTIFACT_DELIVERED_CHECK)
   const misses: DoneMiss[] = []
   for (const cond of manifest.done ?? []) {
     if (cond.tool) {
@@ -187,7 +235,7 @@ export function skillDoneMisses(
       )
       if (!ok) misses.push({ kind: 'tool', name: cond.argMatch ? `${cond.tool} (${cond.argMatch})` : cond.tool })
     }
-    if (cond.check && !passedChecks.includes(cond.check)) {
+    if (cond.check && !checks.has(cond.check)) {
       misses.push({ kind: 'check', name: cond.check })
     }
   }
@@ -200,6 +248,24 @@ export function skillDoneMisses(
  */
 export function doneGateMessage(skill: string, misses: DoneMiss[]): string {
   if (misses.length === 0) return ''
-  const parts = misses.map((m) => (m.kind === 'tool' ? `${m.name} চালানো হয়নি` : m.name))
+  const parts = misses.map((m) => {
+    if (m.kind === 'tool') return `${m.name} চালানো হয়নি`
+    if (m.name === SEO_ARTIFACT_DELIVERED_CHECK) return 'রিপোর্টের durable artifact/card delivery সম্পূর্ণ হয়নি'
+    return m.name
+  })
   return `⚠️ \`${skill}\` skill-এর শর্ত এখনো পূরণ হয়নি — ${parts.join(', ')}। তাই "হয়ে গেছে" বলছি না।`
+}
+
+/** Shared native/alternate final boundary for completion claims. */
+export function skillDoneGateForClaim(input: {
+  manifest: Pick<SkillManifest, 'done'>
+  skill: string
+  text: string
+  records: SkillToolRecord[]
+  passedChecks?: string[]
+}): string {
+  if (!input.manifest.done?.length || !claimsCompletion(input.text)) return ''
+  const misses = skillDoneMisses(input.manifest, input.records, input.passedChecks)
+  const message = doneGateMessage(input.skill, misses)
+  return message ? `\n\n${message}` : ''
 }

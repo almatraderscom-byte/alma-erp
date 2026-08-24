@@ -2334,6 +2334,13 @@ model AgentTurn {
   conversationId        String    @map("conversation_id")
   /// Stable logical request id shared by direct + worker fallback paths.
   requestId             String?   @unique @map("request_id")
+  /// Immutable v1 authority for a server-owned continuation. The unique
+  /// requestId is its deterministic idempotency key; legacy/owner turns remain
+  /// null throughout the expand/rollback window.
+  continuationBinding   Json?     @map("continuation_binding")
+  /// One-way execution admission CAS for source-bound continuations. A claimed
+  /// generative turn is observed on replay, never blindly executed twice.
+  continuationExecutionClaimedAt DateTime? @map("continuation_execution_claimed_at")
   /// A structured continuation has exactly one predecessor; unique prevents
   /// double-click/reconnect races from starting the same continuation twice.
   continuationOfTurnId  String?   @unique @map("continuation_of_turn_id")
@@ -2425,6 +2432,12 @@ model AgentArtifact {
   conversation   AgentConversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   messageId      String?
   message        AgentMessage?          @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  /// Stable logical delivery identity for crash-safe server-created artifacts.
+  /// Nullable keeps every legacy/manual artifact compatible during rollout.
+  deliveryKey    String?                @unique @map("delivery_key")
+  /// Receipt for the exact body stored in `content` / `storagePath`.
+  contentSha256  String?                @map("content_sha256")
+  storagePath    String?                @map("storage_path")
   type           String?
   title          String?
   content        String?                @db.Text
@@ -2435,6 +2448,57 @@ model AgentArtifact {
   @@index([conversationId])
   @@index([messageId])
   @@map("agent_artifacts")
+}
+
+/// Durable delivery state for a background-job document. The source action and
+/// this row are created in one transaction; storage and chat delivery may then
+/// retry independently until the unique delivery key converges on one artifact
+/// and one linked message.
+model AgentArtifactDeliveryOutbox {
+  id              String                        @id @default(uuid())
+  deliveryKey     String                        @unique @map("delivery_key")
+  sourceKind      String                        @map("source_kind")
+  sourceId        String                        @map("source_id")
+  conversationId  String                        @map("conversation_id")
+  logicalName     String                        @map("logical_name")
+  version         Int                           @default(1)
+  /// pending | processing | retry | delivered | dead
+  status          String                        @default("pending")
+  spec            Json
+  storageReceipts Json?                         @map("storage_receipts")
+  artifactId      String?                       @map("artifact_id")
+  messageId       String?                       @map("message_id")
+  attempts        Int                           @default(0)
+  maxAttempts     Int                           @default(8) @map("max_attempts")
+  availableAt     DateTime                      @default(now()) @map("available_at")
+  leaseUntil      DateTime?                     @map("lease_until")
+  leaseOwner      String?                       @map("lease_owner")
+  lastError       String?                       @map("last_error") @db.Text
+  deliveredAt     DateTime?                     @map("delivered_at")
+  createdAt       DateTime                      @default(now()) @map("created_at")
+  updatedAt       DateTime                      @default(now()) @updatedAt @map("updated_at")
+  ledger          AgentArtifactDeliveryLedger[]
+
+  @@unique([sourceKind, sourceId, logicalName, version])
+  @@index([status, availableAt, leaseUntil])
+  @@index([sourceKind, sourceId])
+  @@map("agent_artifact_delivery_outbox")
+}
+
+/// Append-only, idempotent milestones for artifact delivery. A unique
+/// milestone records which crash boundary was durably crossed without growing
+/// duplicate rows on callback/sweeper replay.
+model AgentArtifactDeliveryLedger {
+  id        String                      @id @default(uuid())
+  outboxId  String                      @map("outbox_id")
+  outbox    AgentArtifactDeliveryOutbox @relation(fields: [outboxId], references: [id], onDelete: Cascade)
+  milestone String
+  payload   Json?
+  createdAt DateTime                    @default(now()) @map("created_at")
+
+  @@unique([outboxId, milestone])
+  @@index([outboxId, createdAt])
+  @@map("agent_artifact_delivery_ledger")
 }
 
 /// Snapshot of an artifact body BEFORE an in-place update overwrote it —

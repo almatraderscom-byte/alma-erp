@@ -64,6 +64,10 @@ import {
   makeImageTerminalCallback,
   readImageTerminalCallback,
 } from './image/terminal-callback.mjs'
+import {
+  deliverSeoJobResultReceipt,
+  processSeoAuditJob,
+} from './seo/job-result.mjs'
 
 const PREVIEW_E2E_APP_URL = String(process.env.WORKER_PREVIEW_E2E_APP_URL ?? '').trim().replace(/\/$/, '')
 const PREVIEW_E2E_PROJECT_ID = String(process.env.WORKER_PREVIEW_E2E_PROJECT_ID ?? '').trim()
@@ -186,12 +190,12 @@ const workbenchQueue = new Queue('workbench', {
   defaultJobOptions: { attempts: 1 },
 })
 
-// Client-SEO end-to-end audit (crawl + audit ANY public site). attempts:1 for
-// the same reason as workbench — a failed audit checkpoints, never silently
-// re-crawls someone's site.
+// Client-SEO end-to-end audit (crawl + audit ANY public site). The terminal
+// source fact is cached in BullMQ before callback delivery, so retries/restarts
+// replay only that receipt and never silently re-crawl someone's site.
 const seoAuditQueue = new Queue('seo-audit', {
   connection,
-  defaultJobOptions: { attempts: 1 },
+  defaultJobOptions: { attempts: 8, backoff: { type: 'exponential', delay: 15_000 } },
 })
 
 // Track enqueued action IDs to avoid duplicates in polling window
@@ -281,12 +285,14 @@ const csReplyQueue = new Queue('cs-reply', {
   defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 4000 } },
 })
 
-// Phase 35: durable specialist fan-out jobs (>30s). attempts:3 — the runner
+// Phase 35: durable specialist fan-out jobs (>30s). A source-bound brief may
+// already be running when a lost response is retried; the deterministic turn
+// is observed until its exact persisted assistant row is available.
 // checkpoints after every brief, so a retry RESUMES (completed-set skip),
 // never duplicates work.
 const agentGraphQueue = new Queue('agent-graph-run', {
   connection,
-  defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+  defaultJobOptions: { attempts: 8, backoff: { type: 'exponential', delay: 5000 } },
 })
 
 // Phase A: browser-agent tasks. The main worker only ENQUEUES here; the separate
@@ -1680,50 +1686,50 @@ workbenchWorker.on('failed', (job, err) => {
 const seoAuditWorker = new Worker(
   'seo-audit',
   async (job) => {
-    const { pendingActionId, payload } = job.data
-    try {
-      const { runSeoAudit } = await import('./seo/audit.mjs')
-      const result = await runSeoAudit(payload)
-      if (!result.ok) {
-        await callJobResult(pendingActionId, 'failed', undefined, result.error ?? 'seo_audit_failed')
-        console.warn(`[worker] seo-audit ${pendingActionId} failed: ${result.error}`)
-        return
-      }
-      // Publish the report (markdown) + full findings (json) as artifacts.
-      const base = `seo-audits/${pendingActionId}`
-      const artifacts = []
-      try {
-        await supabase.storage
+    const pendingActionId = job.data.pendingActionId
+    const outcome = await processSeoAuditJob(job, {
+      runSeoAudit: async (payload) => {
+        const { runSeoAudit } = await import('./seo/audit.mjs')
+        return runSeoAudit(payload)
+      },
+      uploadArtifact: async ({ path, body, contentType }) => {
+        const { error } = await supabase.storage
           .from('agent-files')
-          .upload(`${base}/report.md`, Buffer.from(result.reportMarkdown, 'utf8'), { upsert: true, contentType: 'text/markdown' })
-        artifacts.push(`${base}/report.md`)
-        await supabase.storage
-          .from('agent-files')
-          .upload(`${base}/audit.json`, Buffer.from(JSON.stringify(result.auditJson), 'utf8'), { upsert: true, contentType: 'application/json' })
-        artifacts.push(`${base}/audit.json`)
-      } catch (upErr) {
-        // Report built but upload failed → NOT success (never claim done without the proof).
-        await callJobResult(pendingActionId, 'failed', { score: result.score }, `artifact upload failed: ${upErr.message}`)
-        return
-      }
-      await callJobResult(pendingActionId, 'success', {
-        score: result.score,
-        counts: result.counts,
-        pagesCrawled: result.pagesCrawled,
-        avgTtfbMs: result.avgTtfbMs,
-        artifacts,
-        reportPreview: result.reportMarkdown.slice(0, 1500),
-      })
-      console.log(`[worker] seo-audit ${pendingActionId} done — score ${result.score}, ${result.pagesCrawled} pages`)
-    } catch (err) {
-      captureWorkerError(err, 'worker.seo_audit.failed', { jobId: job?.id })
-      await callJobResult(pendingActionId, 'failed', undefined, err.message ?? 'seo_audit_crashed')
+          .upload(path, body, { upsert: true, contentType })
+        if (error) throw error
+      },
+      deliverResult: (receipt) => deliverSeoJobResultReceipt(receipt, {
+        appUrl: getAppUrl(),
+        token: getInternalToken(),
+        protectionHeaders: getAppProtectionHeaders(),
+      }),
+      onSourceError: (_error, stage) => captureWorkerError(
+        new Error(`seo_audit_${stage}_failed`),
+        'worker.seo_audit.source_failed',
+        { jobId: job?.id, stage },
+      ),
+    })
+    if (outcome.receipt.status === 'success') {
+      const suffix = outcome.replayed ? 'callback replay acknowledged' : 'done'
+      console.log(`[worker] seo-audit ${pendingActionId} ${suffix}`)
+    } else {
+      console.warn(`[worker] seo-audit ${pendingActionId} failure receipt acknowledged`)
     }
   },
   { connection, concurrency: 1, lockDuration: 10 * 60 * 1000 },
 )
+seoAuditWorker.on('completed', (job) => {
+  if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
+})
 seoAuditWorker.on('failed', (job, err) => {
-  console.error(`[worker] seo-audit job ${job?.id} failed:`, err?.message)
+  // Delivery errors use fixed codes; never print response bodies, headers, or
+  // credential-bearing request details. Keep the source receipt on the job.
+  console.error(`[worker] seo-audit job ${job?.id} failed: ${err?.name ?? 'Error'}`)
+  const attempts = Math.max(1, Number(job?.opts?.attempts) || 1)
+  const terminal = err?.name === 'UnrecoverableError' || Number(job?.attemptsMade) >= attempts
+  if (!terminal) return
+  if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
+  captureWorkerError(err, 'worker.seo_audit.delivery_failed', { jobId: job?.id })
 })
 
 // Startup preflight: create WORKBENCH_ROOT + survey allowlisted binaries (the
@@ -1762,7 +1768,10 @@ const workbenchJanitorInterval = setInterval(sweepWorkbenchWorkspaces, 6 * 60 * 
 // stays modelless and the app keeps every guard.
 const agentGraphWorker = new Worker('agent-graph-run', async (job) => {
   const { pendingActionId, payload } = job.data
-  const { createAgentGraphRunner } = await import('./agent-graph-run.mjs')
+  const {
+    createAgentGraphRunner,
+    runSourceBoundSpecialistBrief,
+  } = await import('./agent-graph-run.mjs')
 
   const readRow = async (cols) => {
     const { data } = await supabase
@@ -1779,25 +1788,12 @@ const agentGraphWorker = new Worker('agent-graph-run', async (job) => {
   }
 
   const runner = createAgentGraphRunner({
-    runBrief: async (brief) => {
-      const res = await fetch(`${getAppUrl()}/api/assistant/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
-        body: JSON.stringify({
-          conversationId: payload?.conversationId ?? brief.conversationId ?? null,
-          message:
-            `[INTERNAL SPECIALIST BRIEF — role: ${brief.role}]\n` +
-            `${brief.task}\n` +
-            `শুধু তথ্যভিত্তিক ফলাফল দাও (findings/evidence/অনিশ্চয়তা/পরের ধাপের প্রস্তাব) — মালিককে সরাসরি সম্বোধন নয়।`,
-          internalControl: true,
-        }),
-        signal: AbortSignal.timeout(5 * 60_000),
-      })
-      if (!res.ok) return { success: false, summary: '', error: `chat_http_${res.status}` }
-      const data = await res.json().catch(() => ({}))
-      const summary = typeof data?.reply === 'string' ? data.reply : (data?.text ?? '')
-      return { success: Boolean(summary), summary, error: summary ? undefined : 'empty_reply' }
-    },
+    runBrief: async (_brief, briefIndex) => runSourceBoundSpecialistBrief({
+      pendingActionId,
+      briefIndex,
+      appUrl: getAppUrl(),
+      token: getInternalToken(),
+    }),
     saveProgress: async (progress) => mergeResult({ graphRunProgress: progress }),
     loadProgress: async () => {
       const row = await readRow('result')
@@ -1824,7 +1820,21 @@ const agentGraphWorker = new Worker('agent-graph-run', async (job) => {
   }
 }, { connection, concurrency: 1, lockDuration: 30 * 60 * 1000 })
 agentGraphWorker.on('failed', (job, err) => {
-  console.error(`[agent-graph-run] job ${job?.id} failed:`, err?.message)
+  // Do not print exception text: fetch/DB errors can carry internal request
+  // metadata. Fixed terminal code is enough for the durable owner report.
+  console.error(`[agent-graph-run] job ${job?.id} failed: ${err?.name ?? 'Error'}`)
+  const attempts = Math.max(1, Number(job?.opts?.attempts) || 1)
+  if (Number(job?.attemptsMade) < attempts || !job?.data?.pendingActionId) return
+  void callJobResult(
+    job.data.pendingActionId,
+    'failed',
+    undefined,
+    'specialist_source_bound_delivery_exhausted',
+  ).catch((callbackError) => captureWorkerError(
+    callbackError,
+    'worker.agent_graph.terminal_callback_failed',
+    { jobId: job?.id },
+  ))
 })
 
 const longTaskWorker = new Worker('long-agent-task', async (job) => {

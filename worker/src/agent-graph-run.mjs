@@ -17,9 +17,86 @@
  * runBrief/persistence; the __tests__ file drives crash/retry/cancel/deadline.
  */
 
+class RetryableSpecialistBriefError extends Error {
+  constructor(code) {
+    super(code)
+    this.name = 'RetryableSpecialistBriefError'
+    this.retryable = true
+  }
+}
+
+/**
+ * Invoke one specialist brief by durable identity only. The app owns binding,
+ * exact-once claim and server-side rendering from AgentPendingAction.payload.
+ * A duplicate/lost-response observer may settle only from the exact linked
+ * assistant row; running or row-lag observations remain retryable.
+ */
+export async function runSourceBoundSpecialistBrief({
+  pendingActionId,
+  briefIndex,
+  appUrl,
+  token,
+  fetchImpl = fetch,
+}) {
+  let res
+  try {
+    res = await fetchImpl(`${String(appUrl).replace(/\/$/, '')}/api/assistant/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        internalControl: true,
+        continuationSource: {
+          kind: 'specialist_brief',
+          pendingActionId,
+          briefIndex,
+        },
+      }),
+      signal: AbortSignal.timeout(5 * 60_000),
+    })
+  } catch {
+    // Never include network exception text: request metadata may contain an
+    // internal URL or credential-bearing context.
+    throw new RetryableSpecialistBriefError('specialist_continuation_transport')
+  }
+
+  const data = await res.json().catch(() => ({}))
+  if (res.status === 202) {
+    const text = typeof data?.text === 'string' ? data.text.trim() : ''
+    if (data?.observe === true && data?.status === 'done' && text) {
+      return { success: true, summary: text }
+    }
+    if (data?.status === 'running') {
+      throw new RetryableSpecialistBriefError('specialist_continuation_running')
+    }
+    if (data?.status === 'done' && !text) {
+      throw new RetryableSpecialistBriefError('specialist_terminal_text_unavailable')
+    }
+    return {
+      success: false,
+      summary: '',
+      error: `specialist_continuation_${String(data?.status ?? 'observe_invalid')}`,
+    }
+  }
+  if (!res.ok) {
+    if (res.status === 429 || res.status >= 500) {
+      throw new RetryableSpecialistBriefError(`specialist_chat_http_${res.status}`)
+    }
+    return { success: false, summary: '', error: `specialist_chat_http_${res.status}` }
+  }
+
+  const summary = typeof data?.reply === 'string'
+    ? data.reply.trim()
+    : typeof data?.text === 'string' ? data.text.trim() : ''
+  return {
+    success: Boolean(summary),
+    summary,
+    ...(summary ? {} : { error: 'empty_reply' }),
+  }
+}
+
 /**
  * @param {object} deps
- * @param {(brief: object) => Promise<{success: boolean, summary: string, error?: string}>} deps.runBrief
+ * @param {(brief: object, index: number) => Promise<{success: boolean, summary: string, error?: string}>} deps.runBrief
  * @param {(progress: object) => Promise<void>} deps.saveProgress
  * @param {() => Promise<object|null>} deps.loadProgress
  * @param {() => Promise<void>} deps.heartbeat
@@ -58,9 +135,13 @@ export function createAgentGraphRunner(deps) {
       await deps.heartbeat()
       let finding
       try {
-        const r = await deps.runBrief(briefs[i])
+        const r = await deps.runBrief(briefs[i], i)
         finding = { index: i, role: briefs[i]?.role ?? 'unknown', success: r.success !== false, summary: r.summary ?? '', error: r.error ?? null }
       } catch (err) {
+        // Transport loss / a still-running exact duplicate is not a terminal
+        // finding. Abort this BullMQ attempt without checkpointing the brief;
+        // the next attempt observes the same deterministic continuation.
+        if (err?.retryable === true) throw err
         // A failed brief is VISIBLE and final for this run; siblings continue.
         finding = { index: i, role: briefs[i]?.role ?? 'unknown', success: false, summary: '', error: err?.message ?? String(err) }
       }

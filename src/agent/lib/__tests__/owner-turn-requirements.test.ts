@@ -16,6 +16,14 @@ describe('owner turn requirement contract', () => {
     expect(r.targets).toEqual(['https://gulshanspaone.com', 'https://queenspabd.com'])
   })
 
+  it('recognises the exact incident Banglish as an explicit live-Chrome requirement', () => {
+    const r = deriveOwnerTurnRequirements(
+      'Amr chrome e dhuke amr website er seo shob gulo page er deeply check koro. Amk report daw',
+    )
+    expect(r.liveBrowser).toBe(true)
+    expect(r.deepWork).toBe(true)
+  })
+
   it('does not turn an ordinary office question into work requirements', () => {
     expect(deriveOwnerTurnRequirements('Ajker office kemon jacche?')).toEqual({
       liveBrowser: false, clientSeo: false, reportArtifact: false, remember: false, targets: [],
