@@ -13,6 +13,11 @@ const prismaMock = vi.hoisted(() => ({
   agentConversation: {
     update: vi.fn(async () => ({})),
   },
+  agentKvSetting: {
+    findUnique: vi.fn(async () => null),
+    upsert: vi.fn(async () => ({})),
+    deleteMany: vi.fn(async () => ({ count: 0 })),
+  },
 }))
 
 vi.mock('@/lib/prisma', () => ({ prisma: prismaMock }))
@@ -64,6 +69,11 @@ describe('runOwnerTurn source-bound continuation routing', () => {
       data: expect.objectContaining({
         usage: expect.objectContaining({ model: 'server-continuation-binding-guard' }),
       }),
+    }))
+    // HOP BRAKE (runaway 2026-08-24): the guard-blocked hop durably HALTS the
+    // self-continue chain, so no successor hop can ever be scheduled off it.
+    expect(prismaMock.agentKvSetting.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { key: 'self_continue_stop:conv-1' },
     }))
   })
 
