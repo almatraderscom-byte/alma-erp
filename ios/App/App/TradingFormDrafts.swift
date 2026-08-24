@@ -57,11 +57,28 @@ enum TradingFormDrafts {
                 && a.bkashProfit == b.bkashProfit && a.bkashLoss == b.bkashLoss
         }
 
-        /// Nothing typed yet — do not litter storage, and do not offer to restore
-        /// an empty form.
-        var isEmpty: Bool {
-            [usdtAmount, bdtRate, feeUsdt, notes, bkashOrders, bkashProfit, bkashLoss]
+        /// What the sheet would have shown on its own, so an untouched form is
+        /// still "empty" and does not litter storage.
+        struct Defaults {
+            var accountId = ""
+            var mode = "BANK"
+            var tradeType = "BUY"
+            var bkashDate = ""
+        }
+
+        /// Nothing chosen and nothing typed. The SELECTIONS count too: picking an
+        /// account, flipping to BKASH or SELL, or setting a backfill date is work
+        /// the user did, and the web form keeps it. Ignoring them meant closing
+        /// the sheet before typing a number threw those choices away.
+        func isEmpty(defaults: Defaults) -> Bool {
+            let typedNothing = [usdtAmount, bdtRate, feeUsdt, notes,
+                                bkashOrders, bkashProfit, bkashLoss]
                 .allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
+            let choseNothing = (accountId.isEmpty || accountId == defaults.accountId)
+                && mode == defaults.mode
+                && tradeType == defaults.tradeType
+                && (bkashDate.isEmpty || bkashDate == defaults.bkashDate)
+            return typedNothing && choseNothing
         }
     }
 

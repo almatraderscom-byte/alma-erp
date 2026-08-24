@@ -1993,6 +1993,15 @@ struct TradingHomeTradeSheet: View {
     private var account: TradingHomeAccount? { vm.accounts.first(where: { $0.id == accountId }) }
     private func num(_ s: String) -> Double { Double(s.replacingOccurrences(of: ",", with: "")) ?? 0 }
 
+    /// What this sheet would show untouched — the baseline "empty" is measured
+    /// against, so a deliberate choice is never mistaken for a pristine form.
+    private var draftDefaults: TradingFormDrafts.Trade.Defaults {
+        .init(accountId: vm.accounts.first?.id ?? "",
+              mode: initialMode,
+              tradeType: "BUY",
+              bkashDate: TradingHomeDateHelper.today())
+    }
+
     /// Everything worth surviving the sheet closing — see TradingFormDrafts.
     private var draftSnapshot: TradingFormDrafts.Trade {
         .init(accountId: accountId, mode: mode, tradeType: tradeType,
@@ -2111,7 +2120,8 @@ struct TradingHomeTradeSheet: View {
             // Web TradeEntryModal restores its draft on open. Only when the caller
             // did not preselect an account: an alert CTA naming one account must
             // not be hijacked by a draft for another.
-            if preselect == nil, let d = TradingFormDrafts.loadTrade(), !d.isEmpty {
+            if preselect == nil, let d = TradingFormDrafts.loadTrade(),
+               !d.isEmpty(defaults: draftDefaults) {
                 if !d.accountId.isEmpty, vm.accounts.contains(where: { $0.id == d.accountId }) {
                     accountId = d.accountId
                 }
@@ -2133,8 +2143,11 @@ struct TradingHomeTradeSheet: View {
             // empty fields — merely opening and dismissing it would otherwise
             // wipe amounts the user typed on the general sheet.
             guard preselect == nil else { return }
-            if snapshot.isEmpty { TradingFormDrafts.clear(TradingFormDrafts.tradeKey) }
-            else { TradingFormDrafts.save(TradingFormDrafts.tradeKey, snapshot) }
+            if snapshot.isEmpty(defaults: draftDefaults) {
+                TradingFormDrafts.clear(TradingFormDrafts.tradeKey)
+            } else {
+                TradingFormDrafts.save(TradingFormDrafts.tradeKey, snapshot)
+            }
         }
         .confirmationDialog(
             mode == "BKASH"

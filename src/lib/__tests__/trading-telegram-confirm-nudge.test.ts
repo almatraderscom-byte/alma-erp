@@ -177,7 +177,10 @@ describe('sendPendingConfirmNudges', () => {
   })
 
   it('reserves on a deterministic key so a losing run does not send', async () => {
-    auditCreate.mockRejectedValue(new Error('duplicate key'))
+    const { Prisma } = await import('@prisma/client')
+    auditCreate.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: 'x' }),
+    )
 
     const result = await sendPendingConfirmNudges('FINAL')
 
@@ -185,6 +188,19 @@ describe('sendPendingConfirmNudges', () => {
     // warning, so this one must stay quiet.
     expect(sendTelegramMessage).not.toHaveBeenCalled()
     expect(result).toMatchObject({ sent: 0, skipped: 1 })
+  })
+
+  it('retries a database blip on the reservation instead of dropping the warning', async () => {
+    auditCreate
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockResolvedValueOnce({ id: 'claim-1' })
+
+    const result = await sendPendingConfirmNudges('FINAL')
+
+    // Treating every insert failure as "someone else owns this" lost the day's
+    // warning on a transient error — there is only one eligible hour.
+    expect(result).toMatchObject({ sent: 1, skipped: 0 })
+    expect(sendTelegramMessage).toHaveBeenCalledTimes(1)
   })
 
   it('keys the reservation by urgency, chat, staffer and DAY', async () => {

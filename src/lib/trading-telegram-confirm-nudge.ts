@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { TRADING_BUSINESS_ID } from '@/lib/trading'
 import {
@@ -205,6 +206,47 @@ function reservationId(urgency: ConfirmNudgeUrgency, group: PendingGroup): strin
   return `nudge:${urgency}:${group.telegramChatId}:${group.telegramUserId}:${dayStamp}`
 }
 
+/** Postgres unique / primary-key violation, as Prisma reports it. */
+function isDuplicateKey(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002'
+}
+
+/**
+ * Take the reservation, telling a lost race apart from a database blip.
+ *
+ * Treating every insert failure as "someone else owns this" threw away the
+ * warning on a transient error — and with one eligible cron hour, that staffer
+ * heard nothing all day. A duplicate key is a real loss and returns immediately;
+ * anything else is retried.
+ */
+async function reserveNudge(
+  claimId: string,
+  group: PendingGroup,
+  urgency: ConfirmNudgeUrgency,
+  detail: string,
+): Promise<boolean> {
+  const data = {
+    id: claimId,
+    businessId: TRADING_BUSINESS_ID,
+    eventType: NUDGE_EVENT,
+    telegramUserId: group.telegramUserId,
+    telegramUsername: group.telegramUsername,
+    telegramChatId: group.telegramChatId,
+    detail: `${urgency}; ${PENDING_MARK}; ${detail}`,
+  }
+  const backoffMs = [0, 500, 2_000]
+  for (let attempt = 0; attempt < backoffMs.length; attempt += 1) {
+    if (backoffMs[attempt]) await new Promise(r => setTimeout(r, backoffMs[attempt]))
+    try {
+      await prisma.tradingTelegramAuditLog.create({ data, select: { id: true } })
+      return true
+    } catch (error) {
+      if (isDuplicateKey(error)) return false      // another run owns this warning
+    }
+  }
+  return false
+}
+
 /**
  * One warning, retried in place.
  *
@@ -254,18 +296,7 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
     }
 
     const detail = `${group.count} pending; oldest ${group.oldestYmd}`
-    const reserved = await prisma.tradingTelegramAuditLog.create({
-      data: {
-        id: claimId,
-        businessId: TRADING_BUSINESS_ID,
-        eventType: NUDGE_EVENT,
-        telegramUserId: group.telegramUserId,
-        telegramUsername: group.telegramUsername,
-        telegramChatId: group.telegramChatId,
-        detail: `${urgency}; ${PENDING_MARK}; ${detail}`,
-      },
-      select: { id: true },
-    }).catch(() => null)
+    const reserved = await reserveNudge(claimId, group, urgency, detail)
     if (!reserved) {
       skipped.push(group.telegramUserId)
       continue
