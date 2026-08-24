@@ -179,6 +179,13 @@ export async function clearHops(conversationId: string): Promise<void> {
       where: { key: { in: [hopsKey(conversationId), dryKey(conversationId), stopKey(conversationId), seenKey(conversationId)] } },
     })
     .catch(() => {})
+  // A finished chain also closes the deadline-slice work-remaining checkpoints
+  // its salvage hops wrote — otherwise they sit open forever and keep feeding
+  // stale resume context to later turns (Codex P2 #850 r6).
+  try {
+    const { resolveDeadlineSliceCheckpoints } = await import('@/agent/lib/checkpoint')
+    await resolveDeadlineSliceCheckpoints(conversationId)
+  } catch { /* best-effort */ }
 }
 
 export interface SelfContinueResult {

@@ -162,6 +162,42 @@ export async function resolveCheckpointByTaskRef(taskRef: string): Promise<boole
   return true
 }
 
+/**
+ * Close every open DEADLINE-SLICE checkpoint of one conversation (the
+ * `long_agent_task` rows the salvage path writes as work-remaining evidence).
+ * Called when a self-continue chain finishes cleanly: the slices' checkpoints
+ * are keyed to their own predecessor turn ids, so the completing slice cannot
+ * name them individually — but "this conversation's sliced job is done" is
+ * exactly the fact that closes them (Codex P2 #850 r6: they stayed open in
+ * listUnresolvedCheckpoints and kept feeding stale resume context).
+ */
+export async function resolveDeadlineSliceCheckpoints(conversationId: string): Promise<void> {
+  try {
+    const rows: Array<{ id: string; checkpoint: unknown }> = await db.agentOpenTask.findMany({
+      where: {
+        conversationId,
+        kind: { in: ['checkpoint_failed', 'checkpoint_waiting', 'checkpoint_continuing'] },
+        status: { in: ['open', 'running'] },
+      },
+      select: { id: true, checkpoint: true },
+    })
+    const ids = rows
+      .filter((row) => {
+        const cp = row.checkpoint && typeof row.checkpoint === 'object' && !Array.isArray(row.checkpoint)
+          ? row.checkpoint as Record<string, unknown>
+          : {}
+        return cp.taskType === 'long_agent_task'
+      })
+      .map((row) => row.id)
+    if (ids.length === 0) return
+    await db.agentOpenTask.updateMany({
+      where: { id: { in: ids } },
+      data: { status: 'done', completedAt: new Date() },
+    })
+    await pushCurrentPulseLiveActivity().catch(() => {})
+  } catch { /* best-effort — a stale chip costs presentation, never the turn */ }
+}
+
 export type CheckpointView = { id: string; kind: string; checkpoint: TaskCheckpoint }
 
 /** Unresolved checkpoints for a conversation (newest first, capped). */

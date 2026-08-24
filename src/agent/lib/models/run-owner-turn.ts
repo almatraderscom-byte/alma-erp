@@ -6039,9 +6039,18 @@ async function* runAlternateProviderTurn(
               // checkpoint (taskRef = this turn) is the persisted source
               // authority buildSelfContinueBinding requires for a turn that has
               // no workflow/focus row — without it the wake would be refused as
-              // continuation_self_authority_missing on plain chat jobs.
+              // continuation_self_authority_missing on plain chat jobs. But a
+              // turn that ALREADY carries strong evidence (its own binding, a
+              // workflow event, an intake focus) must NOT get this generic
+              // checkpoint beside it — two identities make the binder reject
+              // the wake as ambiguous (Codex P1 #850 r6).
+              const { hasStrongSelfContinueEvidence } = await import('@/agent/lib/continuation-binding')
+              const strongEvidence = await hasStrongSelfContinueEvidence({
+                conversationId,
+                sourceTurnId: turnId,
+              })
               const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
-              await writeCheckpoint({
+              if (!strongEvidence) await writeCheckpoint({
                 taskRef: turnId,
                 taskType: 'long_agent_task',
                 state: 'continuing',

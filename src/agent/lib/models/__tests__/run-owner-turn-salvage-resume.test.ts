@@ -41,6 +41,12 @@ describe('deadline-salvage server-side resume wiring', () => {
     expect(salvage.slice(checkpointAt, scheduleAt)).toContain("taskRef: turnId")
   })
 
+  it('the generic checkpoint never rides beside stronger authority evidence (Codex P1 #850 r6)', () => {
+    const salvage = source.slice(source.indexOf('if (signal?.aborted) {'))
+    expect(salvage).toContain('hasStrongSelfContinueEvidence({')
+    expect(salvage).toContain('if (!strongEvidence) await writeCheckpoint({')
+  })
+
   it('client recovery survives a failed wake for ANY resumable job; only a brake stop disables it', () => {
     const salvage = source.slice(source.indexOf('if (signal?.aborted) {'))
     expect(salvage).toContain('let needContinue = serverResumeWake')

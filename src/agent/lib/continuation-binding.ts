@@ -1299,6 +1299,38 @@ async function selfContinueCheckpointEvidence(
 }
 
 /**
+ * Does the source turn already carry STRONG self-continue authority evidence —
+ * its own continuation binding, an exact workflow event, or an intake focus?
+ * The deadline salvage uses this to decide whether it must write its generic
+ * work-remaining checkpoint: writing one BESIDE stronger evidence creates a
+ * second identity and buildSelfContinueBinding then rejects the wake as
+ * continuation_self_source_ambiguous (Codex P1 #850 r6). Checkpoint evidence
+ * is deliberately excluded — it is exactly what the caller would be writing.
+ */
+export async function hasStrongSelfContinueEvidence(input: {
+  conversationId: string
+  sourceTurnId: string
+}): Promise<boolean> {
+  try {
+    const source = await db().agentTurn.findUnique({
+      where: { id: clean(input.sourceTurnId, 'sourceTurnId') },
+      select: { continuationBinding: true },
+    })
+    if (source?.continuationBinding != null) return true
+    const candidates = [
+      await selfContinueWorkflowEvidence(input.sourceTurnId),
+      await selfContinueFocusEvidence(input.conversationId, input.sourceTurnId),
+    ].filter((candidate): candidate is SelfContinueEvidence => candidate !== null)
+    return candidates.length > 0
+  } catch {
+    // Unknown state: claim no strong evidence so the caller writes the
+    // fallback checkpoint — a duplicate-identity rejection is recoverable by
+    // the owner, a wake with zero evidence is not.
+    return false
+  }
+}
+
+/**
  * Builds a deadline wake solely from persisted source identity. Direct source
  * binding wins; otherwise an exact workflow event, intake focus, or checkpoint
  * may establish the domain. Missing or conflicting evidence rejects instead of
