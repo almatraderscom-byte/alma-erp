@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const draftFindMany = vi.fn()
 const auditFindFirst = vi.fn()
 const auditCreate = vi.fn()
+const auditDelete = vi.fn()
 const sendTelegramMessage = vi.fn()
 
 vi.mock('@/lib/prisma', () => ({
@@ -17,6 +18,7 @@ vi.mock('@/lib/prisma', () => ({
     tradingTelegramAuditLog: {
       findFirst: (...a: unknown[]) => auditFindFirst(...a),
       create: (...a: unknown[]) => auditCreate(...a),
+      delete: (...a: unknown[]) => auditDelete(...a),
     },
   },
 }))
@@ -87,7 +89,8 @@ describe('sendPendingConfirmNudges', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     auditFindFirst.mockResolvedValue(null)
-    auditCreate.mockResolvedValue({})
+    auditCreate.mockResolvedValue({ id: 'claim-1' })
+    auditDelete.mockResolvedValue({})
     sendTelegramMessage.mockResolvedValue({ ok: true })
     draftFindMany.mockResolvedValue([pending(), pending()])
   })
@@ -135,13 +138,25 @@ describe('sendPendingConfirmNudges', () => {
     expect(where.detail).toEqual({ startsWith: 'FINAL' })
   })
 
-  it('does not record a warning Telegram refused to deliver', async () => {
+  it('claims the cooldown before calling Telegram, not after', async () => {
+    const order: string[] = []
+    auditCreate.mockImplementation(async () => { order.push('claim'); return { id: 'claim-1' } })
+    sendTelegramMessage.mockImplementation(async () => { order.push('send'); return { ok: true } })
+
+    await sendPendingConfirmNudges('FINAL')
+
+    // Check-then-send let an overlapping run pass the check before either wrote
+    // its row, and staff got the reminder twice.
+    expect(order).toEqual(['claim', 'send'])
+  })
+
+  it('releases the claim when Telegram refuses, so the next run retries', async () => {
     sendTelegramMessage.mockResolvedValue({ ok: false, errorMessage: 'chat not found' })
 
     const result = await sendPendingConfirmNudges('EVENING')
 
     expect(result).toMatchObject({ sent: 0, skipped: 1 })
-    expect(auditCreate).not.toHaveBeenCalled()
+    expect(auditDelete).toHaveBeenCalledWith({ where: { id: 'claim-1' } })
   })
 })
 
@@ -168,5 +183,13 @@ describe('confirmNudgeUrgencyForNow', () => {
     process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD = '12'
     expect(confirmNudgeUrgencyForNow(atDhakaHour(11))).toBe('FINAL')
     expect(confirmNudgeUrgencyForNow(atDhakaHour(5))).toBeNull()
+  })
+
+  it('wraps to the previous evening when the cutoff is midnight', () => {
+    // telegramDraftLockHourBd accepts 0. Clamping to hour 0 would have warned
+    // when the cutoff was already active and the sweep may have locked the rows.
+    process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD = '0'
+    expect(confirmNudgeUrgencyForNow(atDhakaHour(23))).toBe('FINAL')
+    expect(confirmNudgeUrgencyForNow(atDhakaHour(0))).toBeNull()
   })
 })

@@ -149,14 +149,11 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
       continue
     }
 
-    const result = await sendTelegramMessage(group.telegramChatId, confirmNudgeText(group, urgency))
-    if (!result.ok) {
-      skipped.push(group.telegramUserId)
-      continue
-    }
-
-    sent.push(group.telegramUserId)
-    await prisma.tradingTelegramAuditLog.create({
+    // Claim BEFORE calling Telegram. Checking and then sending leaves both an
+    // overlapping cron run and a manual test able to pass the check before
+    // either has written its row, and staff get the same reminder twice. The
+    // claim is released if Telegram refuses, so the next run retries.
+    const claim = await prisma.tradingTelegramAuditLog.create({
       data: {
         businessId: TRADING_BUSINESS_ID,
         eventType: NUDGE_EVENT,
@@ -165,7 +162,19 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
         telegramChatId: group.telegramChatId,
         detail: `${urgency}; ${group.count} pending; oldest ${group.oldestYmd}`,
       },
-    }).catch(() => {})
+      select: { id: true },
+    }).catch(() => null)
+
+    const result = await sendTelegramMessage(group.telegramChatId, confirmNudgeText(group, urgency))
+    if (!result.ok) {
+      skipped.push(group.telegramUserId)
+      if (claim) {
+        await prisma.tradingTelegramAuditLog.delete({ where: { id: claim.id } }).catch(() => {})
+      }
+      continue
+    }
+
+    sent.push(group.telegramUserId)
   }
 
   return { urgency, groups: groups.length, sent: sent.length, skipped: skipped.length }
@@ -183,7 +192,12 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
 export function confirmNudgeUrgencyForNow(now = tradingBdNow()): ConfirmNudgeUrgency | null {
   const hour = now.getUTCHours()          // tradingBdNow is UTC-shifted: this IS the Dhaka hour
   const lockHour = telegramDraftLockHourBd()
+  // Wrap, don't clamp: a cutoff of 0 means the last chance is 23:00 the evening
+  // before. Clamping to 0 would have fired the "one hour left" warning when the
+  // cutoff was already active and the sweep may already have locked the rows.
+  const finalHour = (lockHour + 23) % 24
+  // When the two collide (cutoff 0), the urgent one wins.
+  if (hour === finalHour) return 'FINAL'
   if (hour === 23) return 'EVENING'
-  if (hour === Math.max(0, lockHour - 1)) return 'FINAL'
   return null
 }
