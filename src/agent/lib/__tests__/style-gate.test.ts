@@ -324,3 +324,28 @@ describe('editorial review requests are not report requests', () => {
     expect(violations.map((v) => v.ruleId)).toContain('professional_report_structure')
   })
 })
+
+describe('a negated HTML mention is not an HTML request', () => {
+  // Codex P2 round 8 (PR #845): "Write the report in Markdown, not HTML"
+  // matched on proximity alone, so an HTML-dominated reply was accepted against
+  // the instruction.
+  const HTML_REPORT = '<!doctype html>\n<html><body><h1>Weekly</h1>'
+    + '<table><tr><td>বিক্রি</td><td>১২৩</td></tr></table>'.repeat(20)
+    + '</body></html>'
+
+  it.each([
+    'Write the report in Markdown, not HTML',
+    'give me the report, no HTML please',
+    'রিপোর্টটা দাও, html নয়',
+  ])('still flags inline HTML for %s', async (instruction) => {
+    const detect = await loadReportDetector()
+    expect(detect(HTML_REPORT, instruction).map((v) => v.ruleId))
+      .toContain('professional_report_inline_html')
+  })
+
+  it('does not mistake a different negation for an HTML refusal', async () => {
+    const detect = await loadReportDetector()
+    // "not a PDF" negates the PDF, not the HTML that was asked for.
+    expect(detect(HTML_REPORT, 'give me an HTML report, not a PDF')).toEqual([])
+  })
+})

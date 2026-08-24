@@ -427,10 +427,13 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       ? filterAgentReferencesForContext(u.references, { businessId: referenceBusinessId, roles: ['SUPER_ADMIN'] })
       : undefined
     const visibleReferences = exposedAgentReferences(references ?? [])
-    // Durable marker first; fall back to "it cited something" for ON-era rows
-    // saved before the marker shipped. Absent both → pre-contract history.
+    // ONLY the durable marker counts. The tempting fallback — "it carries
+    // references, so it must have been written under an ON contract" — is wrong:
+    // `shadow` deliberately collects and persists references while leaving the
+    // marker unset, so promoting shadow → on would flip every shadow-era row to
+    // strict mode and kill the links its partial projection never covered
+    // (Codex P1 round 8, PR #845). A row without the marker is legacy, full stop.
     const rowContractActive = u.referencesActive === true
-      || (Array.isArray(u.references) && u.references.length > 0)
     return {
       id: m.id,
       clientRequestId: m.clientRequestId,

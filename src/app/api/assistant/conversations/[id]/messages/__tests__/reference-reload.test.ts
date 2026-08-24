@@ -50,7 +50,10 @@ describe('message reload reference projection', () => {
     mocks.messages.mockResolvedValue([{
       id: 'msg-1', clientRequestId: null, role: 'assistant', content: [],
       tokensIn: 1, tokensOut: 2, costUsd: null, createdAt: new Date('2026-08-23T00:00:00Z'),
-      usage: { references: [reference] },
+      // A row written UNDER the contract carries the durable marker; the base
+      // fixture models that, since a bare `references` array is now (correctly)
+      // read as a shadow-era row (Codex P1 round 8).
+      usage: { references: [reference], referencesActive: true },
     }])
     mocks.actions.mockResolvedValue([])
     mocks.asks.mockResolvedValue([])
@@ -85,6 +88,30 @@ describe('message reload reference projection', () => {
     )
     const body = await response.json()
     expect(response.status, JSON.stringify(body)).toBe(200)
+    expect(body[0].referencesActive).toBe(false)
+  })
+
+  it('keeps a shadow-era row in legacy mode after promotion to ON', async () => {
+    // Codex P1 round 8: shadow persists references WITHOUT the marker. Reading
+    // "has references" as "was written under an ON contract" would flip every
+    // shadow-era row to strict mode the moment the rollout is promoted.
+    process.env.AGENT_REFERENCES_ROLLOUT = 'on'
+    mocks.messages.mockResolvedValueOnce([{
+      id: 'msg-shadow-era',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'shadow যুগের উত্তর [Orders](/orders)' }],
+      createdAt: new Date('2026-08-20T00:00:00Z'),
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: null,
+      clientRequestId: null,
+      usage: { model: 'x', references: [reference] },
+    }])
+    const response = await GET(
+      new NextRequest('https://alma.test/api/assistant/conversations/conv-1/messages'),
+      { params: Promise.resolve({ id: 'conv-1' }) },
+    )
+    const body = await response.json()
     expect(body[0].referencesActive).toBe(false)
   })
 

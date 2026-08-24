@@ -1371,6 +1371,21 @@ const REQUESTED_REPORT_SECTION = /(?:\bbottom\s+line\b|\bexecutive\s+summary\b|\
 // format request, and treating it as a violation sent a correctly formatted
 // answer through the retry path against Boss's own instruction (Codex P2 #845).
 const EXPLICIT_HTML_OUTPUT_REQUEST = /(?:\bhtml\b[^\n।.!?]{0,60}(?:\b(?:source|code|document|file|artifact|dashboard|report|audit|review|briefing|analysis)\b|সোর্স|কোড|ডকুমেন্ট|ফাইল|আর্টিফ্যাক্ট|ড্যাশবোর্ড|রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|প্রতিবেদন)|(?:\b(?:source|code|document|file|artifact|dashboard|report|audit|review|briefing|analysis)\b|সোর্স|কোড|ডকুমেন্ট|ফাইল|আর্টিফ্যাক্ট|ড্যাশবোর্ড|রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|প্রতিবেদন)[^\n।.!?]{0,60}\bhtml\b|\bhtml\s*(?:-|–|—)?\s*(?:এ|তে)\s*(?:দাও|দিন|চাই|বানাও|করো|করুন))/i
+/**
+ * "Write the report in Markdown, not HTML" mentions HTML but *forbids* it, and
+ * proximity alone read that as a request for it — so an HTML reply was accepted
+ * against the instruction (Codex P2 round 8, PR #845). English negation precedes
+ * the word; Bangla follows it. Deliberately narrow: "an HTML report, not a PDF"
+ * must NOT be caught, so no bare trailing-`not` rule.
+ */
+const HTML_OUTPUT_NEGATED = /\b(?:not|no|never|avoid|without|except|skip)\b[^\n।.!?]{0,24}\bhtml\b|\bhtml\b\s*(?:নয়|না\b|ছাড়া|বাদ)/i
+
+/** Positive, unnegated intent to receive HTML. */
+function explicitHtmlOutputRequested(ownerInstructions: string): boolean {
+  return EXPLICIT_HTML_OUTPUT_REQUEST.test(ownerInstructions)
+    && !HTML_OUTPUT_NEGATED.test(ownerInstructions)
+}
+
 const HTML_FENCED_BLOCK = /```[ \t]*(?:html|htm)\b[^\n]*\n[\s\S]*?\n```/gi
 const FULL_HTML_DOCUMENT = /<!doctype\s+html\b|<html(?:\s|>)/i
 const HTML_REPORT_TAG = /<\/?(?:html|head|body|style|main|section|div|table|thead|tbody|tr|th|td)\b[^>]*>/gi
@@ -1426,9 +1441,9 @@ export function detectProfessionalReportStyleViolations(
   // Boss asked for HTML and got HTML: this is the requested deliverable, so
   // neither the inline-HTML rule nor the Markdown-structure rule below applies
   // (an HTML document has no `##` headings by definition) — Codex P2, PR #845.
-  if (EXPLICIT_HTML_OUTPUT_REQUEST.test(ownerInstructions) && isHtmlDominatedReport(text)) return []
+  if (explicitHtmlOutputRequested(ownerInstructions) && isHtmlDominatedReport(text)) return []
 
-  if (!EXPLICIT_HTML_OUTPUT_REQUEST.test(ownerInstructions) && isHtmlDominatedReport(text)) {
+  if (!explicitHtmlOutputRequested(ownerInstructions) && isHtmlDominatedReport(text)) {
     return [{
       category: 'instruction_mismatch',
       ruleId: 'professional_report_inline_html',
