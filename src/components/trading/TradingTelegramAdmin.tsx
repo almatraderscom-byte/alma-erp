@@ -240,14 +240,25 @@ export function TradingTelegramAdmin({
     void load()
   }
 
+  /** Selected rows still visible in this view — the selection survives filter
+   *  changes, so sending it whole would act on drafts the reviewer can no longer
+   *  see and never chose here. */
+  const visibleSelectedIds = useMemo(() => {
+    const visible = new Set(drafts.map(d => d.id))
+    return [...selected].filter(id => visible.has(id))
+  }, [drafts, selected])
+
   async function bulkReject() {
-    if (!selected.size) return
+    if (!visibleSelectedIds.length) {
+      toast.error('No selected drafts in this view.')
+      return
+    }
     const reason = (await promptDialog({ title: 'Bulk reject reason?', defaultValue: 'Rejected', confirmLabel: 'Reject' })) || 'Rejected'
     setBusy(true)
     const res = await fetch('/api/trading/telegram/drafts/bulk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ draftIds: [...selected], action: 'reject', reason }),
+      body: JSON.stringify({ draftIds: visibleSelectedIds, action: 'reject', reason }),
     })
     setBusy(false)
     const data = await res.json()

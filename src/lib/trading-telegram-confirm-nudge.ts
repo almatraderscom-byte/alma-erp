@@ -62,6 +62,9 @@ export async function collectPendingConfirmGroups(urgency: ConfirmNudgeUrgency):
   const where = {
     businessId: TRADING_BUSINESS_ID,
     status: 'PENDING' as const,
+    // A reopened draft is exempt from the sweep, so warning its owner that it
+    // locks at the cutoff would simply be false.
+    reopenedAt: null,
     ...(urgency === 'FINAL' ? { createdAt: { lt: lockBoundary } } : {}),
   }
 

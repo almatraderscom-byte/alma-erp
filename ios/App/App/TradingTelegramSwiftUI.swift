@@ -712,21 +712,35 @@ final class TradingTelegramVM {
 
     /// POST /drafts/bulk — confirm ({draftIds}) posts to ledger; reject adds
     /// {action:'reject', reason}. Exact server response counts surface in the toast.
+    /// Every draft currently on screen, across the three grouping shapes.
+    private var visibleDrafts: [TradingTelegramDraft] {
+        drafts + draftGroups.flatMap(\.drafts) + draftDayGroups.flatMap(\.drafts)
+    }
+
     /// Ids in the current selection that a confirm can actually post.
     var confirmableSelection: [String] {
-        let all = drafts + draftGroups.flatMap(\.drafts) + draftDayGroups.flatMap(\.drafts)
-        let confirmable = Set(all.filter(\.isConfirmable).map(\.id))
+        let confirmable = Set(visibleDrafts.filter(\.isConfirmable).map(\.id))
         return selectedDrafts.filter { confirmable.contains($0) }
+    }
+
+    /// Ids in the current selection a reject can act on — intersected with what
+    /// is ON SCREEN. The selection survives a filter change, so sending it whole
+    /// would reject rows the reviewer can no longer see and never chose in this
+    /// view.
+    var rejectableSelection: [String] {
+        let rejectable = Set(visibleDrafts.filter(\.isActionable).map(\.id))
+        return selectedDrafts.filter { rejectable.contains($0) }
     }
 
     func bulkAction(reject: Bool, reason: String = "Rejected") async {
         guard !selectedDrafts.isEmpty, !bulkBusy else { return }
-        let ids = reject ? Array(selectedDrafts) : confirmableSelection
-        if !reject, ids.isEmpty {
-            toast = "নির্বাচিত ড্রাফটগুলো লক করা — আগে reopen করুন।"
+        let ids = reject ? rejectableSelection : confirmableSelection
+        if ids.isEmpty {
+            toast = reject ? "এই ভিউতে নির্বাচিত কোনো ড্রাফট নেই।"
+                           : "নির্বাচিত ড্রাফটগুলো লক করা — আগে reopen করুন।"
             return
         }
-        let skippedLocked = reject ? 0 : selectedDrafts.count - ids.count
+        let skippedLocked = selectedDrafts.count - ids.count
         bulkBusy = true
         defer { bulkBusy = false }
         struct Body: Encodable {
