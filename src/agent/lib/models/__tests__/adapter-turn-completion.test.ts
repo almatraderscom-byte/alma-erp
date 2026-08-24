@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ModelEntry } from '@/agent/lib/models/registry'
 import type { AgentEntityLink } from '@/agent/lib/entity-links'
+import type { AgentReferenceV1 } from '@/agent/lib/references/types'
+import { buildInternalEntityReference } from '@/agent/lib/references/internal-registry'
 
 const mocks = vi.hoisted(() => ({
   turns: [] as Array<Array<Record<string, unknown>>>,
@@ -9,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     success: boolean
     data: unknown
     entityLinks?: AgentEntityLink[]
+    references?: AgentReferenceV1[]
   }> => ({ success: true, data: { checked: true } })),
 }))
 
@@ -27,6 +30,8 @@ vi.mock('@/agent/tools/registry', () => ({
 }))
 
 import { runAdapterToolLoop } from '../adapter-turn'
+
+const originalReferenceRollout = process.env.AGENT_REFERENCES_ROLLOUT
 
 const model = {
   id: 'test-worker',
@@ -57,6 +62,11 @@ describe('adapter worker completion contract', () => {
     mocks.turns = []
     mocks.requests = []
     mocks.executeTool.mockClear()
+  })
+
+  afterAll(() => {
+    if (originalReferenceRollout == null) delete process.env.AGENT_REFERENCES_ROLLOUT
+    else process.env.AGENT_REFERENCES_ROLLOUT = originalReferenceRollout
   })
 
   it('marks a normal tool-free final answer complete', async () => {
@@ -130,5 +140,39 @@ describe('adapter worker completion contract', () => {
     expect(result.entityLinks).toEqual([
       expect.objectContaining({ entityId: 'db-order-1', href: '/orders/db-order-1?business_id=ALMA_LIFESTYLE' }),
     ])
+  })
+
+  it.each([
+    ['shadow', false],
+    ['on', true],
+  ] as const)('keeps verified references server-side in %s while provider visibility is %s', async (mode, providerVisible) => {
+    process.env.AGENT_REFERENCES_ROLLOUT = mode
+    const reference = buildInternalEntityReference({
+      namespace: 'order',
+      id: `adapter-${mode}`,
+      sourceTool: 'get_orders',
+      outputPath: 'data.orders[0].id',
+      context: { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] },
+    })!
+    mocks.executeTool.mockResolvedValueOnce({
+      success: true,
+      data: { checked: true },
+      references: [reference],
+    })
+    mocks.turns.push(
+      [
+        { type: 'tool_start', id: 'call-ref', name: 'get_orders' },
+        { type: 'tool_input', id: 'call-ref', input: { status: 'pending' } },
+      ],
+      [{ type: 'text_delta', text: 'সম্পূর্ণ।' }],
+    )
+
+    const result = await run(1)
+    const providerWrapUp = JSON.stringify(mocks.requests[1])
+
+    expect(result.references).toEqual([reference])
+    expect(providerWrapUp.includes(reference.refId)).toBe(providerVisible)
+    if (reference.destination.type !== 'internal_entity') throw new Error('expected internal order reference')
+    expect(providerWrapUp.includes(reference.destination.webPath)).toBe(providerVisible)
   })
 })

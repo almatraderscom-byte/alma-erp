@@ -3,6 +3,7 @@ import {
   buildSavedSalvageEventSequence,
   buildSavedSalvageReconciliation,
 } from '../salvage-contract'
+import { buildInternalEntityReference } from '@/agent/lib/references/internal-registry'
 
 describe('saved interrupted-turn salvage reconciliation', () => {
   it('resets even an append-only live draft to the complete durable salvage', () => {
@@ -55,5 +56,25 @@ describe('saved interrupted-turn salvage reconciliation', () => {
       'text_delta',
       'done',
     ])
+  })
+
+  it('preserves the verified reference projection on the durable terminal event', () => {
+    const reference = buildInternalEntityReference({
+      namespace: 'order',
+      id: 'salvage-order',
+      sourceTool: 'get_orders',
+      outputPath: 'data.orders[0].id',
+      context: { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] },
+    })!
+    const events = buildSavedSalvageEventSequence(
+      { persistedText: 'সেভ করা ফল', preambleText: '' },
+      { type: 'done' as const, messageId: 'msg-salvage-ref', references: [reference] },
+    )
+
+    expect(events.at(-1)).toEqual({
+      type: 'done',
+      messageId: 'msg-salvage-ref',
+      references: [reference],
+    })
   })
 })

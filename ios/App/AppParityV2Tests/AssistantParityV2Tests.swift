@@ -5,6 +5,125 @@ import XCTest
 
 @MainActor
 final class AssistantParityV2Tests: XCTestCase {
+    private func decodedReference(_ value: [String: Any]) throws -> AgentReferenceV1Wire {
+        let data = try JSONSerialization.data(withJSONObject: value)
+        return try JSONDecoder().decode(AgentReferenceV1Wire.self, from: data)
+    }
+
+    private func externalReference(
+        _ rawURL: String,
+        label: String = "Source",
+        kind: String = "external_source",
+        purpose: String = "evidence",
+        provider: String = "web",
+        mediaType: String? = nil
+    ) throws -> AgentReferenceV1Wire {
+        let url = try XCTUnwrap(URL(string: rawURL))
+        let host = try XCTUnwrap(url.host)
+        var destination: [String: Any] = [
+            "type": kind, "url": rawURL, "provider": provider, "hostname": host,
+        ]
+        if let mediaType { destination["mediaType"] = mediaType }
+        return try decodedReference([
+            "version": 1,
+            "refId": "ref_v1_test_\(abs(rawURL.hashValue))_\(kind)",
+            "kind": kind,
+            "label": label,
+            "destination": destination,
+            "purpose": purpose,
+            "audience": ["businessId": NSNull(), "businessScope": "personal", "roles": ["SUPER_ADMIN"]],
+            "provenance": [
+                "source": "tool_output", "verifiedBy": "canonical_url_validator",
+                "sourceTool": "fixture", "outputPath": "data.url",
+            ],
+            "observedAt": "2026-08-23T00:00:00.000Z",
+            "openMode": provider == "youtube" ? "universal_link_first" : "protected_web",
+            "aliases": [label],
+        ])
+    }
+
+    private func sectionReference(
+        path: String,
+        label: String = "ALMA section",
+        purpose: String = "navigate"
+    ) throws -> AgentReferenceV1Wire {
+        return try decodedReference([
+            "version": 1,
+            "refId": "ref_v1_test_section_\(abs(path.hashValue))",
+            "kind": "internal_section",
+            "label": label,
+            "destination": [
+                "type": "internal_section", "sectionId": "fixture_section",
+                "webPath": path, "nativePath": path,
+            ],
+            "purpose": purpose,
+            "audience": ["businessId": NSNull(), "businessScope": "cross_business", "roles": ["SUPER_ADMIN"]],
+            "provenance": ["source": "server_registry", "verifiedBy": "server_registry"],
+            "observedAt": "2026-08-23T00:00:00.000Z",
+            "openMode": "internal_native",
+            "aliases": [label],
+        ])
+    }
+
+    private func entityReference(
+        path: String,
+        nativePath: String? = nil,
+        namespace: String = "order",
+        id: String
+    ) throws -> AgentReferenceV1Wire {
+        return try decodedReference([
+            "version": 1,
+            "refId": "ref_v1_test_entity_\(abs(path.hashValue))",
+            "kind": "internal_entity",
+            "label": id,
+            "destination": [
+                "type": "internal_entity", "namespace": namespace, "id": id,
+                "webPath": path, "nativePath": nativePath ?? path,
+                "apiPath": "/api/assistant/references/\(namespace)/\(id)",
+            ],
+            "entity": ["namespace": namespace, "type": namespace, "id": id],
+            "purpose": "navigate",
+            "audience": ["businessId": NSNull(), "businessScope": "personal", "roles": ["SUPER_ADMIN"]],
+            "provenance": [
+                "source": "tool_output", "verifiedBy": "explicit_extractor",
+                "sourceTool": "fixture", "outputPath": "data.id",
+            ],
+            "observedAt": "2026-08-23T00:00:00.000Z",
+            "openMode": "internal_native",
+            "aliases": [id],
+        ])
+    }
+
+    private func artifactReference(
+        id: String,
+        path: String,
+        mimeType: String? = nil,
+        fileName: String? = nil
+    ) throws -> AgentReferenceV1Wire {
+        var destination: [String: Any] = [
+            "type": "artifact_report", "artifactId": id, "apiPath": path,
+        ]
+        if let mimeType { destination["mimeType"] = mimeType }
+        if let fileName { destination["fileName"] = fileName }
+        return try decodedReference([
+            "version": 1,
+            "refId": "ref_v1_test_artifact_\(id)",
+            "kind": "artifact_report",
+            "label": "Report",
+            "destination": destination,
+            "entity": ["namespace": "artifact", "type": "agent_artifact", "id": id],
+            "purpose": "report",
+            "audience": ["businessId": NSNull(), "businessScope": "personal", "roles": ["SUPER_ADMIN"]],
+            "provenance": [
+                "source": "tool_output", "verifiedBy": "explicit_extractor",
+                "sourceTool": "save_artifact", "outputPath": "data.artifactCard.id",
+            ],
+            "observedAt": "2026-08-23T00:00:00.000Z",
+            "openMode": "artifact_viewer",
+            "aliases": ["Report"],
+        ])
+    }
+
     func testArchivedConversationPagePreservesRestoreMetadataAndCursor() throws {
         let data = Data(#"""
         {
@@ -127,6 +246,26 @@ final class AssistantParityV2Tests: XCTestCase {
     func testGeneratedFileRefsSuppressDuplicateMarkdownImageGallery() {
         XCTAssertTrue(AgentMarkdownText.shouldRenderRemoteImages(suppressRemoteImages: false))
         XCTAssertFalse(AgentMarkdownText.shouldRenderRemoteImages(suppressRemoteImages: true))
+    }
+
+    func testRemoteMediaRequiresConsentAndKeepsVerifiedSourceLabel() {
+        XCTAssertFalse(AgentRemoteMediaConsentContract.permitsLoader(consented: false))
+        XCTAssertTrue(AgentRemoteMediaConsentContract.permitsLoader(consented: true))
+        XCTAssertEqual(
+            AgentRemoteMediaConsentContract.sourceLabel(
+                provider: "youtube", hostname: "www.youtube.com"),
+            "youtube · www.youtube.com")
+    }
+
+    func testUniversalLinkUsesInstalledAppFirstAndSafariOnlyOnFailure() {
+        XCTAssertTrue(AgentExternalOpenPolicy.usesUniversalLinkFirst(
+            openMode: "universal_link_first"))
+        XCTAssertFalse(AgentExternalOpenPolicy.usesUniversalLinkFirst(
+            openMode: "protected_web"))
+        XCTAssertFalse(AgentExternalOpenPolicy.presentsSafariAfterUniversalLink(
+            opened: true), "an installed-app handoff must not also open Safari")
+        XCTAssertTrue(AgentExternalOpenPolicy.presentsSafariAfterUniversalLink(
+            opened: false), "a rejected universal link must fall back to Safari")
     }
 
     func testGeneratedImageTileKeepsStableFourByFiveReservation() {
@@ -2276,6 +2415,89 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(table?.rows.count, 2)
         XCTAssertEqual(table?.rows.first, ["**Deepgram**", "~$0.005/min", "STT"])
         XCTAssertFalse(table?.rows.flatMap { $0 }.contains("---") ?? true)
+    }
+
+    func testProfessionalReportParagraphKeepsHeadingOrderedAndTaskHierarchy() {
+        let pal = AgentPalette(.dark)
+        let rendered = AgentMarkdownText.attributedParagraph("""
+        # সাপ্তাহিক রিপোর্ট
+        ## নির্বাহী সারাংশ
+        যাচাই করা ফলাফল নিচে দেওয়া হলো।
+        1. বিক্রি review করুন
+        ২. বাংলা সংখ্যা ঠিক রাখুন
+        - [x] stock যাচাই হয়েছে
+        - [ ] reorder approval বাকি
+        """, pal: pal)
+
+        XCTAssertTrue(rendered.string.contains("সাপ্তাহিক রিপোর্ট"))
+        XCTAssertTrue(rendered.string.contains("1.  বিক্রি review করুন"))
+        XCTAssertTrue(rendered.string.contains("২.  বাংলা সংখ্যা ঠিক রাখুন"))
+        XCTAssertTrue(rendered.string.contains("☑  stock যাচাই হয়েছে"))
+        XCTAssertTrue(rendered.string.contains("☐  reorder approval বাকি"))
+
+        let titleFont = rendered.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
+        let bodyLocation = (rendered.string as NSString).range(of: "যাচাই করা ফলাফল").location
+        let bodyFont = rendered.attribute(.font, at: bodyLocation, effectiveRange: nil) as? UIFont
+        XCTAssertGreaterThan(titleFont?.pointSize ?? 0, bodyFont?.pointSize ?? 0)
+    }
+
+    func testStreamingArtifactAuthoringHoldsRawHTMLAndSplitOpeners() {
+        let artifactPrefixes = [
+            "<",
+            "<!-",
+            "<!-- LOWEST STOCK TABLE -->\n<tab",
+            "<table><tbody><tr><td>Low stock</td></tr></tbody></table>",
+            "<div class=\"bar-container\"><div style=\"width: 80%\"></div></div>",
+            "```h",
+            "```html\n<table><tr><td>৳১,২০০</td></tr></table>\n```",
+            "```svg\n<svg><path d=\"M0 0\" /></svg>\n```",
+        ]
+
+        for source in artifactPrefixes {
+            XCTAssertEqual(
+                AgentChatMessage.ownerVisibleProse(source, whileStreaming: true),
+                "",
+                "streaming artifact leaked for prefix: \(source)")
+        }
+    }
+
+    func testStreamingArtifactAuthoringKeepsSafePrefixAndSettledSourceExactly() {
+        let safePrefix = "**রিপোর্ট তৈরি করছি।**\n\n"
+        let htmlSource = """
+        <!-- LOWEST STOCK TABLE -->
+        <table><tr><td>SKU-114</td></tr></table>
+        <div class="bar-container">15 running</div>
+        """
+        let combined = safePrefix + htmlSource
+
+        XCTAssertEqual(
+            AgentChatMessage.ownerVisibleProse(combined, whileStreaming: true),
+            safePrefix)
+        XCTAssertEqual(
+            AgentChatMessage.ownerVisibleProse(combined, whileStreaming: false),
+            combined,
+            "settled explicit source must remain byte-for-byte intact")
+    }
+
+    func testStreamingArtifactAuthoringPreservesNativeMarkdownAndRealCode() {
+        let markdown = """
+        ## স্টক রিপোর্ট
+
+        | বিল | অবস্থা |
+        | --- | --- |
+        | 114 | Production |
+        | 15 | Running |
+
+        5 < 10 এবং `<table>` এখানে inline code; <b>inline emphasis</b> অপরিবর্তিত।
+
+        ```swift
+        let html = "<table><tr><td>source</td></tr></table>"
+        ```
+        """
+
+        XCTAssertEqual(
+            AgentChatMessage.ownerVisibleProse(markdown, whileStreaming: true),
+            markdown)
     }
 
     func testAskAndOpinionDraftsPersistAcrossRelaunch() {
@@ -4454,43 +4676,244 @@ final class AssistantParityV2Tests: XCTestCase {
         }
     }
 
-    func testStructuredCitationExtractionDeduplicatesAndMarksInternalLinks() {
+    func testStructuredCitationExtractionDeduplicatesAndRequiresPurposeMetadata() throws {
+        let refs = [
+            try externalReference(
+                "https://openai.com/research?publishedAt=2026-08-09",
+                label: "OpenAI research"),
+            try sectionReference(path: "/agent/costs", label: "ALMA costs"),
+        ]
         let citations = AgentMarkdownText.extractCitations("""
         [OpenAI research](https://openai.com/research?publishedAt=2026-08-09) and [duplicate](https://openai.com/research?publishedAt=2026-08-09).
         [ALMA costs](/agent/costs) ![ignored image](https://example.com/image.png)
-        """)
-        XCTAssertEqual(citations.count, 2)
+        """, references: refs)
+        XCTAssertEqual(citations.count, 1)
         XCTAssertEqual(citations[0].title, "OpenAI research")
         XCTAssertEqual(citations[0].domain, "openai.com")
         XCTAssertEqual(citations[0].dateLabel, "2026-08-09")
         XCTAssertFalse(citations[0].isALMAInternal)
-        XCTAssertTrue(citations[1].isALMAInternal)
-        XCTAssertEqual(citations[1].url.path, "/agent/costs")
     }
 
-    func testMarkdownLinkRouterUsesNativeALMAPathAndSafeExternalBrowserDestination() {
+    func testMarkdownLinkRouterUsesOnlyMessageScopedVerifiedDestinations() throws {
         let relative = URL(string: "/agent/costs?range=30d")!
+        let relativeRef = try sectionReference(path: "/agent/costs?range=30d")
         XCTAssertEqual(
-            AgentMarkdownLinkRouter.destination(for: relative),
+            AgentMarkdownLinkRouter.destination(for: relative, references: [relativeRef]),
             .almaPath("/agent/costs?range=30d"))
 
         let sameHost = URL(string: "/orders/42", relativeTo: AssistantNet.base)!.absoluteURL
+        let orderRef = try entityReference(path: "/orders/42", id: "42")
         XCTAssertEqual(
-            AgentMarkdownLinkRouter.destination(for: sameHost),
+            AgentMarkdownLinkRouter.destination(for: sameHost, references: [orderRef]),
             .almaPath("/orders/42"))
 
         let external = URL(string: "https://openai.com/research")!
+        let externalRef = try externalReference(external.absoluteString)
         XCTAssertEqual(
-            AgentMarkdownLinkRouter.destination(for: external),
+            AgentMarkdownLinkRouter.destination(for: external, references: [externalRef]),
             .external(external))
         let spoofed = URL(string: "https://evilalma-erp-six.vercel.app/agent")!
+        let spoofedRef = try externalReference(spoofed.absoluteString)
         XCTAssertEqual(
-            AgentMarkdownLinkRouter.destination(for: spoofed),
+            AgentMarkdownLinkRouter.destination(for: spoofed, references: [spoofedRef]),
             .external(spoofed), "a hostname suffix must not enter ALMA native routing")
         XCTAssertNil(AgentMarkdownLinkRouter.destination(
-            for: URL(string: "javascript:alert(1)")!))
+            for: URL(string: "javascript:alert(1)")!, references: []))
         XCTAssertNil(AgentMarkdownLinkRouter.destination(
-            for: URL(string: "//evil.example/agent")!))
+            for: URL(string: "//evil.example/agent")!, references: []))
+        XCTAssertNil(AgentMarkdownLinkRouter.destination(
+            for: external, references: []), "model-authored raw URLs stay inert")
+
+        let genericNative = "/agent/references/order/42?business_id=ALMA_LIFESTYLE"
+        let splitRef = try entityReference(path: "/orders/42?business_id=ALMA_LIFESTYLE",
+                                           nativePath: genericNative, id: "42")
+        XCTAssertEqual(
+            AgentMarkdownLinkRouter.destination(
+                for: URL(string: "/orders/42?business_id=ALMA_LIFESTYLE")!, references: [splitRef]),
+            .almaPath(genericNative), "verified web href must resolve to the server-stamped native focus route")
+        XCTAssertNil(
+            AgentMarkdownLinkRouter.destination(
+                for: URL(string: "https://evil.example/orders/42?business_id=ALMA_LIFESTYLE")!,
+                references: [splitRef]),
+            "an evil host cannot borrow a verified internal path")
+    }
+
+    func testArtifactLinkCarriesExactAuthenticatedExportMetadata() throws {
+        let path = "/api/assistant/artifacts/launch/pdf"
+        let reference = try artifactReference(
+            id: "launch",
+            path: path,
+            mimeType: "application/pdf",
+            fileName: "Launch report.pdf")
+        XCTAssertTrue(reference.trusted)
+        XCTAssertEqual(
+            AgentMarkdownLinkRouter.destination(
+                for: try XCTUnwrap(URL(string: path)), references: [reference]),
+            .artifact(
+                id: "launch",
+                title: "Report",
+                apiPath: path,
+                mimeType: "application/pdf",
+                fileName: "Launch report.pdf"))
+
+        let sheet = AgentArtifactViewerSheet(
+            artifactId: "launch",
+            fallbackTitle: "Report",
+            vm: AssistantVM(),
+            referenceAPIPath: path,
+            referenceMimeType: "application/pdf",
+            referenceFileName: "Launch report.pdf")
+        XCTAssertEqual(sheet.referenceAPIPath, path)
+        XCTAssertEqual(sheet.referenceMimeType, "application/pdf")
+        XCTAssertEqual(sheet.referenceFileName, "Launch report.pdf")
+
+        let encodedPath = "/api/assistant/artifacts/artifact%3Aone/doc"
+        XCTAssertTrue(AgentReferenceV1Wire.safeArtifactAPIPath(
+            encodedPath, artifactId: "artifact:one"))
+        let endpoint = try XCTUnwrap(AlmaAPI.endpointURL(percentEncodedPath: encodedPath))
+        XCTAssertEqual(
+            URLComponents(url: endpoint, resolvingAgainstBaseURL: false)?.percentEncodedPath,
+            encodedPath,
+            "the authenticated raw request must not double-encode a canonical artifact id")
+        for unsafe in [
+            "/api/assistant/artifacts/launch",
+            "/api/assistant/artifacts/launch/doc?download=1",
+            "/api/assistant/artifacts/other/doc",
+            "/api/assistant/artifacts/../launch/doc",
+        ] {
+            XCTAssertFalse(AgentReferenceV1Wire.safeArtifactAPIPath(
+                unsafe, artifactId: "launch"), unsafe)
+        }
+
+        let tampered = try artifactReference(
+            id: "launch", path: "/api/assistant/artifacts/other/doc")
+        XCTAssertFalse(tampered.trusted)
+        XCTAssertNil(AgentMarkdownLinkRouter.destination(
+            for: try XCTUnwrap(URL(string: "/api/assistant/artifacts/other/doc")),
+            references: [tampered]))
+    }
+
+    func testLiveReferenceProjectionReplacesAndAuthoritativelyClears() throws {
+        let first = try sectionReference(path: "/agent/costs", label: "Costs")
+        let replacement = try entityReference(
+            path: "/orders/AL-42",
+            nativePath: "/agent/references/order/AL-42",
+            id: "AL-42")
+        let vm = AssistantVM()
+
+        vm.debugApplyTurnEvents([.references([first], active: true)])
+        XCTAssertEqual(vm.messages.last?.references.map(\.refId), [first.refId])
+        XCTAssertEqual(vm.messages.last?.referenceProjectionPresent, true)
+
+        vm.debugApplyTurnEvents([.references([replacement], active: true)])
+        XCTAssertEqual(
+            vm.messages.last?.references.map(\.refId),
+            [replacement.refId],
+            "a later server projection replaces the prior set instead of merging")
+
+        vm.debugApplyTurnEvents([.references([], active: true)])
+        XCTAssertEqual(vm.messages.last?.references, [])
+        XCTAssertEqual(
+            vm.messages.last?.referenceProjectionPresent,
+            true,
+            "an explicit empty projection remains authoritative and clears stale trusted links")
+    }
+
+    func testHiddenRolloutTerminalClearsInsteadOfActivatingAnEmptyContract() throws {
+        // Codex P1 (PR #845): a replayed/tail `done` in off/shadow carries an
+        // empty projection. Reading that as a LIVE contract turned every legacy
+        // link and trusted screenshot inert on worker-fallback and reconnects.
+        let reference = try sectionReference(path: "/agent/costs", label: "Costs")
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.references([reference], active: true)])
+        XCTAssertEqual(vm.messages.last?.referencesActive, true)
+
+        vm.debugApplyTurnEvents([.references([], active: false)])
+        XCTAssertEqual(vm.messages.last?.references, [])
+        XCTAssertEqual(
+            vm.messages.last?.referencesActive, false,
+            "an explicitly inactive projection must fall back to legacy rendering")
+    }
+
+    func testExternalURLGateRejectsClientSideCanonicalizationAttacks() throws {
+        let rejected = [
+            "https://example.com/path#access_token=secret",
+            "https://xn--ypal-43d9g.com/",
+            "http://127.1/",
+            "http://0177.0.0.1/",
+            "http://%31%32%37.0.0.1/",
+            "http://127%2e0%2e0%2e1/",
+            "http://127.0.0.1./",
+            "http://999.999.999.999/",
+            "http://[::ffff:7f00:1]/",
+            "http://[0:0:0:0:0:ffff:7f00:1]/",
+            "http://[::127.0.0.1]/",
+            "http://[::7f00:1]/",
+            "https://example.com/a%0Aheader",
+            "https://example.com/a%5Cb",
+            "https://example.com/\(String(repeating: "a", count: 4_100))",
+        ]
+        for raw in rejected {
+            let url = try XCTUnwrap(URL(string: raw), "Foundation should parse fixture \(raw.prefix(80))")
+            XCTAssertFalse(AgentReferenceV1Wire.safeExternalURL(url), raw)
+        }
+        let publicIPv6 = try XCTUnwrap(URL(string: "https://[2606:4700:4700::1111]/dns-query"))
+        XCTAssertTrue(AgentReferenceV1Wire.safeExternalURL(publicIPv6))
+        for raw in [
+            "https://news.example/article?author=smith",
+            "https://news.example/article?outside=true",
+        ] {
+            XCTAssertTrue(AgentReferenceV1Wire.safeExternalURL(try XCTUnwrap(URL(string: raw))), raw)
+        }
+        for raw in [
+            "https://news.example/?access_token=x",
+            "https://news.example/?oauth_state=x",
+            "https://news.example/?session_id=x",
+            "https://news.example/?client_secret=x",
+        ] {
+            XCTAssertFalse(AgentReferenceV1Wire.safeExternalURL(try XCTUnwrap(URL(string: raw))), raw)
+        }
+    }
+
+    func testUnverifiedMarkdownURLHasNoUIKitLinkAttribute() throws {
+        let attributed = AgentMarkdownText.attributedParagraph(
+            "[unknown](https://evil.example/path)", pal: AgentPalette(.dark), references: [])
+        var links: [URL] = []
+        attributed.enumerateAttribute(.link, in: NSRange(location: 0, length: attributed.length)) {
+            value, _, _ in
+            if let url = value as? URL { links.append(url) }
+        }
+        XCTAssertTrue(links.isEmpty)
+
+        let verified = try externalReference("https://openai.com/research")
+        let trusted = AgentMarkdownText.attributedParagraph(
+            "[OpenAI](https://openai.com/research)", pal: AgentPalette(.dark), references: [verified])
+        trusted.enumerateAttribute(.link, in: NSRange(location: 0, length: trusted.length)) {
+            value, _, _ in
+            if let url = value as? URL { links.append(url) }
+        }
+        XCTAssertEqual(links, [URL(string: "https://openai.com/research")!])
+    }
+
+    func testProviderNeutralFocusRouteIsNativeAndRejectsMalformedScope() {
+        for path in [
+            "/agent/references/reminder/rem_1",
+            "/agent/references/order/ord_1?business_id=ALMA_LIFESTYLE",
+            "/agent/references/cdit_client/client_1?business_id=CREATIVE_DIGITAL_IT",
+        ] {
+            guard case .native = AlmaNavCoordinator.decide(path: path, openWebForced: { _, _ in }) else {
+                return XCTFail("\(path) must resolve to native reference focus")
+            }
+        }
+        for path in [
+            "/agent/references/order/../secret?business_id=ALMA_LIFESTYLE",
+            "/agent/references/order/ord_1?business_id=UNKNOWN",
+            "/agent/references/order/ord_1/extra?business_id=ALMA_LIFESTYLE",
+        ] {
+            guard case .unknown = AlmaNavCoordinator.decide(path: path, openWebForced: { _, _ in }) else {
+                return XCTFail("\(path) must fail closed")
+            }
+        }
     }
 
     func testOrderEntityDeepLinksResolveNativelyWithExactFocus() throws {
@@ -4558,18 +4981,50 @@ final class AssistantParityV2Tests: XCTestCase {
         }
     }
 
-    func testMarkdownLinkRouterRejectsApiAndUnsafeHrefsLikeWeb() {
-        // Web parity: src/agent/lib/markdown-link-router.ts treats /api/* and
-        // credential-bearing or protocol-relative hrefs as never-clickable.
-        XCTAssertNil(AgentMarkdownLinkRouter.destination(for: URL(string: "/api/orders/orders")!))
-        XCTAssertNil(AgentMarkdownLinkRouter.destination(for: URL(string: "/api")!))
-        XCTAssertNil(AgentMarkdownLinkRouter.destination(
-            for: URL(string: "https://alma-erp-six.vercel.app/api/orders/orders?id=ALM-1")!))
-        XCTAssertNil(AgentMarkdownLinkRouter.destination(for: URL(string: "https://user:pw@example.com/x")!))
-        XCTAssertEqual(AgentMarkdownLinkRouter.destination(for: URL(string: "/orders/ALM-1")!),
-                       .almaPath("/orders/ALM-1"))
-        XCTAssertEqual(AgentMarkdownLinkRouter.destination(for: URL(string: "https://example.com/x")!),
-                       .external(URL(string: "https://example.com/x")!))
+    func testLegacyContractKeepsOrdinaryLinksClickableAndStillRejectsUnsafeHrefs() throws {
+        // Codex P1 (PR #845): with the rollout off/shadow the server sends no
+        // references, so demanding one made every link in existing history — and
+        // every trusted tool screenshot — inert. Legacy mode must render exactly
+        // as it did before the reference pipeline, unsafe hrefs still refused.
+        XCTAssertEqual(
+            AgentMarkdownLinkRouter.destination(
+                for: try XCTUnwrap(URL(string: "/orders/ALM-1")), references: [], contractActive: false),
+            .almaPath("/orders/ALM-1"))
+        XCTAssertEqual(
+            AgentMarkdownLinkRouter.destination(
+                for: try XCTUnwrap(URL(string: "https://example.com/x")), references: [], contractActive: false),
+            .external(try XCTUnwrap(URL(string: "https://example.com/x"))))
+        for unsafe in [
+            "/api/orders/orders",
+            "/api",
+            "https://alma-erp-six.vercel.app/api/orders/orders?id=ALM-1",
+            "https://user:pw@example.com/x",
+        ] {
+            XCTAssertNil(
+                AgentMarkdownLinkRouter.destination(
+                    for: try XCTUnwrap(URL(string: unsafe)), references: [], contractActive: false),
+                unsafe)
+        }
+    }
+
+    func testMarkdownLinkRouterRejectsApiAndUnsafeHrefsWithoutAVerifiedReference() throws {
+        // Web parity (src/agent/lib/markdown-link-router.ts): with no server-minted
+        // reference on THIS message NOTHING is clickable — /api/*, credential-bearing
+        // and oversized hrefs included, and a plausible ERP path is no exception.
+        for raw in [
+            "/api/orders/orders",
+            "/api",
+            "https://alma-erp-six.vercel.app/api/orders/orders?id=ALM-1",
+            "https://user:pw@example.com/x",
+            "/orders/ALM-1",
+            "https://example.com/x",
+            "/orders/ALM-1\u{7f}",
+        ] {
+            XCTAssertNil(
+                AgentMarkdownLinkRouter.destination(
+                    for: try XCTUnwrap(URL(string: raw)), references: []),
+                raw)
+        }
     }
 
     func testExactOrderResponseDecodesDeepLinkPayload() throws {
@@ -4584,34 +5039,77 @@ final class AssistantParityV2Tests: XCTestCase {
                      "a malformed/partial lookup must never open a different order")
     }
 
-    func testSourcesExcludeActionsMediaAndFencedCodeExamples() {
+    func testSourcesUseStructuredPurposeAndExcludeActionsMediaAndFencedExamples() throws {
+        let references = [
+            try externalReference("https://openai.com/research", label: "OpenAI research"),
+            try artifactReference(id: "launch", path: "/api/assistant/artifacts/launch/pdf"),
+            try externalReference(
+                "https://example.com/demo.mp4", label: "Watch demo",
+                kind: "external_media", purpose: "media"),
+            try entityReference(path: "/orders/ord_42", id: "ord_42"),
+            try entityReference(path: "/employees/EMP-2", namespace: "lifestyle_employee", id: "EMP-2"),
+            try entityReference(path: "/trading/accounts/acct_9", namespace: "trading_account", id: "acct_9"),
+            try externalReference("https://example.com/not-a-source", label: "Literal example"),
+        ]
         let citations = AgentMarkdownText.extractCitations("""
         Evidence: [OpenAI research](https://openai.com/research).
-        [Download report](/api/reports/launch.pdf)
+        [Download report](/api/assistant/artifacts/launch/pdf)
         [Watch demo](https://example.com/demo.mp4)
         Exact records: [ALM-42](/orders/ord_42), [Alex](/employees/EMP-2), [Main](/trading/accounts/acct_9).
         ```markdown
         [Literal example](https://example.com/not-a-source)
         ```
-        """)
+        """, references: references)
 
         XCTAssertEqual(citations.map(\.title), ["OpenAI research"])
         XCTAssertEqual(
-            AgentMarkdownLinkRouter.destination(for: URL(string: "/orders/ord_42")!),
+            AgentMarkdownLinkRouter.destination(
+                for: URL(string: "/orders/ord_42")!, references: references),
             .almaPath("/orders/ord_42"),
             "an entity action stays tappable even though it is not a citation")
     }
 
-    func testCitationDestinationPreservesBalancedParentheses() {
+    func testCitationCarriesVerifiedProviderAndStructuredSourceClassification() throws {
+        let url = "https://www.facebook.com/business/news"
+        let reference = try externalReference(
+            url,
+            label: "Meta business news",
+            kind: "external_source",
+            purpose: "source",
+            provider: "facebook")
+        let sameURLMedia = try externalReference(
+            url,
+            label: "Meta image",
+            kind: "external_media",
+            purpose: "media",
+            provider: "facebook",
+            mediaType: "image/jpeg")
+
         let citations = AgentMarkdownText.extractCitations(
-            "[Wikipedia](https://en.wikipedia.org/wiki/Function_(mathematics))")
+            "[Meta business news](\(url))",
+            references: [sameURLMedia, reference])
+
+        let citation = try XCTUnwrap(citations.first)
+        XCTAssertEqual(citation.provider, "facebook")
+        XCTAssertEqual(citation.domain, "facebook.com")
+        XCTAssertEqual(citation.sourceLabel, "facebook · facebook.com")
+        XCTAssertEqual(citation.referenceKind, "external_source")
+        XCTAssertEqual(citation.purpose, "source")
+    }
+
+    func testCitationDestinationPreservesBalancedParentheses() throws {
+        let ref = try externalReference(
+            "https://en.wikipedia.org/wiki/Function_(mathematics)", label: "Wikipedia")
+        let citations = AgentMarkdownText.extractCitations(
+            "[Wikipedia](https://en.wikipedia.org/wiki/Function_(mathematics))",
+            references: [ref])
 
         XCTAssertEqual(citations.count, 1)
         XCTAssertEqual(citations[0].url.absoluteString,
                        "https://en.wikipedia.org/wiki/Function_(mathematics)")
     }
 
-    func testClaimLocusCitationIDsUseStableResponseWideNumbers() {
+    func testClaimLocusCitationIDsUseStableResponseWideNumbers() throws {
         let firstClaim = """
         প্রথম claim [OpenAI research](https://openai.com/research?publishedAt=2026-08-09) সমর্থন করে।
         """
@@ -4624,14 +5122,27 @@ final class AssistantParityV2Tests: XCTestCase {
         """
         let response = [firstClaim, unsupportedClaim, secondClaim, repeatedFirstSource]
             .joined(separator: "\n\n")
-        let citations = AgentMarkdownText.extractCitations(response)
+        let references = [
+            try externalReference(
+                "https://openai.com/research?publishedAt=2026-08-09",
+                label: "OpenAI research"),
+            try sectionReference(path: "/agent/costs", label: "ALMA Costs"),
+            try externalReference(
+                "https://example.com/demo.mp4", label: "video",
+                kind: "external_media", purpose: "media"),
+        ]
+        let citations = AgentMarkdownText.extractCitations(response, references: references)
 
-        XCTAssertEqual(citations.map(\.id), [1, 2])
-        XCTAssertEqual(citations.map(\.title), ["OpenAI research", "ALMA Costs"])
-        XCTAssertEqual(AgentMarkdownText.citationIDs(in: firstClaim, from: citations), [1])
-        XCTAssertEqual(AgentMarkdownText.citationIDs(in: unsupportedClaim, from: citations), [])
-        XCTAssertEqual(AgentMarkdownText.citationIDs(in: secondClaim, from: citations), [2])
-        XCTAssertEqual(AgentMarkdownText.citationIDs(in: repeatedFirstSource, from: citations), [1])
+        XCTAssertEqual(citations.map(\.id), [1])
+        XCTAssertEqual(citations.map(\.title), ["OpenAI research"])
+        XCTAssertEqual(AgentMarkdownText.citationIDs(
+            in: firstClaim, from: citations, references: references), [1])
+        XCTAssertEqual(AgentMarkdownText.citationIDs(
+            in: unsupportedClaim, from: citations, references: references), [])
+        XCTAssertEqual(AgentMarkdownText.citationIDs(
+            in: secondClaim, from: citations, references: references), [])
+        XCTAssertEqual(AgentMarkdownText.citationIDs(
+            in: repeatedFirstSource, from: citations, references: references), [1])
     }
 
     func testRichOutputFileRefsSurviveCanonicalColdLoad() throws {

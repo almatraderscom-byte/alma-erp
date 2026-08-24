@@ -599,7 +599,7 @@ export function StudioV3VideoLab({
       <StudioConfirmationDialog
         ariaLabel="Review video queue request"
         confirmDisabled={!creationAvailable || !reviewEstimate || !ready || queueing}
-        confirmLabel={queueing ? 'Revalidating…' : `Confirm up to ৳${reviewEstimate?.maxCostBdt.toLocaleString('en-BD') ?? '—'}`}
+        confirmLabel={queueing ? 'Revalidating…' : `Confirm up to ৳${reviewEstimate?.estimateBdt.toLocaleString('en-BD') ?? '—'}`}
         onCancel={() => { setReviewOpen(false); setReviewEstimate(null); setReviewRequest(null) }}
         onConfirm={() => void queue()}
         open={reviewOpen}

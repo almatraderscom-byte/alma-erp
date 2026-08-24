@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { liveVoiceToolInput } from '../route'
+import { liveVoiceToolInput, liveVoiceToolResult } from '../route'
 
 describe('live voice read-only tool input', () => {
   it('supplies an explicit Dhaka today/today window for sales', () => {
@@ -24,5 +24,23 @@ describe('live voice read-only tool input', () => {
     const result = liveVoiceToolInput('get_orders', input)
     expect(result).toEqual(input)
     expect(result).not.toBe(input)
+  })
+})
+
+describe('live voice reference rollout boundary', () => {
+  it('never falls back to a successful top-level envelope when data is absent', () => {
+    process.env.AGENT_REFERENCES_ROLLOUT = 'shadow'
+    expect(liveVoiceToolResult({
+      success: true,
+      references: [{ refId: 'must-not-reach-provider' }],
+    })).toBeNull()
+  })
+
+  it('keeps ordinary data but strips hidden refs from failure envelopes', () => {
+    process.env.AGENT_REFERENCES_ROLLOUT = 'off'
+    expect(liveVoiceToolResult({ success: true, data: { count: 2 }, references: [{}] }))
+      .toEqual({ count: 2 })
+    expect(liveVoiceToolResult({ success: false, error: 'nope', references: [{}] }))
+      .toEqual({ success: false, error: 'nope' })
   })
 })

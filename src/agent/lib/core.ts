@@ -152,6 +152,11 @@ import {
   extractAgentEntityLinksFromRecords,
   linkifyAgentEntityText,
 } from '@/agent/lib/entity-links'
+import { extractAgentReferencesFromRecords } from '@/agent/lib/references/extractors'
+import { extractUserProvidedReferences } from '@/agent/lib/references/external-url'
+import { compileAgentReferenceText } from '@/agent/lib/references/compiler'
+import { mergeAgentReferences } from '@/agent/lib/references/validator'
+import { exposedAgentReferences, shouldRenderAgentReferences, toolResultForReferenceRollout } from '@/agent/lib/references/flags'
 import {
   deriveOwnerTurnAuthorization,
   isReadOnlyPlanControlTool,
@@ -173,6 +178,7 @@ import {
   verifyClaimsAgainstLedger,
   detectFabricatedToolResponse,
 } from '@/agent/lib/claim-verifier'
+import type { AgentReferenceV1 } from '@/agent/lib/references/types'
 
 // ── Event types ────────────────────────────────────────────────────────────
 
@@ -334,6 +340,8 @@ export type AgentEvent =
       categories: string[]
       snippets: string[]
     }
+  /** Structured destinations arrive independently of prose and are replay-safe. */
+  | { type: 'references'; references: AgentReferenceV1[]; referencesActive?: boolean }
   // needContinue: the turn hit the serverless deadline mid-task (browser work
   // unfinished) — the web client auto-sends a bounded "continue" so a long task
   // finishes end-to-end without the owner typing it every ~4.5 minutes.
@@ -343,7 +351,14 @@ export type AgentEvent =
        * server. If the chip says one thing and this says another, that is
        * visible instead of silent — which is the owner's "must sync" condition.
        */
-      permissionMode?: string }
+      permissionMode?: string
+      references?: AgentReferenceV1[]
+      /** Is the verified-reference contract authoritative for this reply? An
+       *  empty/absent `references` cannot say whether the rollout is hidden or
+       *  the reply simply cited nothing, and the clients must not guess: guessing
+       *  either turns legacy links inert in shadow, or leaves model-authored
+       *  links clickable while the contract is ON (Codex P1 ×2, PR #845). */
+      referencesActive?: boolean }
   /** `messageId`: the assistant row salvaged before the failure (partial work + warning). */
   | { type: 'error'; message: string; messageId?: string }
 
@@ -1405,6 +1420,11 @@ export async function* runAgentTurn(
     }
   }
   const verifiedEntityLinks = () => extractAgentEntityLinksFromRecords(toolRecords, { businessId })
+  const userProvidedReferences = extractUserProvidedReferences(lastUserText, { businessId, roles: ['SUPER_ADMIN'] })
+  const verifiedReferences = () => mergeAgentReferences(
+    userProvidedReferences,
+    extractAgentReferencesFromRecords(toolRecords, { businessId, roles: ['SUPER_ADMIN'] }),
+  )
   // Confirm cards emitted this turn — persisted into the assistant message so the
   // card (and later its approved/rejected outcome) survives a page reload.
   const emittedConfirmCards: Array<{ type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; imageModelSelection?: unknown; imageRenderSelection?: unknown }> = []
@@ -1420,8 +1440,18 @@ export async function* runAgentTurn(
   let verifyRetries = 0
 
   if (intakeAutoReply) {
-    const replyText = intakeAutoReply
-    yield { type: 'text_delta', delta: intakeAutoReply }
+    const intakeReferences = userProvidedReferences
+    // ONE authoritative answer to "is the verified-reference contract live for
+    // this turn?". The clients must never infer it from an empty array: inferring
+    // "inactive" turns legacy links inert in shadow, inferring "active" leaves
+    // model-authored links clickable while the contract is ON (Codex P1 ×2, #845).
+    const intakeContractActive = shouldRenderAgentReferences()
+    const visibleIntakeReferences = exposedAgentReferences(intakeReferences)
+    const replyText = compileAgentReferenceText(intakeAutoReply, intakeReferences, { appendUnmentioned: false })
+    yield { type: 'text_delta', delta: replyText }
+    if (visibleIntakeReferences.length) {
+      yield { type: 'references', references: visibleIntakeReferences, referencesActive: true }
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
     const savedMsg = await db.agentMessage.create({
@@ -1432,12 +1462,12 @@ export async function* runAgentTurn(
         tokensIn: 0,
         tokensOut: 0,
         costUsd: 0,
-        usage: { input_tokens: 0, output_tokens: 0, model: chatModel.id, intake_auto: true },
+        usage: { input_tokens: 0, output_tokens: 0, model: chatModel.id, intake_auto: true, references: intakeReferences.length ? intakeReferences : undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: replyText }])
     await touchConversationActivity(conversationId)
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0 }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0, references: intakeContractActive ? visibleIntakeReferences : undefined, referencesActive: intakeContractActive }
     return
   }
 
@@ -1918,7 +1948,11 @@ export async function* runAgentTurn(
             ))
           }
           if (finalText && violations.length === 0) {
-            violations.push(...detectExplicitInstructionViolations(finalText, currentOwnerInstructions))
+            violations.push(...detectExplicitInstructionViolations(
+              finalText,
+              currentOwnerInstructions,
+              { voiceTurn },
+            ))
           }
           if (violations.length > 0) {
             verifyRetries++
@@ -2578,8 +2612,12 @@ export async function* runAgentTurn(
 
         toolRecords.push({
           id: tb.id, toolName: tb.name, input: tb.input,
-          output: result.data !== undefined
-            ? { data: result.data, ...(result.entityLinks?.length ? { entityLinks: result.entityLinks } : {}) }
+          output: result.data !== undefined || result.entityLinks?.length || result.references?.length
+            ? {
+                ...(result.data !== undefined ? { data: result.data } : {}),
+                ...(result.entityLinks?.length ? { entityLinks: result.entityLinks } : {}),
+                ...(result.references?.length ? { references: result.references } : {}),
+              }
             : null,
           status: result.success ? 'success' : 'error',
           durationMs, error: result.error ?? null,
@@ -2731,9 +2769,10 @@ export async function* runAgentTurn(
         // model a REAL image block so it SEES the page — not a URL string it can't
         // open. Strip the raw base64 out of the JSON text first (else it bloats the
         // context by ~100KB per shot); the image travels only as the image block.
-        const img = (result as ToolResult).image
+        const modelVisibleResult = toolResultForReferenceRollout(result as ToolResult & Record<string, unknown>)
+        const img = modelVisibleResult.image
         if (img && typeof img.data === 'string' && img.data.length > 0) {
-          const { image: _omitImg, ...resultNoImg } = result as ToolResult
+          const { image: _omitImg, ...resultNoImg } = modelVisibleResult
           toolResultContent.push({
             type: 'tool_result',
             tool_use_id: tb.id,
@@ -2749,7 +2788,7 @@ export async function* runAgentTurn(
           toolResultContent.push({
             type: 'tool_result',
             tool_use_id: tb.id,
-            content: JSON.stringify(annotateEmptyResult(result)),
+            content: JSON.stringify(annotateEmptyResult(modelVisibleResult)),
           })
         }
       }
@@ -2959,13 +2998,23 @@ export async function* runAgentTurn(
     // block is known. Reconcile once at convergence using the same verified,
     // route-allowlisted metadata as every other provider.
     const entityLinks = verifiedEntityLinks()
-    const linkedJoinedText = linkifyAgentEntityText(joinedText, entityLinks, {
+    const references = verifiedReferences()
+    const referenceContractActive = shouldRenderAgentReferences()
+    const visibleReferences = exposedAgentReferences(references)
+    const legacyLinkedText = linkifyAgentEntityText(joinedText, entityLinks, {
+      appendUnmentioned: true,
+      linkMentions: false,
+    })
+    const linkedJoinedText = compileAgentReferenceText(legacyLinkedText, references, {
       appendUnmentioned: true,
       linkMentions: false,
     })
     if (linkedJoinedText !== joinedText) {
       yield { type: 'text_delta', delta: linkedJoinedText.slice(joinedText.length) }
       joinedText = linkedJoinedText
+    }
+    if (visibleReferences.length > 0) {
+      yield { type: 'references', references: visibleReferences, referencesActive: true }
     }
     const storedContent: StoredContentBlock[] = [{ type: 'text', text: joinedText }]
     // Append confirm-card breadcrumbs so the approval card (and its eventual
@@ -2990,7 +3039,7 @@ export async function* runAgentTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload; the GET route surfaces it as
         // `thinking`/`thinkingMs` and history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: chatModel.id, apiModel, provider: chatModel.provider, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? compactTimelineForStorage(timeline) : undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: chatModel.id, apiModel, provider: chatModel.provider, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined, referencesActive: referenceContractActive || undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? compactTimelineForStorage(timeline) : undefined },
       },
     })
     nativeFinalMessageSaved = true
@@ -3076,6 +3125,8 @@ export async function* runAgentTurn(
       cacheRead: totalCacheReadTokens,
       costUsd,
       needContinue: coreTaskUnfinished,
+      references: referenceContractActive ? visibleReferences : undefined,
+      referencesActive: referenceContractActive,
     }
   } catch (err) {
     // A provider throw/abort may happen after unverified prose was already
@@ -3138,6 +3189,9 @@ export async function* runAgentTurn(
               provider: chatModel.provider,
               timeline: compactTimelineForStorage(timeline),
               interrupted: true,
+              // Its terminal states the contract; the saved row must agree or a
+              // reload reads this salvage as pre-contract history (Codex P2 #845).
+              referencesActive: shouldRenderAgentReferences() || undefined,
             },
           },
         })
@@ -3166,6 +3220,10 @@ export async function* runAgentTurn(
           cacheRead: totalCacheReadTokens,
           costUsd,
           needContinue: false,
+          // This salvage cites nothing, but an ON contract must still be stated
+          // or the client leaves the reply in legacy mode (Codex P2, PR #845).
+          references: shouldRenderAgentReferences() ? [] : undefined,
+          referencesActive: shouldRenderAgentReferences(),
         }
         return
       } catch (salvageError) {

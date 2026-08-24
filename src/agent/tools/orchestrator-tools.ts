@@ -152,6 +152,10 @@ const delegate_to_specialist: AgentTool = {
         // again before it can reach final-reply linkification.
         entityLinks: result.entityLinks,
       },
+      // Metadata stays outside the model-visible business payload. The common
+      // executor revalidates it before final compilation/stream/persistence.
+      entityLinks: result.entityLinks,
+      references: result.references,
     }
   },
 }
@@ -292,7 +296,7 @@ const execute_plan: AgentTool = {
       const plan = await loadPlan(planId)
       if (!plan) return { success: false, error: `Plan not found: ${planId}` }
       if (plan.status === 'done') {
-        return { success: true, data: { status: 'already_done', display: formatPlanForDisplay(plan) } }
+        return { success: true, data: { plan_id: planId, status: 'already_done', display: formatPlanForDisplay(plan) } }
       }
 
       // Autodrive ON → hand the plan to the autonomous driver and return. The

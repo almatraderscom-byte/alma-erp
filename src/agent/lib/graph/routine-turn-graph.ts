@@ -37,6 +37,7 @@ import type { ModelEntry } from '@/agent/lib/models/registry'
 import type { EffortDialect, EffortLevel } from '@/agent/lib/models/effort'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 import type { OwnerTurnAuthorization } from '@/agent/lib/turn-authorization'
+import { toolResultForReferenceRollout } from '@/agent/lib/references/flags'
 
 export type RoutineIntent =
   | 'sales_today'
@@ -415,7 +416,8 @@ export async function runRoutineTurnGraph(
       .addNode('format_reply', async (s) => {
         const adapter = adapterFor(deps.model.provider)
         // Strip bulky/irrelevant fields before showing the model the data.
-        const json = JSON.stringify(s.toolOutput ?? {}).slice(0, 12_000)
+        const modelOutput = toolResultForReferenceRollout(s.toolOutput ?? {})
+        const json = JSON.stringify(modelOutput).slice(0, 12_000)
         let text = ''
         let inputTokens = 0
         let outputTokens = 0

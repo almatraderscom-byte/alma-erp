@@ -204,6 +204,8 @@ import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
   detectExplicitInstructionViolations,
+  detectProfessionalReportStyleViolations,
+  requiresCompleteReport,
   countStagedCards,
   detectMissingCardViolation,
   detectProseChoiceViolation,
@@ -249,6 +251,14 @@ import {
   extractAgentEntityLinksFromRecords,
   linkifyAgentEntityText,
 } from '@/agent/lib/entity-links'
+import {
+  extractAgentReferences,
+  extractAgentReferencesFromRecords,
+} from '@/agent/lib/references/extractors'
+import { extractUserProvidedReferences } from '@/agent/lib/references/external-url'
+import { compileAgentReferenceText } from '@/agent/lib/references/compiler'
+import { mergeAgentReferences } from '@/agent/lib/references/validator'
+import { exposedAgentReferences, shouldRenderAgentReferences, toolResultForReferenceRollout } from '@/agent/lib/references/flags'
 import {
   buildSavedSalvageEventSequence,
 } from '@/agent/lib/models/salvage-contract'
@@ -2348,6 +2358,19 @@ async function* runAlternateProviderTurn(
   }
   const toolRecords: ToolRecord[] = []
   const verifiedEntityLinks = () => extractAgentEntityLinksFromRecords(toolRecords, { businessId })
+  const userProvidedReferences = extractUserProvidedReferences(lastUserText, {
+    businessId,
+    roles: ['SUPER_ADMIN'],
+  })
+  // ONE authoritative answer to "is the verified-reference contract live for
+  // this turn?". The clients must never infer it from an empty array: inferring
+  // "inactive" turns legacy links inert in shadow, inferring "active" leaves
+  // model-authored links clickable while the contract is ON (Codex P1 ×2, #845).
+  const referenceContractActive = shouldRenderAgentReferences()
+  const verifiedReferences = () => mergeAgentReferences(
+    userProvidedReferences,
+    extractAgentReferencesFromRecords(toolRecords, { businessId, roles: ['SUPER_ADMIN'] }),
+  )
   // Dead-path guard state (2026-07-16): consecutive-failure streaks per tool
   // and per exact tool+args signature within THIS turn; a success clears the
   // tool's streak. One nudge per tool per turn — the point is a change of
@@ -2504,6 +2527,9 @@ async function* runAlternateProviderTurn(
   let cardStagedNudgeSent = false
   let deadlineNudgeSent = false
   let roundBudgetWrapSent = false
+  /** One extra text-only round, spent only to turn a structureless wrap-up into
+   *  the complete report Boss explicitly asked for. Never more than once. */
+  let reportRepairUsed = false
   // S0 — whose instruction this turn executes. An unattended Plan-Driver step
   // stamps 'owner_policy' on its turn row, so every tool call in this loop meets
   // the autonomy ladder + money cap instead of inheriting Boss's own authority.
@@ -2895,14 +2921,28 @@ async function* runAlternateProviderTurn(
       const lastBudgetRound = iteration >= maxIterations - 1 && toolRecords.length > 0
       if (lastBudgetRound && !roundBudgetWrapSent && !nearDeadline) {
         roundBudgetWrapSent = true
+        // When Boss explicitly asked for a COMPLETE report, a "what I did so
+        // far" wrap-up is the wrong deliverable — and this round is also the
+        // one where the style gate is skipped (no round left to retry into),
+        // so the nudge is the only thing holding the contract. The model has
+        // every tool result in context here; ask for the report itself, with
+        // the gaps named honestly rather than the whole thing deferred.
+        // (Live 2026-08-24: an inventory report settled as a progress list
+        //  ending "continue বললে…" — this branch is that failure's fix.)
         messages = [
           ...messages,
           {
             role: 'user',
-            content:
-              'এই টার্নের কাজের রাউন্ড-বাজেট শেষ — এখন আর টুল চালানো যাবে না। ' +
-              'এ পর্যন্ত কী কী করেছ, কী পেলে (সংখ্যা সহ) আর ঠিক কোথায় আছ তা বসকে বাংলায় গুছিয়ে জানাও; ' +
-              'কাজ অসমাপ্ত থাকলে শেষে লেখো: "Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।" — চুপচাপ থেমো না।',
+            content: requiresCompleteReport(currentOwnerInstructions)
+              ? 'এই টার্নের কাজের রাউন্ড-বাজেট শেষ — এখন আর টুল চালানো যাবে না। '
+                + 'Boss সম্পূর্ণ report চেয়েছেন, তাই "কী কী করেছি" ধরনের progress list দিও না — '
+                + 'এখন হাতে যা ডেটা আছে তা দিয়েই **পূর্ণ report-টা লিখে দাও**: প্রথমে bold bottom line, '
+                + 'তারপর `##` heading দিয়ে executive summary, KPI table, findings, risks, recommendations, next steps। '
+                + 'যে অংশের ডেটা পাওনি সেটি "যাচাই করা যায়নি" বলে report-এর ভেতরেই স্পষ্ট লেখো — সংখ্যা বানাবে না। '
+                + 'কাজ অসমাপ্ত থাকলে report-এর শেষে লেখো: "Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।"'
+              : 'এই টার্নের কাজের রাউন্ড-বাজেট শেষ — এখন আর টুল চালানো যাবে না। '
+                + 'এ পর্যন্ত কী কী করেছ, কী পেলে (সংখ্যা সহ) আর ঠিক কোথায় আছ তা বসকে বাংলায় গুছিয়ে জানাও; '
+                + 'কাজ অসমাপ্ত থাকলে শেষে লেখো: "Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।" — চুপচাপ থেমো না।',
           },
         ]
       }
@@ -3852,7 +3892,11 @@ async function* runAlternateProviderTurn(
             violations.push(...detectRoboticStyleViolations(iterationText.trim()))
           }
           if (violations.length === 0) {
-            violations.push(...detectExplicitInstructionViolations(iterationText.trim(), currentOwnerInstructions))
+            violations.push(...detectExplicitInstructionViolations(
+              iterationText.trim(),
+              currentOwnerInstructions,
+              { voiceTurn },
+            ))
           }
           if (violations.length > 0) {
             verifyRetries++
@@ -3877,6 +3921,54 @@ async function* runAlternateProviderTurn(
             ]
             continue
           }
+        }
+
+        // The wrap-up round skips the verification block above — normally there
+        // is no round to retry into. But when Boss explicitly asked for a
+        // COMPLETE report, settling a progress list is the wrong deliverable and
+        // the model is already holding every tool result it needs. Grant exactly
+        // ONE extra text-only round (tools stay stripped: `lastBudgetRound`
+        // recomputes true) to write the report properly.
+        // Live 2026-08-24: an inventory-report turn ran out of rounds and
+        // shipped "…continue বললে ঠিক এখান থেকে কাজ চালিয়ে যাব" instead.
+        if (
+          roundBudgetWrapSent
+          && !reportRepairUsed
+          && !signal?.aborted
+          && iterationText.trim()
+          && requiresCompleteReport(currentOwnerInstructions)
+          && detectProfessionalReportStyleViolations(
+            iterationText.trim(), currentOwnerInstructions, { voiceTurn },
+          ).length > 0
+        ) {
+          reportRepairUsed = true
+          maxIterations = iteration + 2
+          verifyRetries = Math.min(verifyRetries + 1, MAX_VERIFY_RETRIES)
+          runtimeVerificationSeen = true
+          yield {
+            type: 'verification_retry',
+            attempt: verifyRetries,
+            maxAttempts: MAX_VERIFY_RETRIES,
+            categories: ['instruction_mismatch'],
+            snippets: ['(অনুরোধ ছিল সম্পূর্ণ report; উত্তরটি progress list হয়ে গিয়েছিল)'],
+          }
+          supersedeLastDraft()
+          timeline.push({ t: 'verify', attempt: verifyRetries, max: MAX_VERIFY_RETRIES })
+          finalText = preambleText
+          messages = [
+            ...messages,
+            { role: 'assistant', content: iterationText },
+            {
+              role: 'user',
+              content:
+                '[INTERNAL CONTROL — this is NOT a new Boss message and must never be shown as one] '
+                + 'উপরের উত্তরটি progress list, report নয় — Boss সম্পূর্ণ report চেয়েছেন। '
+                + 'এটাই শেষ রাউন্ড: হাতের ডেটা দিয়েই পূর্ণ report লেখো — bold bottom line, তারপর '
+                + '`##` heading-এ executive summary, KPI table, findings, risks, recommendations, next steps। '
+                + 'যে ডেটা পাওনি সেটি "যাচাই করা যায়নি" বলে লেখো; কোনো সংখ্যা বানাবে না।',
+            },
+          ]
+          continue
         }
 
         const preContractText = iterationText
@@ -4386,12 +4478,20 @@ async function* runAlternateProviderTurn(
         }
 
         const resultEntityLinks = extractAgentEntityLinks(call.name, { data: result.data }, { businessId })
+        const resultReferences = mergeAgentReferences(
+          'references' in result && Array.isArray(result.references) ? result.references : [],
+          extractAgentReferences(call.name, { data: result.data }, { businessId, roles: ['SUPER_ADMIN'] }),
+        )
         const toolRecord: ToolRecord = {
           id: call.id,
           toolName: call.name,
           input: call.input,
-          output: result.data !== undefined
-            ? { data: result.data, ...(resultEntityLinks.length ? { entityLinks: resultEntityLinks } : {}) }
+          output: result.data !== undefined || resultEntityLinks.length > 0 || resultReferences.length > 0
+            ? {
+                ...(result.data !== undefined ? { data: result.data } : {}),
+                ...(resultEntityLinks.length ? { entityLinks: resultEntityLinks } : {}),
+                ...(resultReferences.length ? { references: resultReferences } : {}),
+              }
             : null,
           status: result.success ? 'success' : 'error',
           durationMs,
@@ -4606,7 +4706,7 @@ async function* runAlternateProviderTurn(
         } else {
           deadPathStreaks.delete(call.name)
         }
-        const annotated = annotateEmptyResult(result)
+        const annotated = annotateEmptyResult(toolResultForReferenceRollout(result))
         toolResults.push({
           id: call.id,
           name: call.name,
@@ -5415,16 +5515,25 @@ async function* runAlternateProviderTurn(
     // delegation, deadline salvage). Normal and routine replies are already
     // linked before their emit; this keeps every other path live + durable too.
     const entityLinks = verifiedEntityLinks()
-    const linkedFinalText = linkifyAgentEntityText(finalText, entityLinks, {
+    const references = verifiedReferences()
+    const visibleReferences = exposedAgentReferences(references)
+    const legacyLinkedText = linkifyAgentEntityText(finalText, entityLinks, {
       appendUnmentioned: true,
       // At this late point iOS preserves the lead prose when applying a
       // replacement event. An inline rewrite of the whole message would repeat
       // that lead, so this guard is intentionally append-only.
       linkMentions: false,
     })
+    const linkedFinalText = compileAgentReferenceText(legacyLinkedText, references, {
+      appendUnmentioned: true,
+      linkMentions: false,
+    })
     if (linkedFinalText !== finalText) {
       yield { type: 'text_delta', delta: linkedFinalText.slice(finalText.length) }
       finalText = linkedFinalText
+    }
+    if (visibleReferences.length > 0) {
+      yield { type: 'references', references: visibleReferences, referencesActive: true }
     }
 
     // Prefer OpenRouter's actual billed cost; fall back to the local estimate only
@@ -5495,7 +5604,7 @@ async function* runAlternateProviderTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload. The GET messages route surfaces
         // it as `thinking`/`thinkingMs`; history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider, entityLinks: entityLinks.length > 0 ? entityLinks : undefined,
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined, referencesActive: referenceContractActive || undefined,
           // P1-9: WHY this head ran, not just which one. Until now `via` lived
           // only in code and cost logs, so a surprising model choice had no
           // answer Boss could be shown ("routine_kw" / "task_pin" / "deny_kw").
@@ -5835,7 +5944,7 @@ async function* runAlternateProviderTurn(
       dedupKey: `chat:msg:${savedMsg.id}`,
     })
 
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: referenceContractActive ? visibleReferences : undefined, referencesActive: referenceContractActive }
   } catch (err) {
     if (signal?.aborted) {
       // The 280s cap aborted mid-round (the adapter stream throws). Salvage what
@@ -5900,9 +6009,17 @@ async function* runAlternateProviderTurn(
               needContinue = false
             }
           }
-          // Verified entity links + actual cost ride the persisted salvage too.
+          // Verified entity links + verified references + actual cost ride the
+          // persisted salvage too. The reference compiler runs LAST so it sees
+          // the final gate/lane-settled text, never a superseded draft.
           const entityLinks = verifiedEntityLinks()
-          salvageText = linkifyAgentEntityText(salvageText, entityLinks, {
+          const references = verifiedReferences()
+          const visibleReferences = exposedAgentReferences(references)
+          const legacySalvageText = linkifyAgentEntityText(salvageText, entityLinks, {
+            appendUnmentioned: true,
+            linkMentions: false,
+          })
+          salvageText = compileAgentReferenceText(legacySalvageText, references, {
             appendUnmentioned: true,
             linkMentions: false,
           })
@@ -5944,13 +6061,16 @@ async function* runAlternateProviderTurn(
               content: [{ type: 'text', text: salvageText }, ...emittedAskCards],
               tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
               costUsd: salvageCostUsd,
-              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
+              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined, referencesActive: referenceContractActive || undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
             },
           })
           // The provider may have thrown after an arbitrary chunk. Reset every
           // live draft/buffer only AFTER the canonical row exists, then `done`
           // atomically commits exactly that persisted salvage on web and native.
-          const doneEvent: AgentEvent = { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvageCostUsd, needContinue, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode }
+          const doneEvent: AgentEvent = { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvageCostUsd, needContinue, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: referenceContractActive ? visibleReferences : undefined, referencesActive: referenceContractActive }
+          if (visibleReferences.length > 0) {
+            yield { type: 'references', references: visibleReferences, referencesActive: true }
+          }
           if (proseLifecycle?.protocol === 2) {
             // v2: the exact persisted blocks already reached the live reducers
             // above (salvage + drainQueued); a v1-style draft reset here would
@@ -5976,6 +6096,7 @@ async function* runAlternateProviderTurn(
       messageId: string
       persistedText: string
       costUsd: number
+      references: ReturnType<typeof verifiedReferences>
     } | null> => {
       if (canceled || (!finalText.trim() && toolRecords.length === 0)) return null
       let savedMsg: { id: string }
@@ -6034,7 +6155,12 @@ async function* runAlternateProviderTurn(
           }
         }
         const entityLinks = verifiedEntityLinks()
-        text = linkifyAgentEntityText(text, entityLinks, {
+        const references = verifiedReferences()
+        const legacyText = linkifyAgentEntityText(text, entityLinks, {
+          appendUnmentioned: true,
+          linkMentions: false,
+        })
+        text = compileAgentReferenceText(legacyText, references, {
           appendUnmentioned: true,
           linkMentions: false,
         })
@@ -6055,7 +6181,7 @@ async function* runAlternateProviderTurn(
             content: [{ type: 'text', text }, ...emittedAskCards],
             tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
             costUsd: salvageCostUsd,
-            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
+            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined, referencesActive: referenceContractActive || undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
           },
         })
       } catch {
@@ -6087,6 +6213,7 @@ async function* runAlternateProviderTurn(
         messageId: String(savedMsg.id),
         persistedText: text,
         costUsd: salvageCostUsd,
+        references: verifiedReferences(),
       }
     }
     // Phase 3 — PINNED-head identity guard (roadmap: "Grok identity never changes
@@ -6129,7 +6256,11 @@ async function* runAlternateProviderTurn(
       }
       const salvage = await salvagePartialWorkOnError()
       if (salvage) {
-        const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode }
+        const visibleReferences = exposedAgentReferences(salvage.references)
+        const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: referenceContractActive ? visibleReferences : undefined, referencesActive: referenceContractActive }
+        if (visibleReferences.length) {
+          yield { type: 'references', references: visibleReferences, referencesActive: true }
+        }
         if (proseLifecycle?.protocol === 2) {
           // v2: the salvage committed the exact persisted blocks (settle + the
           // warning block) — deliver them to the live reducers, then `done`
@@ -6248,7 +6379,11 @@ async function* runAlternateProviderTurn(
     }
     const salvage = await salvagePartialWorkOnError()
     if (salvage) {
-      const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode }
+      const visibleReferences = exposedAgentReferences(salvage.references)
+      const doneEvent: AgentEvent = { type: 'done', messageId: salvage.messageId, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: salvage.costUsd, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, durationMs: Date.now() - turnStartedAtMs, permissionMode, references: referenceContractActive ? visibleReferences : undefined, referencesActive: referenceContractActive }
+      if (visibleReferences.length) {
+        yield { type: 'references', references: visibleReferences, referencesActive: true }
+      }
       if (proseLifecycle?.protocol === 2) {
         // v2: the salvage committed the exact persisted blocks (settle + the
         // warning block) — deliver them to the live reducers, then `done`
@@ -6413,6 +6548,9 @@ export async function* runOwnerTurn(
           output_tokens: 0,
           model: 'server-direct-youtube-route-guard',
           provider: 'server',
+          // Same reason as the answer-gate row: the saved row must agree with
+          // the terminal, or a reload flips it back to legacy (Codex P2 #845).
+          referencesActive: shouldRenderAgentReferences() || undefined,
         },
       },
     })
@@ -6426,6 +6564,8 @@ export async function* runOwnerTurn(
       cacheCreation: 0,
       cacheRead: 0,
       costUsd: 0,
+      references: shouldRenderAgentReferences() ? [] : undefined,
+      referencesActive: shouldRenderAgentReferences(),
     }
     return
   }
@@ -6544,13 +6684,19 @@ export async function* runOwnerTurn(
               tokensIn: 0,
               tokensOut: 0,
               costUsd: 0,
-              usage: { input_tokens: 0, output_tokens: 0, model: 'answer-gate', provider: 'gate', similarity: hit.similarity, qaId: hit.id },
+              // The live terminal below activates the contract; the SAVED row must
+              // say the same, or a reload reads this cached answer as pre-contract
+              // history and its Markdown URLs go clickable again (Codex P2 #845).
+              usage: { input_tokens: 0, output_tokens: 0, model: 'answer-gate', provider: 'gate', similarity: hit.similarity, qaId: hit.id, referencesActive: shouldRenderAgentReferences() || undefined },
             },
           })
           await touchConversationActivity(conversationId)
           void recordGateServe(hit, conversationId)
           yield { type: 'text_delta', delta: answerText }
-          yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0 }
+          // Early terminals cite nothing, but while the contract is ON they must
+          // still say so: leaving the client in legacy mode keeps a cached
+          // answer's Markdown links clickable until a refresh (Codex P2 #845).
+          yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0, references: shouldRenderAgentReferences() ? [] : undefined, referencesActive: shouldRenderAgentReferences() }
           return
         }
       }

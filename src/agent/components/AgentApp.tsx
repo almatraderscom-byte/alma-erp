@@ -43,6 +43,7 @@ const AGENT_PROSE_PROTOCOL = 2 as const
 import { isHardVerificationReplacement, supersedeVerificationTimeline } from '@/agent/lib/verification-retry-view'
 import { reduceHeldVoiceReply, settleHeldVoiceReply } from '@/agent/lib/voice-reply-holdback'
 import { removeStoppedAssistantDraft } from '@/agent/lib/stopped-turn-view'
+import type { AgentReferenceV1 } from '@/agent/lib/references/types'
 import {
   addEntry as outboxAdd,
   defaultOutboxStorage,
@@ -165,6 +166,10 @@ type MessageRow = {
   thinkingMs?: number
   /** Ordered reasoning↔tool timeline — drives the unified stream after reload. */
   timeline?: TimelineEntry[]
+  references?: AgentReferenceV1[]
+  /** The verified-reference contract is authoritative for this message. Absent
+   *  or false (rollout off/shadow, pre-contract history) = legacy rendering. */
+  referencesActive?: boolean
   createdAt?: string
 }
 
@@ -252,6 +257,8 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       durationMs: r.durationMs ?? undefined,
       apiRounds: r.apiRounds ?? undefined,
       roundCostsUsd: r.roundCostsUsd ?? undefined,
+      references: r.references,
+      referencesActive: r.referencesActive === true,
       pendingActions: confirmBlocks.length
         ? confirmBlocks.map((cb) => ({
             id: cb.pendingActionId as string,
@@ -1855,6 +1862,20 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             })
             return { ...m, text: '', toolActivity: [], selfCorrected: true, timeline }
           }))
+        } else if (evt.type === 'references') {
+          const incoming = Array.isArray(evt.references) ? evt.references as AgentReferenceV1[] : []
+          // The server states whether the contract is live; never infer it from
+          // the array. An older server that omits the flag but sends a non-empty
+          // projection can only be running it ON (Codex P1 #845).
+          const active = evt.referencesActive === undefined
+            ? incoming.length > 0
+            : evt.referencesActive === true
+          setMessages((prev) => prev.map((m) => {
+            if (m.id !== assistantMsgId) return m
+            // Server projections are authoritative, including [] after a
+            // rollout kill-switch. Merging would retain stale ON-era links.
+            return { ...m, references: active ? incoming : [], referencesActive: active }
+          }))
         } else if (evt.type === 'done') {
           gotStreamDone = true
           terminalNeedsResync = true
@@ -1889,6 +1910,18 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   durationMs: evt.durationMs as number | undefined,
                   apiRounds: (evt.apiRounds as number | undefined) ?? undefined,
                   roundCostsUsd: (evt.roundCostsUsd as number[] | undefined) ?? undefined,
+                  ...(() => {
+                    const projected = Array.isArray(evt.references)
+                      ? evt.references as AgentReferenceV1[]
+                      : undefined
+                    const active = evt.referencesActive === undefined
+                      ? (projected ? projected.length > 0 : m.referencesActive)
+                      : evt.referencesActive === true
+                    return {
+                      references: active ? (projected ?? m.references) : [],
+                      referencesActive: active,
+                    }
+                  })(),
                 }
               : m
           ))

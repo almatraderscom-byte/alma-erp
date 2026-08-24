@@ -197,11 +197,10 @@ export const AGENT_FACT_GATE = parityFlagOn(process.env.AGENT_FACT_GATE)
 // auto-ON on preview.
 export const AGENT_STYLE = parityFlagOn(process.env.AGENT_STYLE)
 
-// BP6 — robotic-style HARD gate: deterministic detection of unambiguous robotic
-// filler ("অবশ্যই! আপনার প্রশ্নের উত্তর হলো…", "চমৎকার প্রশ্ন", "আশা করি সহায়ক",
-// emoji spam) that rides the existing verification retry, so tone discipline is
-// enforced, not hoped for. OFF in prod unless AGENT_STYLE_GATE=on; auto-ON preview.
-export const AGENT_STYLE_GATE = parityFlagOn(process.env.AGENT_STYLE_GATE)
+// BP6 — output-quality HARD gate: deterministic detection of unambiguous robotic
+// filler plus under-structured explicit long reports. This is product behaviour
+// now, so it is ON by default; AGENT_STYLE_GATE=off remains the instant rollback.
+export const AGENT_STYLE_GATE = process.env.AGENT_STYLE_GATE !== 'off'
 
 /**
  * ─── UNIVERSAL SERVER-SIDE TOOL SELECTION ───────────────────────────────────

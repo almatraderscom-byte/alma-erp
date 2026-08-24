@@ -189,6 +189,13 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next()
   }
 
+  // Preview-only, static visual fixture for the professional report renderer.
+  // Vercel team SSO remains the outer gate; the page performs no ERP reads or
+  // writes and independently 404s in production.
+  if (process.env.VERCEL_ENV === 'preview' && pathname === '/agent/report-preview') {
+    return NextResponse.next()
+  }
+
   // Local Studio preview paths still perform their page-level access checks.
   if (process.env.NODE_ENV !== 'production' && (
     pathname === '/agent/creative-studio-demo'

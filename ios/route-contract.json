@@ -52,6 +52,29 @@
       "notes": "Resolved IOSP-1: AlmaNavCoordinator.tabRootIndex maps /agent to the native Agent tab; pushes and deep links select the tab instead of missing to web."
     },
     {
+      "path": "/agent/browser-live",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "BrowserLiveScreen"
+    },
+    {
+      "path": "/agent/references/[namespace]/[id]",
+      "pattern": "dynamic",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "AgentReferenceFocusScreen(namespace:entityId:businessId:)",
+      "notes": "Closed two-segment native exact-record focus; optional server-stamped business_id is validated before fetch."
+    },
+    {
+      "path": "/agent/phone",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "The protected staff softphone intentionally keeps its WebRTC web surface pending a dedicated native parity decision.",
+      "gapPhase": "IOSP-7"
+    },
+    {
       "path": "/agent/catalog-images",
       "pattern": "exact",
       "classification": "native-required",
@@ -532,14 +555,6 @@
       "screen": "TradingTelegramScreen"
     },
     {
-      "path": "/agent/browser-live",
-      "pattern": "exact",
-      "classification": "native-required",
-      "nativeHandler": "native",
-      "screen": "BrowserLiveScreen",
-      "notes": "VPS live browser feed — native since L8/L9."
-    },
-    {
       "path": "/agent/mac",
       "pattern": "exact",
       "classification": "temporary-web",
@@ -549,14 +564,6 @@
     },
     {
       "path": "/agent/media",
-      "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
-      "gapPhase": "IOSP-9"
-    },
-    {
-      "path": "/agent/phone",
       "pattern": "exact",
       "classification": "temporary-web",
       "nativeHandler": "web",
@@ -698,6 +705,13 @@
       "nativeHandler": "web",
       "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
       "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/report-preview",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Preview/dev-only professional report rendering fixture (owner-gated, no live ERP data); embedded web by design, no native counterpart planned."
     }
   ]
 }

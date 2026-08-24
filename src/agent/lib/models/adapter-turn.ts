@@ -11,6 +11,9 @@ import {
   mergeAgentEntityLinks,
   type AgentEntityLink,
 } from '@/agent/lib/entity-links'
+import { mergeAgentReferences } from '@/agent/lib/references/validator'
+import type { AgentReferenceV1 } from '@/agent/lib/references/types'
+import { toolResultForReferenceRollout } from '@/agent/lib/references/flags'
 
 export type AdapterTurnResult = {
   text: string
@@ -30,6 +33,8 @@ export type AdapterTurnResult = {
   toolsUsed: string[]
   /** Verified ALMA entity references returned by tools in this worker loop. */
   entityLinks: AgentEntityLink[]
+  /** Provider-neutral verified references gathered by the common executor. */
+  references: AgentReferenceV1[]
 }
 
 export async function runAdapterToolLoop(args: {
@@ -48,6 +53,7 @@ export async function runAdapterToolLoop(args: {
   let messages: NeutralMsg[] = [{ role: 'user', content: args.userTask }]
   const toolsUsed: string[] = []
   let entityLinks: AgentEntityLink[] = []
+  let references: AgentReferenceV1[] = []
   let inputTokens = 0
   let outputTokens = 0
   let cacheRead = 0
@@ -116,9 +122,15 @@ export async function runAdapterToolLoop(args: {
         ...(args.toolContext ?? {}),
       })
       entityLinks = mergeAgentEntityLinks(entityLinks, result.entityLinks ?? [])
+      references = mergeAgentReferences(references, result.references ?? [])
       messages = [
         ...messages,
-        { role: 'tool', toolCallId: call.id, name: call.name, result },
+        {
+          role: 'tool',
+          toolCallId: call.id,
+          name: call.name,
+          result: toolResultForReferenceRollout(result),
+        },
       ]
 
       // find_tool hit → expose the matched schemas for the remaining rounds.
@@ -182,5 +194,6 @@ export async function runAdapterToolLoop(args: {
     actualCostUsd,
     toolsUsed: Array.from(new Set(toolsUsed)),
     entityLinks,
+    references,
   }
 }
