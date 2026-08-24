@@ -6,6 +6,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  * trade and never rolled that back, so any ledger guard (e.g. selling more USDT
  * than the account holds) stranded the draft — gone from the PENDING list, never
  * in the account, and with no button left to retry it.
+ *
+ * The two rules the fix must never lose (both raised on review as duplicate-trade
+ * risks):
+ *   1. The claim is EXCLUSIVE — only a PENDING draft can be claimed, so two
+ *      reviewers confirming at once cannot both proceed to the ledger.
+ *   2. The trade and the draft's POSTED linkage commit in ONE transaction, so
+ *      there is no window where a trade exists but the draft still looks
+ *      unposted (which every recovery path would then post again).
  */
 
 const draftFindFirst = vi.fn()
@@ -105,17 +113,47 @@ describe('approveTelegramDraftToLedger', () => {
     expect((rollback![0] as { where: { tradingTradeId: unknown } }).where.tradingTradeId).toBeNull()
   })
 
-  it('retries a draft previously stranded in APPROVED instead of refusing it', async () => {
+  it('claims only from PENDING so two concurrent reviewers cannot both post', async () => {
+    draftFindFirst.mockResolvedValueOnce(pendingDraft()).mockResolvedValueOnce(pendingDraft())
+    createTradingTradeRecord.mockResolvedValue({ trade: { id: 'trade-9' }, summary: { merchantProgress: 0 } })
+
+    await approveTelegramDraftToLedger(ctx, 'draft-1')
+
+    const claim = draftUpdateMany.mock.calls[0][0] as { where: { status: unknown } }
+    // A `status: { in: ['PENDING','APPROVED'] }` claim would let the second
+    // reviewer "win" too, and both would reach the ledger.
+    expect(claim.where.status).toBe('PENDING')
+  })
+
+  it('recovers a stranded APPROVED draft before claiming it, then posts once', async () => {
     draftFindFirst
       .mockResolvedValueOnce(pendingDraft({ status: 'APPROVED' })) // loadDraftForActor
-      .mockResolvedValueOnce(pendingDraft({ status: 'APPROVED' })) // postDraftToLedger re-read
+      .mockResolvedValueOnce(pendingDraft())                       // postDraftToLedger re-read
     createTradingTradeRecord.mockResolvedValue({ trade: { id: 'trade-9' }, summary: { merchantProgress: 0 } })
 
     const result = await approveTelegramDraftToLedger(ctx, 'draft-1')
 
     expect(result).toEqual({ tradeId: 'trade-9', alreadyPosted: false })
-    const claim = draftUpdateMany.mock.calls[0][0] as { where: { status: { in: string[] } } }
-    expect(claim.where.status.in).toContain('APPROVED')
+    // First write is the recovery (APPROVED → PENDING, staleness-guarded), and
+    // only then the exclusive claim.
+    const recovery = draftUpdateMany.mock.calls[0][0] as { where: Record<string, unknown> }
+    expect(recovery.where).toMatchObject({ status: 'APPROVED', tradingTradeId: null })
+    expect(recovery.where.OR).toBeDefined()
+    const claim = draftUpdateMany.mock.calls[1][0] as { where: { status: unknown } }
+    expect(claim.where.status).toBe('PENDING')
+  })
+
+  it('links the draft inside the trade transaction, never as a second write', async () => {
+    draftFindFirst.mockResolvedValueOnce(pendingDraft()).mockResolvedValueOnce(pendingDraft())
+    createTradingTradeRecord.mockResolvedValue({ trade: { id: 'trade-9' }, summary: { merchantProgress: 0 } })
+
+    await approveTelegramDraftToLedger(ctx, 'draft-1')
+
+    const input = createTradingTradeRecord.mock.calls[0][0] as { linkTelegramDraftId?: string }
+    expect(input.linkTelegramDraftId).toBe('draft-1')
+    // No post-transaction `update` may set POSTED — that write is what left a
+    // committed trade attached to an apparently-unposted draft.
+    expect(draftUpdate).not.toHaveBeenCalled()
   })
 
   it('is idempotent on a second confirm of an already-posted draft', async () => {

@@ -22,6 +22,18 @@ export type CreateTradingTradeInput = {
   tradeDate?: Date
   notes?: string | null
   actorUserId?: string
+  /**
+   * Telegram draft to mark POSTED *inside the same transaction* as the trade.
+   *
+   * Writing the trade and linking the draft in two separate statements leaves a
+   * window where the ledger row exists but `tradingTradeId` is still null — and
+   * anything that later "recovers" that draft (a retry, the stale sweep) posts
+   * the trade a second time. Doing the link in-transaction removes the window,
+   * and the conditional update doubles as the exclusivity check: only one
+   * transaction can flip the claimed draft, the loser aborts and its trade rolls
+   * back with it.
+   */
+  linkTelegramDraftId?: string
 }
 
 export async function createTradingTradeRecord(input: CreateTradingTradeInput) {
@@ -77,6 +89,23 @@ export async function createTradingTradeRecord(input: CreateTradingTradeInput) {
         notes: input.notes?.trim() || null,
       },
     })
+    if (input.linkTelegramDraftId) {
+      const linked = await tx.tradingTelegramDraft.updateMany({
+        where: { id: input.linkTelegramDraftId, status: 'APPROVED', tradingTradeId: null },
+        data: {
+          status: 'POSTED',
+          tradingTradeId: trade.id,
+          postedAt: new Date(),
+          reviewedBy: input.actorUserId ?? input.userId,
+          reviewedAt: new Date(),
+          confirmError: null,
+          confirmErrorAt: null,
+        },
+      })
+      if (linked.count === 0) {
+        throw new Error('Draft was confirmed by someone else — refresh to see the posted trade')
+      }
+    }
     const summary = await recalculateTradingAccount(tx, input.tradingAccountId)
     await refreshTradingDailySnapshot(tx, input.tradingAccountId, tradeDate, summary)
     return { trade, summary }

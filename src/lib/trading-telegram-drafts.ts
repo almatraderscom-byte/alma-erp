@@ -2,7 +2,11 @@ import type { TradingTradeType, TradingTelegramDraftStatus } from '@prisma/clien
 import { prisma } from '@/lib/prisma'
 import { TRADING_BUSINESS_ID } from '@/lib/trading'
 import { logTelegramDraftAudit } from '@/lib/trading-telegram-draft-audit'
-import { assertDraftEditable, sweepTelegramDraftStates } from '@/lib/trading-telegram-lock'
+import {
+  assertDraftEditable,
+  recoverStrandedApprovedDraft,
+  sweepTelegramDraftStates,
+} from '@/lib/trading-telegram-lock'
 import {
   draftListWhereForActor,
   filterDraftIdsForActor,
@@ -94,6 +98,9 @@ export async function postDraftToLedger(draftId: string, reviewerUserId: string)
     `Raw: ${draft.rawMessage}`,
   ].join('\n')
 
+  // The draft is linked to the trade INSIDE the trade's transaction. Two
+  // statements would leave a window where the ledger row exists but the draft
+  // still looks unposted — and every recovery path would then post it twice.
   const { trade } = await createTradingTradeRecord({
     tradingAccountId: draft.tradingAccountId,
     userId: draft.userId,
@@ -103,19 +110,7 @@ export async function postDraftToLedger(draftId: string, reviewerUserId: string)
     feeUsdt: Number(draft.feeUsdt ?? 0),
     notes,
     actorUserId: reviewerUserId,
-  })
-
-  await prisma.tradingTelegramDraft.update({
-    where: { id: draft.id },
-    data: {
-      status: 'POSTED',
-      tradingTradeId: trade.id,
-      postedAt: new Date(),
-      reviewedBy: reviewerUserId,
-      reviewedAt: new Date(),
-      confirmError: null,
-      confirmErrorAt: null,
-    },
+    linkTelegramDraftId: draft.id,
   })
 
   return { tradeId: trade.id, alreadyPosted: false }
@@ -137,13 +132,19 @@ export async function approveTelegramDraftToLedger(ctx: TradingContext, draftId:
   }
   assertDraftEditable(draft.status)
 
-  // Claim it. A previously-stranded APPROVED draft (tradingTradeId still null) is
-  // a legitimate retry, so it is claimable too.
+  // A draft stranded by an earlier crash is recovered FIRST, and only once it is
+  // old enough to be certain no confirm is still running. Claiming straight out
+  // of APPROVED would let two concurrent reviewers both believe they won.
+  if (draft.status === 'APPROVED') {
+    await recoverStrandedApprovedDraft(draftId)
+  }
+
+  // The claim is exclusive: exactly one request can move a draft out of PENDING.
   const claim = await prisma.tradingTelegramDraft.updateMany({
     where: {
       id: draftId,
       businessId: TRADING_BUSINESS_ID,
-      status: { in: ['PENDING', 'APPROVED'] },
+      status: 'PENDING',
       tradingTradeId: null,
     },
     data: { status: 'APPROVED', reviewedBy: ctx.userId, reviewedAt: new Date() },
@@ -155,6 +156,9 @@ export async function approveTelegramDraftToLedger(ctx: TradingContext, draftId:
     })
     if (now?.status === 'POSTED' && now.tradingTradeId) {
       return { tradeId: now.tradingTradeId, alreadyPosted: true }
+    }
+    if (now?.status === 'APPROVED') {
+      throw new Error('This draft is being confirmed right now — refresh in a moment')
     }
     throw new Error('Draft is no longer confirmable — refresh and check its status')
   }

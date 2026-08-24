@@ -15,6 +15,32 @@ import { logTelegramDraftAudit } from '@/lib/trading-telegram-draft-audit'
  */
 const STUCK_APPROVED_GRACE_MS = 2 * 60_000
 
+const STRANDED_CONFIRM_MESSAGE =
+  'Confirm did not finish — the trade was never written. Try Confirm again.'
+
+/**
+ * Recover ONE stranded draft, used on the confirm path so a retry does not have
+ * to wait for the periodic sweep.
+ *
+ * The staleness predicate lives in the WHERE clause, so a confirm that is still
+ * running cannot be stolen out from under itself: the update simply matches
+ * nothing and the caller's claim then fails, which is the correct answer.
+ */
+export async function recoverStrandedApprovedDraft(draftId: string): Promise<boolean> {
+  const staleBefore = new Date(Date.now() - STUCK_APPROVED_GRACE_MS)
+  const result = await prisma.tradingTelegramDraft.updateMany({
+    where: {
+      id: draftId,
+      businessId: TRADING_BUSINESS_ID,
+      status: 'APPROVED',
+      tradingTradeId: null,
+      OR: [{ reviewedAt: { lt: staleBefore } }, { reviewedAt: null }],
+    },
+    data: { status: 'PENDING', confirmError: STRANDED_CONFIRM_MESSAGE, confirmErrorAt: new Date() },
+  })
+  return result.count > 0
+}
+
 /** Return APPROVED-but-never-posted drafts to PENDING so staff can retry. Idempotent. */
 export async function healStuckApprovedTelegramDrafts(): Promise<number> {
   const staleBefore = new Date(Date.now() - STUCK_APPROVED_GRACE_MS)
@@ -31,13 +57,16 @@ export async function healStuckApprovedTelegramDrafts(): Promise<number> {
   })
   if (!stuck.length) return 0
 
+  // Re-assert staleness in the write: a fresh confirm may have claimed one of
+  // these rows in the gap between the read and this update.
   const result = await prisma.tradingTelegramDraft.updateMany({
-    where: { id: { in: stuck.map(d => d.id) }, status: 'APPROVED', tradingTradeId: null },
-    data: {
-      status: 'PENDING',
-      confirmError: 'Confirm did not finish — the trade was never written. Try Confirm again.',
-      confirmErrorAt: new Date(),
+    where: {
+      id: { in: stuck.map(d => d.id) },
+      status: 'APPROVED',
+      tradingTradeId: null,
+      OR: [{ reviewedAt: { lt: staleBefore } }, { reviewedAt: null }],
     },
+    data: { status: 'PENDING', confirmError: STRANDED_CONFIRM_MESSAGE, confirmErrorAt: new Date() },
   })
 
   for (const draft of stuck) {
