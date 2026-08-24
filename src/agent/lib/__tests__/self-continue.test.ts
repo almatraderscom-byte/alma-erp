@@ -177,6 +177,28 @@ describe('the wake-up chain', () => {
     expect(mockPrisma.agentKvSetting.upsert).not.toHaveBeenCalled()
   })
 
+  it('never runs the 90s inline fallback from inside a deadline turn (Codex P1 #850)', async () => {
+    const res = await scheduleSelfContinue({ conversationId: 'c1', sourceTurnId: 'source-turn-1' })
+
+    expect(res.scheduled).toBe(true)
+    const call = continuation.enqueueAgentContinuation.mock.calls[0][0]
+    // hasSafeInlineContinuationBudget(now) is false at a zero-remaining
+    // deadline, so a worker-down enqueue defers instead of executing inline.
+    expect(typeof call.inlineDeadlineAtMs).toBe('number')
+    expect(call.inlineDeadlineAtMs).toBeLessThanOrEqual(Date.now())
+  })
+
+  it('a worker-down deferral is reported honestly, never as a scheduled wake', async () => {
+    continuation.enqueueAgentContinuation.mockResolvedValue({
+      outcome: 'deferred', turnId: 'next-turn', requestId: 'self-request', status: 'running',
+    })
+
+    const res = await scheduleSelfContinue({ conversationId: 'c1', sourceTurnId: 'source-turn-1' })
+
+    expect(res.scheduled).toBe(false)
+    expect(res.reason).toBe('worker_unavailable_deferred_to_owner')
+  })
+
   it('does not claim a wake was scheduled when bound enqueue is rejected', async () => {
     continuation.enqueueAgentContinuation.mockResolvedValue({
       outcome: 'rejected', turnId: null, requestId: null, status: 'binding_required',

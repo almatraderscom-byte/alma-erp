@@ -254,9 +254,22 @@ export async function scheduleSelfContinue(input: {
       // approval convenience — it must not depend on the auto-continue toggle.
       force: true,
       binding,
+      // A wake is scheduled from INSIDE a turn that is at (or past) its own
+      // deadline — the 90s inline fallback must never run here: it would eat
+      // the route's 20s persistence headroom and let the platform kill the
+      // request before the salvage/terminal persists (Codex P1 #850). A
+      // worker-down wake defers to the durable binding instead of executing.
+      inlineDeadlineAtMs: Date.now(),
     })
-    if (['queued', 'completed', 'observe', 'deferred'].includes(enqueued.outcome)) {
+    if (['queued', 'completed', 'observe'].includes(enqueued.outcome)) {
       return { scheduled: true, hops: next }
+    }
+    if (enqueued.outcome === 'deferred') {
+      // The binding is durable and retryable, but nothing server-side is
+      // actually going to fire — claiming "scheduled" here would tell Boss the
+      // agent resumes itself while the worker is down. Honest answer: not
+      // scheduled; the client hint / owner "continue" claims the bound turn.
+      return { scheduled: false, hops: next, reason: 'worker_unavailable_deferred_to_owner' }
     }
     return { scheduled: false, hops: next, reason: enqueued.status || enqueued.outcome }
   } catch (err) {
