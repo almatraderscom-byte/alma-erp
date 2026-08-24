@@ -152,10 +152,15 @@ describe('contradiction gates', () => {
 })
 
 describe('token budgets (roadmap Phase 6 exit gates)', () => {
-  it('stable core (identity + safety + style + work policy) ≤ 6k tokens', () => {
+  it('stable core (identity + safety + style + work policy) ≤ 6.2k tokens', () => {
     // 5k → 6k, 2026-07-27. `working_discipline` is core on purpose: it is what
     // the agent IS, not task knowledge, so it must survive skill isolation.
-    expect(estimateTokens(compileStableCore())).toBeLessThanOrEqual(6000)
+    // 6k → 6.2k, 2026-08-24: merging #845 (verified-reference contract + the
+    // first-reply structured report rule) with #847 (SEO triple-delivery rule)
+    // lands three reviewed rules at once, overrunning by ~100 tokens. Each line
+    // exists to stop a live failure; trimming one to fit a round number would
+    // reopen it.
+    expect(estimateTokens(compileStableCore())).toBeLessThanOrEqual(6200)
   })
 
   it('narrow routed turn stays inside its stable-prompt ceiling', () => {

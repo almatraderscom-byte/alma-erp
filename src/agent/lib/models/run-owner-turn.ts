@@ -848,6 +848,8 @@ async function* runAlternateProviderTurn(
       cacheCreation: 0,
       cacheRead: 0,
       costUsd: 0,
+      references: shouldRenderAgentReferences() ? [] : undefined,
+      referencesActive: shouldRenderAgentReferences(),
     }
     return
   }
@@ -6448,6 +6450,9 @@ async function persistServerRoutingBlocker(
         output_tokens: 0,
         model: `server-${model}`,
         provider: 'server',
+        // The saved row must agree with its terminal or a reload flips this
+        // guard blocker back to legacy rendering (stream-contract guard).
+        referencesActive: shouldRenderAgentReferences() || undefined,
       },
     },
   })
@@ -6511,6 +6516,8 @@ export async function* runOwnerTurn(
       cacheCreation: 0,
       cacheRead: 0,
       costUsd: 0,
+      references: shouldRenderAgentReferences() ? [] : undefined,
+      referencesActive: shouldRenderAgentReferences(),
     }
     return
   }
