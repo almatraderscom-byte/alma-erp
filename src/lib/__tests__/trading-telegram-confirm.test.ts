@@ -188,6 +188,25 @@ describe('healStuckApprovedTelegramDrafts', () => {
     expect(update.data.status).toBe('PENDING')
   })
 
+  it('logs a recovery only for the rows this sweep actually moved', async () => {
+    draftFindMany.mockResolvedValue([
+      { id: 'draft-1', telegramUserId: '1', telegramChatId: '-1', reviewedBy: 'reviewer-1' },
+      { id: 'draft-2', telegramUserId: '2', telegramChatId: '-2', reviewedBy: null },
+    ])
+    // Another instance's poll won draft-2 between this one's read and its write.
+    draftUpdateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 })
+
+    expect(await healStuckApprovedTelegramDrafts()).toBe(1)
+
+    // One audit event, for draft-1 only — a bulk update could not tell the two apart.
+    expect(auditCreate).toHaveBeenCalledTimes(1)
+    const logged = auditCreate.mock.calls[0][0] as { data: { detail: string; eventType: string } }
+    expect(logged.data.eventType).toBe('DRAFT_CONFIRM_RECOVERED')
+    expect(logged.data.detail).toContain('draft-1')
+  })
+
   it('does nothing when no draft is stranded', async () => {
     draftFindMany.mockResolvedValue([])
 

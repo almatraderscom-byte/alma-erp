@@ -52,24 +52,20 @@ export async function healStuckApprovedTelegramDrafts(): Promise<number> {
       tradingTradeId: null,
       OR: [{ reviewedAt: { lt: staleBefore } }, { reviewedAt: null }],
     },
-    select: { id: true, telegramUserId: true, telegramChatId: true, reviewedBy: true, confirmError: true },
+    select: { id: true, telegramUserId: true, telegramChatId: true, reviewedBy: true },
     take: 100,
   })
   if (!stuck.length) return 0
 
-  // Re-assert staleness in the write: a fresh confirm may have claimed one of
-  // these rows in the gap between the read and this update.
-  const result = await prisma.tradingTelegramDraft.updateMany({
-    where: {
-      id: { in: stuck.map(d => d.id) },
-      status: 'APPROVED',
-      tradingTradeId: null,
-      OR: [{ reviewedAt: { lt: staleBefore } }, { reviewedAt: null }],
-    },
-    data: { status: 'PENDING', confirmError: STRANDED_CONFIRM_MESSAGE, confirmErrorAt: new Date() },
-  })
-
+  // Recover — and log — ONE ROW AT A TIME. Two polls on separate serverless
+  // instances can read the same stuck row; a bulk update tells you how many
+  // changed but not which, so both instances would write a
+  // DRAFT_CONFIRM_RECOVERED event for a row only one of them actually moved.
+  // The per-row update returns a count that answers "did *I* move this one".
+  let recovered = 0
   for (const draft of stuck) {
+    if (!(await recoverStrandedApprovedDraft(draft.id))) continue
+    recovered += 1
     // Best-effort trail: recovering the draft matters more than logging it.
     await logTelegramDraftAudit({
       eventType: 'DRAFT_CONFIRM_RECOVERED',
@@ -81,7 +77,7 @@ export async function healStuckApprovedTelegramDrafts(): Promise<number> {
     }).catch(() => {})
   }
 
-  return result.count
+  return recovered
 }
 
 /** Lock PENDING drafts from before today's BD day once past cutoff hour. Idempotent. */

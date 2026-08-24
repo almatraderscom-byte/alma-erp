@@ -544,6 +544,7 @@ export function TradingTelegramAdmin({
       removingUserId={removingUserId}
       staffOptions={staffOptions}
       accountOptions={accountOptions}
+      accountList={accountList}
       aliasByAccountId={aliasByAccountId}
       mappingLoading={mappingLoading}
       savingUser={savingUser}
@@ -605,6 +606,7 @@ function TelegramAdminInner(props: Record<string, unknown>) {
     removingUserId,
     staffOptions,
     accountOptions,
+    accountList,
     aliasByAccountId,
     mappingLoading,
     savingUser,
@@ -664,6 +666,7 @@ function TelegramAdminInner(props: Record<string, unknown>) {
     removingUserId: string | null
     staffOptions: ReturnType<typeof staffToSearchableOptions>
     accountOptions: ReturnType<typeof accountToSearchableOptions>
+    accountList: AccountOptionSource[]
     aliasByAccountId: Map<string, string>
     mappingLoading: boolean
     savingUser: boolean
@@ -715,6 +718,7 @@ function TelegramAdminInner(props: Record<string, unknown>) {
             isStaffView={isStaffView}
             users={users}
             aliases={aliases}
+            accountList={accountList}
             draftStatus={draftStatus}
             setDraftStatus={setDraftStatus}
             filterUserId={filterUserId}
@@ -898,6 +902,7 @@ function DraftFiltersBar({
   isStaffView,
   users,
   aliases,
+  accountList,
   draftStatus,
   setDraftStatus,
   filterUserId,
@@ -910,6 +915,7 @@ function DraftFiltersBar({
   isStaffView: boolean
   users: TradingTelegramUserRow[]
   aliases: TradingAccountAliasRow[]
+  accountList: AccountOptionSource[]
   draftStatus: TradingTelegramDraftStatus | 'ALL'
   setDraftStatus: (v: TradingTelegramDraftStatus | 'ALL') => void
   filterUserId: string
@@ -926,6 +932,24 @@ function DraftFiltersBar({
     }
     return [...map.entries()]
   }, [users])
+
+  // Aliases alone are not the account list: a staffer can be pinned to an
+  // account by `defaultTradingAccountId` with NO alias, and that is exactly the
+  // busiest one here (MD KAYESH MIA IT) — it never appeared in this filter.
+  // Active accounts first, aliases as the fallback for a non-admin who does not
+  // get the accounts payload.
+  const accountFilterOptions = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const acc of accountList) {
+      if (acc.id) map.set(acc.id, acc.accountTitle || acc.id)
+    }
+    for (const a of aliases) {
+      if (a.tradingAccountId && !map.has(a.tradingAccountId)) {
+        map.set(a.tradingAccountId, a.tradingAccount?.accountTitle || a.alias)
+      }
+    }
+    return [...map.entries()]
+  }, [accountList, aliases])
 
   return (
     <Card className="flex flex-wrap gap-2 rounded-2xl p-3">
@@ -959,10 +983,8 @@ function DraftFiltersBar({
         className="rounded-lg border border-white/[0.06] bg-card/85 px-2 py-1 text-xs text-cream"
       >
         <option value="">All accounts</option>
-        {aliases.map(a => (
-          <option key={a.tradingAccountId} value={a.tradingAccountId}>
-            {a.tradingAccount?.accountTitle || a.alias}
-          </option>
+        {accountFilterOptions.map(([id, label]) => (
+          <option key={id} value={id}>{label}</option>
         ))}
       </select>
       <label className="flex items-center gap-1 text-xs text-muted">

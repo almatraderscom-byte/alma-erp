@@ -451,6 +451,24 @@ struct TradingTelegramAlias: Decodable, Identifiable, Equatable {
     static func == (a: TradingTelegramAlias, b: TradingTelegramAlias) -> Bool { a.id == b.id }
 }
 
+/// GET /api/trading/accounts?status=ACTIVE — id + title only; the account filter
+/// cannot be built from aliases alone (a staffer pinned by
+/// `defaultTradingAccountId` has no alias, and that is the busiest account here).
+struct TradingTelegramAccountOption: Decodable, Identifiable {
+    let id: String
+    let accountTitle: String?
+}
+
+struct TradingTelegramAccountsResponse: Decodable {
+    let accounts: [TradingTelegramAccountOption]
+    private enum Keys: String, CodingKey { case ok, data, accounts }
+    init(from decoder: Decoder) throws {
+        let root = try decoder.container(keyedBy: Keys.self)
+        let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+        accounts = (try? c.decode([TradingTelegramAccountOption].self, forKey: .accounts)) ?? []
+    }
+}
+
 struct TradingTelegramAliasesResponse: Decodable {
     let aliases: [TradingTelegramAlias]
     private enum Keys: String, CodingKey { case ok, data, aliases }
@@ -519,6 +537,7 @@ final class TradingTelegramVM {
     var chats: [TradingTelegramChat] = []
     var users: [TradingTelegramUser] = []
     var aliases: [TradingTelegramAlias] = []
+    var accounts: [TradingTelegramAccountOption] = []
     var mappingLoaded = false
 
     var pendingCount: Int { drafts.filter { $0.status == "PENDING" }.count }
@@ -535,10 +554,17 @@ final class TradingTelegramVM {
         return out
     }
 
-    /// Accounts reachable from the alias table — web account <select>.
+    /// Active accounts first, aliases as the fallback — web account <select>.
+    /// Aliases alone MISS any account a staffer reaches through
+    /// `defaultTradingAccountId` without one.
     var accountOptions: [(String, String)] {
         var seen = Set<String>()
         var out: [(String, String)] = []
+        for a in accounts where !a.id.isEmpty {
+            guard !seen.contains(a.id) else { continue }
+            seen.insert(a.id)
+            out.append((a.id, a.accountTitle ?? a.id))
+        }
         for a in aliases {
             guard let id = a.tradingAccountId, !id.isEmpty, !seen.contains(id) else { continue }
             seen.insert(id)
@@ -908,6 +934,11 @@ final class TradingTelegramVM {
             chats = c.chats
             users = u.users
             aliases = a.aliases
+            // Non-fatal: without it the account filter simply falls back to aliases.
+            if let acc: TradingTelegramAccountsResponse = try? await AlmaAPI.shared.get(
+                "/api/trading/accounts", query: ["status": "ACTIVE"]) {
+                accounts = acc.accounts
+            }
             mappingLoaded = true
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
