@@ -589,7 +589,10 @@ final class TradingTelegramVM {
         let generation = loadGeneration
         if !quiet { loading = true }
         error = nil
-        defer { if !quiet && generation == loadGeneration { loading = false } }
+        // Whoever holds the newest ticket clears the spinner — including a quiet
+        // poll that overtook a foreground load. The foreground defer cannot: its
+        // generation is stale by then, so the skeleton would never come down.
+        defer { if generation == loadGeneration { loading = false } }
         do {
             let resp: TradingTelegramDraftsResponse = try await AlmaAPI.shared.get(
                 "/api/trading/telegram/drafts",
@@ -1018,6 +1021,11 @@ struct TradingTelegramScreen: View {
                 vm.isAdmin = me.role == "SUPER_ADMIN" || me.role == "ADMIN"
             }
             await vm.load()
+            // The drafts filters need the mapping payload, but /users /chats
+            // /aliases are all requireTradingAdmin. Fetching them before the role
+            // is known 403s for a staffer and parks an error card on a screen they
+            // are perfectly entitled to — so it waits for identity, here.
+            if vm.isAdmin { await vm.loadMapping() }
         }
         // A draft typed into the Telegram group has to reach this list on its own —
         // the reviewer should never have to guess when to pull-to-refresh. Attached
@@ -1025,7 +1033,6 @@ struct TradingTelegramScreen: View {
         // created until it scrolls into range, so a long list would never poll.
         .task(id: vm.tab) {
             guard vm.tab == .drafts else { return }
-            if vm.isAdmin { await vm.loadMapping() }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
                 if Task.isCancelled { return }
