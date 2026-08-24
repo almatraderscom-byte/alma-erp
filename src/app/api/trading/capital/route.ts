@@ -51,6 +51,12 @@ export async function POST(req: NextRequest) {
     if (!account) return NextResponse.json({ error: 'Trading account not found' }, { status: 404 })
 
     const result = await prisma.$transaction(async tx => {
+      // Same account-row lock every writer of this account's totals takes
+      // (see createTradingTradeRecord): this transaction recalculates the
+      // account, so without it a concurrent trade's balance can be overwritten
+      // by an aggregate taken before that trade committed.
+      await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${tradingAccountId} FOR UPDATE`
+
       const capitalEntry = await tx.tradingCapitalEntry.create({
         data: {
           tradingAccountId,

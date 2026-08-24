@@ -266,6 +266,12 @@ export async function PATCH(req: NextRequest, props: RouteContext) {
     if (isResponse(tradeDate)) return tradeDate
 
     const result = await prisma.$transaction(async tx => {
+      // Every writer of this account's inventory takes the same row lock — see
+      // createTradingTradeRecord. An edit rewrites balances from the values it
+      // reads here, so overlapping a Telegram confirm without the lock lets one
+      // recalculation overwrite the other's.
+      await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${trade.tradingAccountId} FOR UPDATE`
+
       const currentAccount = await tx.tradingAccount.findUniqueOrThrow({
         where: { id: trade.tradingAccountId },
         select: { usdtBalance: true, inventoryCostBdt: true },

@@ -50,6 +50,12 @@ export async function POST(req: NextRequest, props: RouteContext) {
     const netResultBdt = moneyDecimal(totalProfitBdt.minus(totalLossBdt))
 
     const result = await prisma.$transaction(async tx => {
+      // Same account-row lock every writer of this account's totals takes
+      // (see createTradingTradeRecord): this transaction recalculates the
+      // account, so without it a concurrent trade's balance can be overwritten
+      // by an aggregate taken before that trade committed.
+      await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${params.id} FOR UPDATE`
+
       const summary = await tx.tradingBkashDailySummary.upsert({
         where: { tradingAccountId_summaryDate: { tradingAccountId: params.id, summaryDate } },
         create: {
