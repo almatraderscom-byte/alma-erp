@@ -1587,6 +1587,8 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                 text: m.text,
                 costUsd: m.costUsd,
                 durationMs: m.durationMs,
+                references: m.references,
+                referencesActive: m.referencesActive,
               }))}
               renderUserMessage={(msg) => (
                 <div className="mb-4 flex justify-end">

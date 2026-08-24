@@ -301,3 +301,26 @@ describe('explicit HTML format requests are honoured, not retried', () => {
     expect(violations.map((v) => v.ruleId)).toContain('professional_report_inline_html')
   })
 })
+
+describe('editorial review requests are not report requests', () => {
+  // Codex P2 (PR #845): the bare verb `review` made "Review and polish this
+  // email, preserving its tone" a report request, so a long corrected email
+  // with no headings was flagged and sent through the retry path.
+  const LONG_EMAIL = ('প্রিয় স্যার,\n\nআপনার পাঠানো অর্ডারটি আমরা পেয়েছি এবং আজই '
+    + 'প্যাক করে পাঠিয়ে দিচ্ছি। কোনো অসুবিধা হলে জানাবেন।\n\n').repeat(8)
+
+  it.each([
+    'Review and polish this email, preserving its tone.',
+    'proofread the message please',
+    'এই ইমেইলটা একটু ঠিক করে দাও',
+  ])('exempts %s', async (instruction) => {
+    const detect = await loadReportDetector()
+    expect(detect(LONG_EMAIL, instruction)).toEqual([])
+  })
+
+  it('still treats an explicit full review of the business as a report', async () => {
+    const detect = await loadReportDetector()
+    const violations = detect(LONG_EMAIL, 'give me a complete review of last month')
+    expect(violations.map((v) => v.ruleId)).toContain('professional_report_structure')
+  })
+})

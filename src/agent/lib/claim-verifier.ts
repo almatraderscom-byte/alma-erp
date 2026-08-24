@@ -1356,6 +1356,13 @@ const READY_COPY_BLOCK = /```(?:copy|caption|post|text)\s*\n[\s\S]*?\S[\s\S]*?\n
 const FENCED_BLOCK = /```[^\n]*\n[\s\S]*?\n```/g
 const COPY_POST_WORK_PROMPT = /(?:[?？]|(?:এখন\s+)?চাইলে|approve|approval|অনুমোদন|বললে|বলুন|বলবেন|জানান|লাগলে|edit|এডিট|tweak|টুইক|আপনার\s+নির্দেশ|paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|campaign)/i
 const EXPLICIT_REPORT_REQUEST = /(?:\b(?:report|audit|review|briefing|analysis)\b|রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|পর্যালোচনা|প্রতিবেদন)/i
+/**
+ * "Review and polish this email, preserving its tone" is an editing job, not a
+ * report request — but the bare verb `review` matched, so a long polished draft
+ * was flagged as an unstructured report and retried (Codex P2, PR #845). A
+ * review aimed at a piece of WRITING is editorial; the report gate skips it.
+ */
+const EDITORIAL_REVIEW_REQUEST = /\b(?:review|proofread|polish|rewrite|edit|improve|tighten|check)\b[^\n।.!?]{0,40}\b(?:this|the|my|these|that)?\s*(?:email|e-mail|mail|message|copy|caption|post|reply|draft|text|letter|note|paragraph|wording|tone|sms|whatsapp)\b|(?:ইমেইল|মেসেজ|বার্তা|কপি|ক্যাপশন|পোস্ট|ড্রাফট|চিঠি|লেখাটা|টেক্সট)[^\n।.!?]{0,40}(?:ঠিক\s*করে|পলিশ|সংশোধন|এডিট|রিভিউ)/i
 const COMPLETE_REPORT_REQUEST = /(?:\b(?:complete|full|detailed|professional|management)\b[^\n।.!?]{0,48}\b(?:report|audit|review|briefing|analysis)\b|(?:সম্পূর্ণ|পূর্ণ|পুরো|বিস্তারিত|প্রফেশনাল|পেশাদার|ম্যানেজমেন্ট)[^\n।.!?]{0,48}(?:রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|পর্যালোচনা|প্রতিবেদন))/i
 const SHORT_REPORT_OUTPUT_REQUEST = /(?:\b(?:one[- ]?line|single[- ]?line|short|concise|summary[- ]?only)\b|এক\s*লাইনে|একটি?\s*লাইনে|সংক্ষেপে|ছোট\s*করে|শুধু\s*সারাংশ)/i
 const REQUESTED_REPORT_SECTION = /(?:\bbottom\s+line\b|\bexecutive\s+summary\b|\bkpis?\b|\bfindings?\b|\brisks?\b|\brecommendations?\b|\bnext\s+steps?\b|বটম\s*লাইন|নির্বাহী\s+সারাংশ|মূল\s+পর্যবেক্ষণ|ঝুঁকি|সুপারিশ|পরবর্তী\s+পদক্ষেপ)/gi
@@ -1407,6 +1414,8 @@ export function detectProfessionalReportStyleViolations(
   const text = replyText.trim()
   if (
     !EXPLICIT_REPORT_REQUEST.test(ownerInstructions)
+    || (EDITORIAL_REVIEW_REQUEST.test(ownerInstructions)
+      && !COMPLETE_REPORT_REQUEST.test(ownerInstructions))
     || SHORT_REPORT_OUTPUT_REQUEST.test(ownerInstructions)
     || (text.length < REPORT_MIN_CHARACTERS && !requiresCompleteReport(ownerInstructions))
     || context.voiceTurn === true

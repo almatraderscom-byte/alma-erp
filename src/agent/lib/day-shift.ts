@@ -29,7 +29,7 @@ import { formatDutyCostLineBangla } from '@/agent/lib/format-cost'
 import { getOrComposeOpsSummary } from '@/agent/lib/intelligence/ops-shift-summary'
 import type { AgentReferenceV1 } from '@/agent/lib/references/types'
 import { filterAgentReferencesForContext, mergeAgentReferences } from '@/agent/lib/references/validator'
-import { shouldCollectAgentReferences } from '@/agent/lib/references/flags'
+import { shouldCollectAgentReferences, shouldRenderAgentReferences } from '@/agent/lib/references/flags'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -162,7 +162,19 @@ export async function appendShiftNarrative(
       tokensIn: 0,
       tokensOut: 0,
       costUsd: cost,
-      ...(references.length ? { usage: { references } } : {}),
+      // The row must record whether it was written under the contract even when
+      // it cites nothing — most day-shift narratives are deterministic status
+      // lines with no references, and omitting `usage` made the messages API
+      // read them back as pre-contract history (Codex P2, PR #845). The kill
+      // switch still leaves no trace at all: with rendering off there is neither
+      // a reference nor a marker, so `usage` is omitted exactly as before.
+      ...(() => {
+        const usage = {
+          ...(references.length ? { references } : {}),
+          ...(shouldRenderAgentReferences() ? { referencesActive: true } : {}),
+        }
+        return Object.keys(usage).length ? { usage } : {}
+      })(),
     },
   })
   await touchConversationActivity(conversationId)

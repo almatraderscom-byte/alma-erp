@@ -71,7 +71,11 @@ describe('day-shift reference persistence boundary', () => {
         data: expect.objectContaining({
           conversationId: 'day-shift-conv',
           content: [{ type: 'text', text: 'shift result' }],
-          usage: { references: [lifestyle] },
+          // ON also stamps the durable contract marker so a reload does not read
+          // the row back as pre-contract history (Codex P2, PR #845).
+          usage: mode === 'on'
+            ? { references: [lifestyle], referencesActive: true }
+            : { references: [lifestyle] },
         }),
       })
     },
