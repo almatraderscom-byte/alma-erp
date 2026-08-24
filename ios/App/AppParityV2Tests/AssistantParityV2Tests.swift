@@ -7006,3 +7006,21 @@ final class AgentMessageTimeLabelTests: XCTestCase {
                      "the optimistic stamp must stay off createdAt — markConversationRead reads that (Codex P1 #841)")
     }
 }
+
+extension AssistantParityV2Tests {
+    /// Codex P1 #847 round 2: the RELAUNCH retry must classify definitive 4xx
+    /// exactly like the initial request — source assertion, since the relaunch
+    /// path is a private async member driven by app lifecycle.
+    func testRelaunchRecoveryClearsUnrecoverableOpenTaskDescriptors() throws {
+        let source = try String(contentsOf: URL(
+            fileURLWithPath: #filePath + "/../../../App/AssistantSwiftUI.swift").standardizedFileURL, encoding: .utf8)
+        let start = try XCTUnwrap(source.range(of: "private func resumePersistedOpenTaskDescriptor"))
+        let body = String(source[start.lowerBound...].prefix(1800))
+        XCTAssertTrue(body.contains("openTaskContinuationIsUnrecoverable(error)"),
+                      "relaunch retry must classify definitive 4xx like the initial request")
+        XCTAssertTrue(body.contains("recoverableTurn = nil"),
+                      "an unrecoverable descriptor must be released on relaunch too")
+        XCTAssertTrue(body.contains("clientMessageId == pendingDescriptor.clientMessageId"),
+                      "only the matching descriptor may be cleared")
+    }
+}

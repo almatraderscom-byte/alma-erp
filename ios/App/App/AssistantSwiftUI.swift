@@ -8012,7 +8012,19 @@ final class AssistantVM {
             reconnecting = false
             isStreaming = false
             thinkingLive = false
-            errorToast = "চলতি কাজটির response এখনো পাওয়া যায়নি — source id নিরাপদ আছে"
+            // Same classification as the initial request (Codex P1 #847, round
+            // 2): a DEFINITIVE 4xx here means the task was deleted or another
+            // device resolved it while we were dead. Retaining the descriptor
+            // made every later launch retry the same dead source and kept
+            // ordinary sends blocked behind it forever.
+            if Self.openTaskContinuationIsUnrecoverable(error) {
+                if recoverableTurn?.clientMessageId == pendingDescriptor.clientMessageId {
+                    recoverableTurn = nil
+                }
+                errorToast = "কাজটি আর চালু নেই — নতুন করে শুরু করতে পারেন"
+            } else {
+                errorToast = "চলতি কাজটির response এখনো পাওয়া যায়নি — source id নিরাপদ আছে"
+            }
         }
     }
 
