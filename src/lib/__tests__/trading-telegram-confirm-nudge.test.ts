@@ -173,6 +173,23 @@ describe('sendPendingConfirmNudges', () => {
     expect(second.skip).toBe(1)
   })
 
+  it('names the real deadline when the cutoff is midnight', async () => {
+    vi.clearAllMocks()
+    process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD = '0'
+    auditFindFirst.mockResolvedValue(null)
+    auditCreate.mockResolvedValue({ id: 'claim-1' })
+    sendTelegramMessage.mockResolvedValue({ ok: true })
+    draftFindMany.mockResolvedValue([pending()])
+
+    await sendPendingConfirmNudges('FINAL')
+
+    const text = String(sendTelegramMessage.mock.calls[0][1])
+    // "আজ ভোর 0টায়" would name a time 23 hours in the past.
+    expect(text).not.toMatch(/ভোর 0টায়/)
+    expect(text).toContain('রাত ১২টায়')
+    delete process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD
+  })
+
   it('claims the cooldown before calling Telegram, not after', async () => {
     const order: string[] = []
     auditCreate.mockImplementation(async () => { order.push('claim'); return { id: 'claim-1' } })

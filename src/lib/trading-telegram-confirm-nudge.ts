@@ -127,10 +127,15 @@ export function confirmNudgeText(group: PendingGroup, urgency: ConfirmNudgeUrgen
   const volume = group.totalUsdt > 0 ? ` (মোট ${group.totalUsdt.toFixed(2)} USDT)` : ''
 
   if (urgency === 'FINAL') {
+    // A midnight cutoff is warned at 23:00, so "আজ ভোর 0টায়" would name a time
+    // that passed 23 hours ago. Say what the deadline actually is.
+    const deadline = lockHour === 0
+      ? 'আজ রাত ১২টায় (আর ১ ঘণ্টা)'
+      : `আজ ভোর ${lockHour}টায়`
     return [
       `⏰ ${who} — ${group.count}টি ট্রেড এখনো কনফার্ম হয়নি${volume}।`,
       `সবচেয়ে পুরোনোটি ${group.oldestYmd} তারিখের।`,
-      `আজ ভোর ${lockHour}টায় এগুলো লক হয়ে যাবে — তখন অ্যাডমিন ছাড়া খোলা যাবে না।`,
+      `${deadline} এগুলো লক হয়ে যাবে — তখন অ্যাডমিন ছাড়া খোলা যাবে না।`,
       `অ্যাপের Telegram সেকশন থেকে এখনই কনফার্ম করুন।`,
     ].join('\n')
   }
@@ -138,7 +143,9 @@ export function confirmNudgeText(group: PendingGroup, urgency: ConfirmNudgeUrgen
   return [
     `📋 ${who} — আজ ${group.count}টি ট্রেড কনফার্মের অপেক্ষায়${volume}।`,
     `কনফার্ম না করলে ব্যালান্স আর প্রফিটে বসবে না।`,
-    `ভোর ${lockHour}টার পর এগুলো লক হয়ে যায়, তাই ঘুমানোর আগে অ্যাপ থেকে সেরে ফেলুন।`,
+    lockHour === 0
+      ? `আজ রাত ১২টার পর এগুলো লক হয়ে যায়, তাই ঘুমানোর আগে অ্যাপ থেকে সেরে ফেলুন।`
+      : `ভোর ${lockHour}টার পর এগুলো লক হয়ে যায়, তাই ঘুমানোর আগে অ্যাপ থেকে সেরে ফেলুন।`,
   ].join('\n')
 }
 

@@ -12,6 +12,13 @@
 //  in UserDefaults rather than the keychain: this is a partially-typed form, not
 //  a secret, and it is cleared the moment the entry is submitted.
 //
+//  Keys are namespaced by BACKEND and USER. A global key would restore one
+//  person's half-typed amounts into the next session after a user switch or a
+//  hop between production and demo — and if the stored account is missing there,
+//  the sheet keeps the new session's default account while the old money fields
+//  come back, which is a path to posting a stranger's numbers to the wrong
+//  account.
+//
 //  Drafts expire — restoring yesterday's half-typed rate onto today's screen
 //  would be worse than starting empty.
 //
@@ -70,11 +77,26 @@ enum TradingFormDrafts {
             a.accountId == b.accountId && a.shotDate == b.shotDate && a.note == b.note
         }
 
-        var isEmpty: Bool { note.trimmingCharacters(in: .whitespaces).isEmpty }
+        /// A backfill date IS the thing worth keeping — treating only the note as
+        /// content meant picking a past date and leaving the note blank threw the
+        /// selection away on the very next keystroke-free render.
+        func isEmpty(today: String) -> Bool {
+            note.trimmingCharacters(in: .whitespaces).isEmpty
+                && (shotDate.isEmpty || shotDate == today)
+        }
     }
 
+    /// backend + signed-in user, so one session can never read another's draft.
+    @available(iOS 17.0, *)
+    private static func scoped(_ key: String) -> String {
+        let backend = AlmaBackend.current.rawValue
+        let user = OrdIdentity.cached?.id ?? "anon"
+        return "\(prefix)\(backend):\(user):\(key)"
+    }
+
+    @available(iOS 17.0, *)
     static func load<T: Codable>(_ key: String, as type: T.Type, savedAt: (T) -> Date) -> T? {
-        guard let data = UserDefaults.standard.data(forKey: prefix + key),
+        guard let data = UserDefaults.standard.data(forKey: scoped(key)),
               let draft = try? JSONDecoder().decode(T.self, from: data)
         else { return nil }
         guard Date().timeIntervalSince(savedAt(draft)) < maxAge else {
@@ -84,19 +106,23 @@ enum TradingFormDrafts {
         return draft
     }
 
+    @available(iOS 17.0, *)
     static func save<T: Codable>(_ key: String, _ draft: T) {
         guard let data = try? JSONEncoder().encode(draft) else { return }
-        UserDefaults.standard.set(data, forKey: prefix + key)
+        UserDefaults.standard.set(data, forKey: scoped(key))
     }
 
+    @available(iOS 17.0, *)
     static func clear(_ key: String) {
-        UserDefaults.standard.removeObject(forKey: prefix + key)
+        UserDefaults.standard.removeObject(forKey: scoped(key))
     }
 
     // Web key names, verbatim.
     static let tradeKey = "trade"
     static let screenshotKey = "screenshot"
 
+    @available(iOS 17.0, *)
     static func loadTrade() -> Trade? { load(tradeKey, as: Trade.self) { $0.savedAt } }
+    @available(iOS 17.0, *)
     static func loadScreenshot() -> Screenshot? { load(screenshotKey, as: Screenshot.self) { $0.savedAt } }
 }
