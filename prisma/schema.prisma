@@ -1602,6 +1602,10 @@ model TradingTelegramDraft {
   undoneAt          DateTime?
   lockedAt          DateTime?
   lockedReason      String?                     @db.Text
+  /// Set when an admin reopens an auto-locked draft. It exempts the row from the
+  /// day-cutoff rule — otherwise the sweep re-locks it on the next list load and
+  /// the confirm claim rejects it, which made "reopen" do nothing at all.
+  reopenedAt        DateTime?
   inputChannel      TradingTelegramInputChannel @default(TEXT_COMMAND)
   /// Reserved for future OCR/voice/screenshot parsers (raw payload, confidence, etc.)
   futurePayload     Json?

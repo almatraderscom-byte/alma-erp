@@ -93,6 +93,9 @@ export async function lockStalePendingTelegramDrafts(): Promise<number> {
       businessId: TRADING_BUSINESS_ID,
       status: 'PENDING',
       createdAt: { lt: todayStart },
+      // An admin deliberately reopened this one; re-locking it would undo the
+      // decision seconds after it was made.
+      reopenedAt: null,
     },
     data: {
       status: 'LOCKED',
@@ -116,6 +119,9 @@ export async function reopenLockedTelegramDraft(draftId: string, reviewerUserId:
       status: 'PENDING',
       lockedAt: null,
       lockedReason: null,
+      // Without this the sweep re-locks it on the next list load and the confirm
+      // claim refuses it, so reopening achieved nothing.
+      reopenedAt: new Date(),
       reviewedBy: reviewerUserId,
       reviewedAt: new Date(),
     },
@@ -172,8 +178,17 @@ export async function sweepTelegramDraftStates(options?: { force?: boolean }): P
  * Returns undefined before the cutoff hour, when every pending draft is fair
  * game.
  */
-export function claimableCreatedAtFilter(): { gte: Date } | undefined {
+export function claimableCutoffWhere():
+  | { OR: [{ createdAt: { gte: Date } }, { reopenedAt: { not: null } }] }
+  | undefined {
   const now = tradingBdNow()
   if (now.getUTCHours() < telegramDraftLockHourBd()) return undefined
-  return { gte: tradingBdDayBounds(now).start }
+  return {
+    OR: [
+      { createdAt: { gte: tradingBdDayBounds(now).start } },
+      // An admin reopened it on purpose — that IS the sanctioned way past the
+      // cutoff, so the claim has to honour it or reopen does nothing.
+      { reopenedAt: { not: null } },
+    ],
+  }
 }

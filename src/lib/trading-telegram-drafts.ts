@@ -4,7 +4,7 @@ import { TRADING_BUSINESS_ID } from '@/lib/trading'
 import { logTelegramDraftAudit } from '@/lib/trading-telegram-draft-audit'
 import {
   assertDraftEditable,
-  claimableCreatedAtFilter,
+  claimableCutoffWhere,
   lockStalePendingTelegramDrafts,
   recoverStrandedApprovedDraft,
   sweepTelegramDraftStates,
@@ -185,7 +185,7 @@ export async function approveTelegramDraftToLedger(ctx: TradingContext, draftId:
       businessId: TRADING_BUSINESS_ID,
       status: 'PENDING',
       tradingTradeId: null,
-      ...(claimableCreatedAtFilter() ? { createdAt: claimableCreatedAtFilter() } : {}),
+      ...(claimableCutoffWhere() ?? {}),
     },
     data: { status: 'APPROVED', reviewedBy: ctx.userId, reviewedAt: new Date() },
   })

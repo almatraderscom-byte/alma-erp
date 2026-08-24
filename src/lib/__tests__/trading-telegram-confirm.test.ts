@@ -134,8 +134,27 @@ describe('approveTelegramDraftToLedger', () => {
 
     // Recover → sweep → claim as three statements let two retries interleave and
     // slip a prior-day draft past the admin-reopen control. One predicate cannot.
-    const claim = draftUpdateMany.mock.calls[0][0] as { where: { createdAt?: { gte: Date } } }
-    expect(claim.where.createdAt?.gte).toBeInstanceOf(Date)
+    const claim = draftUpdateMany.mock.calls[0][0] as {
+      where: { OR?: Array<Record<string, unknown>> }
+    }
+    expect(claim.where.OR?.[0]).toEqual({ createdAt: { gte: expect.any(Date) } })
+    // …and an admin-reopened draft is the sanctioned way past that cutoff, so
+    // the claim must let it through or "Reopen" achieves nothing.
+    expect(claim.where.OR?.[1]).toEqual({ reopenedAt: { not: null } })
+    delete process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD
+  })
+
+  it('lets an admin-reopened prior-day draft post after the cutoff', async () => {
+    process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD = '0'
+    draftFindFirst
+      .mockResolvedValueOnce(pendingDraft({ reopenedAt: new Date() }))
+      .mockResolvedValueOnce(pendingDraft({ reopenedAt: new Date() }))
+    draftUpdateMany.mockResolvedValue({ count: 1 })
+    createTradingTradeRecord.mockResolvedValue({ trade: { id: 'trade-9' }, summary: { merchantProgress: 0 } })
+
+    const result = await approveTelegramDraftToLedger(ctx, 'draft-1')
+
+    expect(result.tradeId).toBe('trade-9')
     delete process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD
   })
 
