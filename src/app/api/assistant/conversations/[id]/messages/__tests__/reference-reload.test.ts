@@ -63,6 +63,53 @@ describe('message reload reference projection', () => {
     else process.env.AGENT_REFERENCES_ROLLOUT = originalRollout
   })
 
+  it('leaves pre-contract history in legacy mode even while ON', async () => {
+    // Codex P1 round 4: every reply written before this pipeline existed has no
+    // references and never could have. Marking those active the moment the
+    // rollout flips strips the links out of the owner's whole history.
+    process.env.AGENT_REFERENCES_ROLLOUT = 'on'
+    mocks.messages.mockResolvedValueOnce([{
+      id: 'msg-legacy',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'পুরোনো উত্তর [Orders](/orders)' }],
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: null,
+      clientRequestId: null,
+      usage: { model: 'legacy' },
+    }])
+    const response = await GET(
+      new NextRequest('https://alma.test/api/assistant/conversations/conv-1/messages'),
+      { params: Promise.resolve({ id: 'conv-1' }) },
+    )
+    const body = await response.json()
+    expect(response.status, JSON.stringify(body)).toBe(200)
+    expect(body[0].referencesActive).toBe(false)
+  })
+
+  it('honours the durable per-row marker for an ON turn that cited nothing', async () => {
+    process.env.AGENT_REFERENCES_ROLLOUT = 'on'
+    mocks.messages.mockResolvedValueOnce([{
+      id: 'msg-on-empty',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'কোনো verified destination ছিল না।' }],
+      createdAt: new Date('2026-08-24T00:00:00Z'),
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: null,
+      clientRequestId: null,
+      usage: { model: 'x', referencesActive: true },
+    }])
+    const response = await GET(
+      new NextRequest('https://alma.test/api/assistant/conversations/conv-1/messages'),
+      { params: Promise.resolve({ id: 'conv-1' }) },
+    )
+    const body = await response.json()
+    expect(body[0].references).toEqual([])
+    expect(body[0].referencesActive).toBe(true)
+  })
+
   it('returns canonical references while ON', async () => {
     process.env.AGENT_REFERENCES_ROLLOUT = 'on'
     const response = await GET(

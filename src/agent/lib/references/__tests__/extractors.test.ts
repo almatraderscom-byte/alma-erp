@@ -280,3 +280,108 @@ describe('named tool-output extractors', () => {
     expect(extractAgentReferencesFromRecords(records, lifestyle)).toEqual([])
   })
 })
+
+describe('trusted tool screenshots keep their image under an active contract', () => {
+  // Codex P1 (PR #845): camera-tools and mac-tools return a bare `data.imageUrl`
+  // for inline Markdown display. With no verified media reference, an ON
+  // contract replaced the screenshot the owner asked for with its alt text.
+  beforeEach(() => { process.env.AGENT_REFERENCES_ROLLOUT = 'on' })
+  afterEach(() => {
+    if (originalRollout == null) delete process.env.AGENT_REFERENCES_ROLLOUT
+    else process.env.AGENT_REFERENCES_ROLLOUT = originalRollout
+    if (originalKill == null) delete process.env.AGENT_REFERENCES_KILL_SWITCH
+    else process.env.AGENT_REFERENCES_KILL_SWITCH = originalKill
+  })
+
+  it('mints an image/* media reference for a camera snapshot', () => {
+    const refs = extractAgentReferences('get_office_camera_snapshot', {
+      success: true,
+      data: {
+        camera: 'Office Front',
+        imageUrl: 'https://files.example.com/snaps/front-1.jpg?token=abc',
+        capturedAt: '2026-08-24T00:00:00.000Z',
+      },
+    }, { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] })
+
+    const media = refs.find((r) => r.kind === 'external_media')
+    expect(media, JSON.stringify(refs)).toBeTruthy()
+    expect(media!.purpose).toBe('media')
+    expect(media!.label).toBe('Office Front')
+    if (media!.destination.type !== 'external_media') throw new Error('expected media destination')
+    expect(media!.destination.mediaType).toBe('image/jpeg')
+    expect(media!.destination.url).toContain('files.example.com')
+  })
+
+  it('mints one for a Mac screenshot and keeps its pending action', () => {
+    const refs = extractAgentReferences('mac_desk_control', {
+      success: true,
+      data: {
+        device: 'Maruf MacBook',
+        imageUrl: 'https://files.example.com/mac/desk-9.png',
+        pendingActionId: 'action-42',
+      },
+    }, { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] })
+
+    expect(refs.some((r) => r.kind === 'external_media')).toBe(true)
+    expect(refs.some((r) => r.destination.type === 'internal_entity')).toBe(true)
+  })
+
+  it('falls back to the section when the tool returned no image', () => {
+    const refs = extractAgentReferences('get_office_camera_snapshot', {
+      success: false,
+      data: { error: 'camera offline' },
+    }, { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] })
+
+    expect(refs).toHaveLength(1)
+    expect(refs[0].destination.type).toBe('internal_section')
+  })
+})
+
+describe('employee references never guess their business from the conversation', () => {
+  // Codex P2 (PR #845): get_employee_overview reads the Lifestyle hr_employees
+  // table and returns rows with no businessId. CDIT conversations run through
+  // that same Lifestyle tool pool, so a context fallback minted cdit_employee
+  // for Lifestyle ids — not-found at best, an unrelated record if ids collide.
+  beforeEach(() => { process.env.AGENT_REFERENCES_ROLLOUT = 'on' })
+  afterEach(() => {
+    if (originalRollout == null) delete process.env.AGENT_REFERENCES_ROLLOUT
+    else process.env.AGENT_REFERENCES_ROLLOUT = originalRollout
+  })
+
+  it('never mints a cdit_employee link for an unscoped Lifestyle row', () => {
+    const refs = extractAgentReferences('get_employee_overview', {
+      success: true,
+      data: { employees: [{ id: 'EMP-7', name: 'Rahim' }] },
+    }, { businessId: 'CREATIVE_DIGITAL_IT', roles: ['SUPER_ADMIN'] })
+
+    expect(refs.some((r) => r.destination.type === 'internal_entity'
+      && r.destination.namespace === 'cdit_employee')).toBe(false)
+    // The row is Lifestyle-scoped, so a CDIT conversation cannot carry it as an
+    // exact link at all — it fails closed to the reviewed section fallback.
+    expect(refs).toHaveLength(1)
+    expect(refs[0].destination.type).toBe('internal_section')
+  })
+
+  it('still mints the exact link when the conversation matches the row', () => {
+    const refs = extractAgentReferences('get_employee_overview', {
+      success: true,
+      data: { employees: [{ id: 'EMP-7', name: 'Rahim' }] },
+    }, { businessId: 'ALMA_LIFESTYLE', roles: ['SUPER_ADMIN'] })
+
+    const entity = refs.find((r) => r.destination.type === 'internal_entity')
+    expect(entity, JSON.stringify(refs)).toBeTruthy()
+    expect(entity!.destination.type === 'internal_entity'
+      && entity!.destination.namespace).toBe('lifestyle_employee')
+  })
+
+  it('honours a business the tool output itself verified', () => {
+    const refs = extractAgentReferences('get_employee_overview', {
+      success: true,
+      data: { employees: [{ id: 'EMP-9', businessId: 'ALMA_TRADING' }] },
+    }, { businessId: 'ALMA_TRADING', roles: ['SUPER_ADMIN'] })
+
+    const entity = refs.find((r) => r.destination.type === 'internal_entity')
+    expect(entity!.destination.type === 'internal_entity'
+      && entity!.destination.namespace).toBe('trading_employee')
+  })
+})

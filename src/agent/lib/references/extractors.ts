@@ -73,8 +73,25 @@ function addEntity(
   if (reference) output.push(reference)
 }
 
-function employeeNamespace(business: unknown, context: AgentReferenceContext): InternalEntityNamespace {
-  const resolved = business ?? context.businessId
+/**
+ * The namespace decides which table the focus route reads, so it may only come
+ * from a business the TOOL OUTPUT actually verified. `get_employee_overview`
+ * reads the Lifestyle `hr_employees` table under `DEFAULT_AGENT_BUSINESS_ID`
+ * and returns rows with no `businessId`; CDIT conversations are routed through
+ * that same Lifestyle tool pool, so falling back to the conversation's business
+ * minted `cdit_employee` for Lifestyle ids — a link that opens not-found, or an
+ * unrelated CDIT employee if the ids collide (Codex P2, PR #845).
+ *
+ * `contextFallback` is therefore opt-in, for extractors whose output carries a
+ * verified scope. Without one the reference stays Lifestyle, and a genuinely
+ * cross-business row simply fails closed at the resolver.
+ */
+function employeeNamespace(
+  business: unknown,
+  context: AgentReferenceContext,
+  options: { contextFallback?: boolean } = {},
+): InternalEntityNamespace {
+  const resolved = business ?? (options.contextFallback ? context.businessId : undefined)
   if (resolved === 'ALMA_TRADING') return 'trading_employee'
   if (resolved === 'CREATIVE_DIGITAL_IT') return 'cdit_employee'
   return 'lifestyle_employee'
@@ -131,7 +148,7 @@ function extractAttendance(data: unknown, toolName: string, context: AgentRefere
   for (const key of ['employees', 'present', 'late', 'absent', 'penalties'] as const) {
     rows(root[key]).forEach((row, index) => addEntity(
       out,
-      employeeNamespace(row.businessId ?? business, context),
+      employeeNamespace(row.businessId ?? business, context, { contextFallback: true }),
       row,
       row.employeeId ?? row.id,
       `data.${key}[${index}].employeeId`,
@@ -587,6 +604,49 @@ function extractDelegation(data: unknown, toolName: string, context: AgentRefere
   return out
 }
 
+/**
+ * Camera and Mac screenshots are returned for INLINE display — the tools hand
+ * back a bare `data.imageUrl` and the prompt tells the head to write
+ * `![alt](imageUrl)`. Under an active contract an image with no verified media
+ * reference is replaced by its alt text, so the owner asked for a screenshot
+ * and got a caption (Codex P1, PR #845). Mint the reference from the tool's own
+ * verified output; the URL still goes through the external-URL security gate,
+ * and the client still asks before contacting the remote host.
+ */
+function extractToolScreenshot(
+  data: unknown,
+  toolName: string,
+  context: AgentReferenceContext,
+): AgentReferenceV1[] {
+  const out: AgentReferenceV1[] = []
+  const root = object(data)
+  const rawUrl = typeof root?.imageUrl === 'string' ? root.imageUrl : null
+  if (rawUrl) {
+    const path = (() => { try { return new URL(rawUrl).pathname.toLowerCase() } catch { return '' } })()
+    const mediaType = path.endsWith('.jpg') || path.endsWith('.jpeg')
+      ? 'image/jpeg'
+      : path.endsWith('.webp') ? 'image/webp' : 'image/png'
+    const label = typeof root?.camera === 'string' && root.camera
+      ? root.camera
+      : typeof root?.device === 'string' && root.device ? root.device : 'Screenshot'
+    const ref = buildExternalReference({
+      rawUrl,
+      label,
+      kind: 'external_media',
+      purpose: 'media',
+      mediaType,
+      source: 'tool_output',
+      sourceTool: toolName,
+      outputPath: 'data.imageUrl',
+      context,
+    })
+    if (ref) out.push(ref)
+  }
+  // mac_desk_control's amber-policy branch still returns a durable pending action.
+  out.push(...extractPendingActions(data, toolName, context))
+  return out
+}
+
 function runExtractor(
   extractorId: ReferenceExtractorId,
   data: unknown,
@@ -600,6 +660,7 @@ function runExtractor(
     case 'trading_accounts': return extractTradingAccounts(data, toolName, context)
     case 'trading_trades': return extractTrades(data, toolName, context)
     case 'pending_actions': return extractPendingActions(data, toolName, context)
+    case 'tool_screenshot': return extractToolScreenshot(data, toolName, context)
     case 'staff': return extractStaff(data, toolName, context)
     case 'staff_tasks': return extractStaffTasks(data, toolName, context)
     case 'owner_todos': return extractOwnerTodos(data, toolName, context)

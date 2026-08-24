@@ -1359,7 +1359,11 @@ const EXPLICIT_REPORT_REQUEST = /(?:\b(?:report|audit|review|briefing|analysis)\
 const COMPLETE_REPORT_REQUEST = /(?:\b(?:complete|full|detailed|professional|management)\b[^\n।.!?]{0,48}\b(?:report|audit|review|briefing|analysis)\b|(?:সম্পূর্ণ|পূর্ণ|পুরো|বিস্তারিত|প্রফেশনাল|পেশাদার|ম্যানেজমেন্ট)[^\n।.!?]{0,48}(?:রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|পর্যালোচনা|প্রতিবেদন))/i
 const SHORT_REPORT_OUTPUT_REQUEST = /(?:\b(?:one[- ]?line|single[- ]?line|short|concise|summary[- ]?only)\b|এক\s*লাইনে|একটি?\s*লাইনে|সংক্ষেপে|ছোট\s*করে|শুধু\s*সারাংশ)/i
 const REQUESTED_REPORT_SECTION = /(?:\bbottom\s+line\b|\bexecutive\s+summary\b|\bkpis?\b|\bfindings?\b|\brisks?\b|\brecommendations?\b|\bnext\s+steps?\b|বটম\s*লাইন|নির্বাহী\s+সারাংশ|মূল\s+পর্যবেক্ষণ|ঝুঁকি|সুপারিশ|পরবর্তী\s+পদক্ষেপ)/gi
-const EXPLICIT_HTML_OUTPUT_REQUEST = /(?:\bhtml\b[^\n।.!?]{0,60}(?:\b(?:source|code|document|file|artifact|dashboard)\b|সোর্স|কোড|ডকুমেন্ট|ফাইল|আর্টিফ্যাক্ট|ড্যাশবোর্ড)|(?:\b(?:source|code|document|file|artifact|dashboard)\b|সোর্স|কোড|ডকুমেন্ট|ফাইল|আর্টিফ্যাক্ট|ড্যাশবোর্ড)[^\n।.!?]{0,60}\bhtml\b|\bhtml\s*(?:-|–|—)?\s*(?:এ|তে)\s*(?:দাও|দিন|চাই|বানাও|করো|করুন))/i
+// `report|audit|review|briefing|analysis` belong here beside source/code/file:
+// "Create the weekly report in HTML" / "give me an HTML report" is an explicit
+// format request, and treating it as a violation sent a correctly formatted
+// answer through the retry path against Boss's own instruction (Codex P2 #845).
+const EXPLICIT_HTML_OUTPUT_REQUEST = /(?:\bhtml\b[^\n।.!?]{0,60}(?:\b(?:source|code|document|file|artifact|dashboard|report|audit|review|briefing|analysis)\b|সোর্স|কোড|ডকুমেন্ট|ফাইল|আর্টিফ্যাক্ট|ড্যাশবোর্ড|রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|প্রতিবেদন)|(?:\b(?:source|code|document|file|artifact|dashboard|report|audit|review|briefing|analysis)\b|সোর্স|কোড|ডকুমেন্ট|ফাইল|আর্টিফ্যাক্ট|ড্যাশবোর্ড|রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|প্রতিবেদন)[^\n।.!?]{0,60}\bhtml\b|\bhtml\s*(?:-|–|—)?\s*(?:এ|তে)\s*(?:দাও|দিন|চাই|বানাও|করো|করুন))/i
 const HTML_FENCED_BLOCK = /```[ \t]*(?:html|htm)\b[^\n]*\n[\s\S]*?\n```/gi
 const FULL_HTML_DOCUMENT = /<!doctype\s+html\b|<html(?:\s|>)/i
 const HTML_REPORT_TAG = /<\/?(?:html|head|body|style|main|section|div|table|thead|tbody|tr|th|td)\b[^>]*>/gi
@@ -1409,6 +1413,11 @@ export function detectProfessionalReportStyleViolations(
     || VOICE_OUTPUT_REQUEST.test(ownerInstructions)
     || isCopyOnlyOwnerRequest(ownerInstructions)
   ) return []
+
+  // Boss asked for HTML and got HTML: this is the requested deliverable, so
+  // neither the inline-HTML rule nor the Markdown-structure rule below applies
+  // (an HTML document has no `##` headings by definition) — Codex P2, PR #845.
+  if (EXPLICIT_HTML_OUTPUT_REQUEST.test(ownerInstructions) && isHtmlDominatedReport(text)) return []
 
   if (!EXPLICIT_HTML_OUTPUT_REQUEST.test(ownerInstructions) && isHtmlDominatedReport(text)) {
     return [{

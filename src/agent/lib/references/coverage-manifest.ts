@@ -34,6 +34,7 @@ export type ReferenceExtractorId =
   | 'trading_accounts'
   | 'trading_trades'
   | 'pending_actions'
+  | 'tool_screenshot'
   | 'staff'
   | 'staff_tasks'
   | 'owner_todos'
@@ -236,7 +237,8 @@ export const TOOL_EXTRACT_OVERRIDES: Readonly<Record<string, ExtractOverride>> =
   check_browser_task: { extractorId: 'pending_actions', fallbackSection: 'agent_browser_live', reason: 'Extract the verified AgentPendingAction data.id.' },
   start_cli_session: { extractorId: 'pending_actions', fallbackSection: 'agent_mac', reason: 'Extract the pending action returned by its permission-gated branch.' },
   drive_mac_app: { extractorId: 'pending_actions', fallbackSection: 'agent_mac', reason: 'Extract the pending action returned by its amber-policy branch.' },
-  mac_desk_control: { extractorId: 'pending_actions', fallbackSection: 'agent_mac', reason: 'Extract the pending action returned by its amber-policy branch.' },
+  mac_desk_control: { extractorId: 'tool_screenshot', fallbackSection: 'agent_mac', reason: 'Mint the verified screenshot media reference from data.imageUrl, plus the pending action its amber-policy branch returns.' },
+  get_office_camera_snapshot: { extractorId: 'tool_screenshot', fallbackSection: 'agent_live_watch', reason: 'The snapshot is returned for inline display as data.imageUrl; without a media reference the ON contract replaces the image with its alt text.' },
   run_mac_command: { extractorId: 'pending_actions', fallbackSection: 'agent_mac', reason: 'Extract the explicit durable data.pendingActionId.' },
   generate_image: { extractorId: 'pending_actions', fallbackSection: 'creative_studio', reason: 'Extract the explicit durable data.pendingActionId.' },
   post_to_facebook: { extractorId: 'pending_actions', fallbackSection: 'agent_growth', reason: 'Extract the explicit durable data.pendingActionId.' },

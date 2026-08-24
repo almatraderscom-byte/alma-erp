@@ -427,6 +427,10 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       ? filterAgentReferencesForContext(u.references, { businessId: referenceBusinessId, roles: ['SUPER_ADMIN'] })
       : undefined
     const visibleReferences = exposedAgentReferences(references ?? [])
+    // Durable marker first; fall back to "it cited something" for ON-era rows
+    // saved before the marker shipped. Absent both → pre-contract history.
+    const rowContractActive = u.referencesActive === true
+      || (Array.isArray(u.references) && u.references.length > 0)
     return {
       id: m.id,
       clientRequestId: m.clientRequestId,
@@ -485,7 +489,14 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       // every trusted tool screenshot inert — a visible regression in the
       // DEFAULT mode (Codex P1, PR #845). Reference-scoped rendering is enforced
       // only while this is true; otherwise the clients keep legacy behaviour.
-      referencesActive: shouldRenderAgentReferences(),
+      //
+      // It is a per-ROW question, not a global one. Every message written before
+      // this pipeline existed has no references and never could have; marking
+      // those active the moment the rollout flips would strip the links out of
+      // the owner's entire history (Codex P1 round 4). The turn stamps
+      // `usage.referencesActive` when it runs under the contract; older ON-era
+      // rows that predate the stamp are recognised by carrying references at all.
+      referencesActive: shouldRenderAgentReferences() && rowContractActive,
       // Build 103 Issue 3 — durable work-step tracker snapshot(s) anchored to
       // this assistant message; cold history equals the settled live tracker.
       // Plan trackers come from agent_plans; unplanned runtime trackers ride

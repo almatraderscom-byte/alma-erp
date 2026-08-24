@@ -14765,7 +14765,11 @@ struct AgentMarkdownText: View {
     }
 
     private func tableCell(_ value: String, header: Bool, column: Int) -> some View {
-        let content = Self.sanitizedInlineMarkdown(value, references: references)
+        // Table cells are a separate renderer — without the flag they defaulted to
+        // the strict contract and stripped every legacy link inside a Markdown
+        // table while the rollout was hidden (Codex P2, PR #845).
+        let content = Self.sanitizedInlineMarkdown(
+            value, references: references, contractActive: referencesActive)
             .map(Text.init) ?? Text(value)
         return content
             .font(.system(size: header ? 12.5 : 13.5,

@@ -5427,7 +5427,7 @@ async function* runAlternateProviderTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload. The GET messages route surfaces
         // it as `thinking`/`thinkingMs`; history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined,
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined, referencesActive: referenceContractActive || undefined,
           // P1-9: WHY this head ran, not just which one. Until now `via` lived
           // only in code and cost logs, so a surprising model choice had no
           // answer Boss could be shown ("routine_kw" / "task_pin" / "deny_kw").
@@ -5886,7 +5886,7 @@ async function* runAlternateProviderTurn(
               content: [{ type: 'text', text: salvageText }, ...emittedAskCards],
               tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
               costUsd: salvageCostUsd,
-              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
+              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined, referencesActive: referenceContractActive || undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
             },
           })
           // The provider may have thrown after an arbitrary chunk. Reset every
@@ -6006,7 +6006,7 @@ async function* runAlternateProviderTurn(
             content: [{ type: 'text', text }, ...emittedAskCards],
             tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
             costUsd: salvageCostUsd,
-            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
+            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, entityLinks: entityLinks.length > 0 ? entityLinks : undefined, references: references.length > 0 ? references : undefined, referencesActive: referenceContractActive || undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
           },
         })
       } catch {

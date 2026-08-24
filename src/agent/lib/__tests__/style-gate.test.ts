@@ -275,3 +275,29 @@ describe('one-shot report repair round', () => {
     expect(prompt).toContain('INTERNAL CONTROL')
   })
 })
+
+describe('explicit HTML format requests are honoured, not retried', () => {
+  // Codex P2 (PR #845): "Create the weekly report in HTML" was not recognised
+  // as an explicit format request, so a correctly formatted HTML answer was
+  // flagged `professional_report_inline_html` and sent through the retry path
+  // against Boss's own instruction.
+  const HTML_REPORT = '<!doctype html>\n<html><body><h1>Weekly</h1>'
+    + '<table><tr><td>বিক্রি</td><td>১২৩</td></tr></table>'.repeat(20)
+    + '</body></html>'
+
+  it.each([
+    'Create the weekly report in HTML',
+    'give me an HTML report',
+    'HTML-এ রিপোর্টটা দাও',
+    'রিপোর্টটা html করে দিন',
+  ])('accepts %s', async (instruction) => {
+    const detect = await loadReportDetector()
+    expect(detect(HTML_REPORT, instruction)).toEqual([])
+  })
+
+  it('still rejects inline HTML nobody asked for', async () => {
+    const detect = await loadReportDetector()
+    const violations = detect(HTML_REPORT, 'সাপ্তাহিক রিপোর্ট দাও')
+    expect(violations.map((v) => v.ruleId)).toContain('professional_report_inline_html')
+  })
+})
