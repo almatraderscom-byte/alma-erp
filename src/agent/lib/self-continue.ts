@@ -39,6 +39,10 @@ import { mayContinueChain } from '@/agent/lib/continuation-policy'
 const HOPS_PREFIX = 'self_continue_hops:'
 const DRY_PREFIX = 'self_continue_dry:'
 const STOP_PREFIX = 'self_continue_stop:'
+const SEEN_PREFIX = 'self_continue_seen:'
+
+/** Cap on remembered tool fingerprints per conversation (newest kept). */
+const MAX_SEEN_FINGERPRINTS = 300
 
 /** ~30s: long enough for the function to unwind, short enough to feel continuous. */
 export const SELF_CONTINUE_DELAY_MS = 30_000
@@ -54,6 +58,18 @@ export const MAX_CONSECUTIVE_DRY_HOPS = 2
 const hopsKey = (conversationId: string) => `${HOPS_PREFIX}${conversationId}`
 const dryKey = (conversationId: string) => `${DRY_PREFIX}${conversationId}`
 const stopKey = (conversationId: string) => `${STOP_PREFIX}${conversationId}`
+const seenKey = (conversationId: string) => `${SEEN_PREFIX}${conversationId}`
+
+async function readSeenFingerprints(conversationId: string): Promise<string[]> {
+  try {
+    const row = await prisma.agentKvSetting.findUnique({ where: { key: seenKey(conversationId) } })
+    if (!row?.value) return []
+    const parsed: unknown = JSON.parse(row.value)
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : []
+  } catch {
+    return []
+  }
+}
 
 async function readIntKey(key: string): Promise<number> {
   try {
@@ -138,7 +154,7 @@ export async function haltSelfContinueChain(
 export async function resetSelfContinueChain(conversationId: string): Promise<void> {
   await prisma.agentKvSetting
     .deleteMany({
-      where: { key: { in: [hopsKey(conversationId), dryKey(conversationId), stopKey(conversationId)] } },
+      where: { key: { in: [hopsKey(conversationId), dryKey(conversationId), stopKey(conversationId), seenKey(conversationId)] } },
     })
     .catch(() => {})
 }
@@ -160,7 +176,7 @@ export async function clearHops(conversationId: string): Promise<void> {
   // Prisma logs even though this fail-open call catches the rejection.
   await prisma.agentKvSetting
     .deleteMany({
-      where: { key: { in: [hopsKey(conversationId), dryKey(conversationId), stopKey(conversationId)] } },
+      where: { key: { in: [hopsKey(conversationId), dryKey(conversationId), stopKey(conversationId), seenKey(conversationId)] } },
     })
     .catch(() => {})
 }
@@ -174,13 +190,18 @@ export interface SelfContinueResult {
 }
 
 /**
- * What THIS hop actually achieved. `successfulToolResults` is the count of NEW
- * successful tool calls made by the hop that is asking to continue — zero means
- * the hop was dry. Callers that cannot measure it omit the field (fail-open:
- * the dry brake only engages on measured hops).
+ * What THIS hop actually achieved. `successfulToolFingerprints` identifies each
+ * successful tool call by name + input hash; a hop whose every fingerprint was
+ * already seen on an earlier hop produced NOTHING NEW — re-reading the same
+ * inventory on every hop is exactly the stall the incident showed, and a raw
+ * success COUNT cannot see it (Codex P1 #850 r4). `successfulToolResults`
+ * remains as the coarse fallback for callers without fingerprints. Callers
+ * that cannot measure at all omit the field (fail-open: the dry brake only
+ * engages on measured hops).
  */
 export interface SelfContinueProgress {
-  successfulToolResults: number
+  successfulToolResults?: number
+  successfulToolFingerprints?: string[]
 }
 
 /**
@@ -221,16 +242,32 @@ export async function scheduleSelfContinue(input: {
       return { scheduled: false, hops, reason: 'hop limit reached — reporting instead of looping', stop: 'hop_limit' }
     }
 
-    // Brake 2 — the dry-hop brake, only on measured hops.
+    // Brake 2 — the dry-hop brake, only on measured hops. NEW work means a
+    // successful tool call whose (name + input) fingerprint no earlier hop of
+    // this chain produced — a hop that only repeats earlier reads is dry even
+    // though its raw success count is positive (Codex P1 #850 r4).
     if (input.progress) {
+      const fingerprints = input.progress.successfulToolFingerprints
+      let madeNewWork: boolean
+      if (fingerprints) {
+        const seen = new Set(await readSeenFingerprints(conversationId))
+        const fresh = fingerprints.filter((f) => !seen.has(f))
+        madeNewWork = fresh.length > 0
+        if (fresh.length > 0) {
+          const merged = [...seen, ...fresh].slice(-MAX_SEEN_FINGERPRINTS)
+          await writeKey(seenKey(conversationId), JSON.stringify(merged))
+        }
+      } else {
+        madeNewWork = (input.progress.successfulToolResults ?? 0) > 0
+      }
       const prevDry = await readIntKey(dryKey(conversationId))
-      const dry = input.progress.successfulToolResults > 0 ? 0 : prevDry + 1
+      const dry = madeNewWork ? 0 : prevDry + 1
       if (dry >= MAX_CONSECUTIVE_DRY_HOPS) {
         await writeStop(conversationId, {
           reason: 'no_progress',
           hops,
           at: new Date().toISOString(),
-          detail: `${dry} consecutive hops with zero new successful tool results`,
+          detail: `${dry} consecutive hops with zero NEW successful tool results`,
         })
         return {
           scheduled: false,

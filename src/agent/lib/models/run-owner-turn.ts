@@ -4081,6 +4081,15 @@ async function* runAlternateProviderTurn(
       const progressCallCount = withholdProspectivePlanProse
         ? acceptedProspectivePlanCalls.size
         : calls.length
+      // Codex P1 #850 r4: the round-start cancel check leaves a window — the
+      // provider round can complete AFTER a Stop/ghost-fence revocation
+      // landed, and every tool in this round would still execute its
+      // mutations. Re-check once here, after the provider response and before
+      // any executeTool, so a revoked turn cannot start new external effects.
+      if (calls.length > 0 && await isTurnCancelRequested(turnId)) {
+        canceled = true
+        break
+      }
       for (const call of calls) {
         if (withholdProspectivePlanProse && !acceptedProspectivePlanCalls.has(call)) {
           const rejected = {
@@ -5451,11 +5460,15 @@ async function* runAlternateProviderTurn(
       const wake = await scheduleSelfContinue({
         conversationId,
         sourceTurnId: turnId ?? '',
-        // The dry-hop brake measures what THIS hop actually achieved: zero new
-        // successful tool results twice in a row stops the chain honestly
-        // (runaway 2026-08-24: 12 hops, ~98k tokens, nothing produced).
+        // The dry-hop brake measures what THIS hop actually achieved. NEW work
+        // is identified by tool-name + input fingerprints, not a raw success
+        // count — a hop that merely re-reads the same inventory every time is
+        // dry even though its calls "succeed" (Codex P1 #850 r4; the runaway:
+        // 12 hops, ~98k tokens, nothing produced).
         progress: {
-          successfulToolResults: toolRecords.filter((r) => r.status === 'success').length,
+          successfulToolFingerprints: toolRecords
+            .filter((r) => r.status === 'success')
+            .map((r) => `${r.toolName}:${shortHash(JSON.stringify(r.input ?? null))}`),
         },
       })
       selfContinueWake = wake
@@ -6006,11 +6019,20 @@ async function* runAlternateProviderTurn(
           // only as the fallback when scheduling fails. The direct-YouTube lane
           // keeps its own settlement machinery untouched.
           let serverResumeWake: { scheduled: boolean; hops: number; reason?: string; stop?: string } | null = null
+          // A continuation slice that is SYNTHESIZING (composing the report
+          // from findings earlier slices persisted) legitimately makes no tool
+          // calls before the deadline — requiring a successful tool here would
+          // kill exactly the job the slice chain exists for (Codex P1 #850
+          // r4). Such a dry slice still resumes; the fingerprint dry-hop brake
+          // bounds how many dry slices may chain.
+          const salvageResumeEligible =
+            shouldAutoContinueTurn({ deadlineHit: true, hasAskCard: false, tools: toolRecords })
+            || (options.continuation === true && Boolean(finalText.trim()))
           if (
             directBrowserLane == null
             && emittedAskCards.length === 0
             && turnId
-            && shouldAutoContinueTurn({ deadlineHit: true, hasAskCard: false, tools: toolRecords })
+            && salvageResumeEligible
           ) {
             try {
               // The "work remaining" record the wake binds to: an exact-turn
@@ -6040,7 +6062,11 @@ async function* runAlternateProviderTurn(
               serverResumeWake = await scheduleSelfContinue({
                 conversationId,
                 sourceTurnId: turnId,
-                progress: { successfulToolResults: okSteps },
+                progress: {
+                  successfulToolFingerprints: toolRecords
+                    .filter((r) => r.status === 'success')
+                    .map((r) => `${r.toolName}:${shortHash(JSON.stringify(r.input ?? null))}`),
+                },
               })
             } catch { serverResumeWake = null }
           }
@@ -6056,10 +6082,14 @@ async function* runAlternateProviderTurn(
             ?? hardGateMediaPlaybackFinalText(browserOwnerText, finalText, toolRecords)
           const abortedBrowserTurn = toolRecords.some((r) => r.toolName.startsWith('live_browser_'))
           // A server-scheduled wake OWNS the resume: the client must not also
-          // re-send (double hop). needContinue stays a client hint only when
-          // the server could not schedule.
-          let needContinue = serverResumeWake?.scheduled
-            ? false
+          // re-send (double hop). When the wake was ATTEMPTED but could not be
+          // scheduled (worker down, binding refusal), the client fallback must
+          // hold for ANY resumable job — the old browser-only derivation left
+          // a generic report/tool deadline with no resume path at all (Codex
+          // P1 #850 r4). A BRAKE stop is the one deliberate exception: the
+          // chain was stopped on purpose, so nothing may auto-resume it.
+          let needContinue = serverResumeWake
+            ? (!serverResumeWake.scheduled && !serverResumeWake.stop && emittedAskCards.length === 0)
             : abortedBrowserTurn && emittedAskCards.length === 0
           let salvageText = directBrowserLane?.state === 'unavailable'
             ? playbackGate.text

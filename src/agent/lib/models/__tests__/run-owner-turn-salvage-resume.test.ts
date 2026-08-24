@@ -22,10 +22,14 @@ describe('deadline-salvage server-side resume wiring', () => {
     const salvage = source.slice(source.indexOf('if (signal?.aborted) {'))
     const scheduleAt = salvage.indexOf('serverResumeWake = await scheduleSelfContinue({')
     expect(scheduleAt).toBeGreaterThan(-1)
-    // Bounded by the same brakes: measured progress rides along.
-    expect(salvage.slice(scheduleAt, scheduleAt + 400)).toContain('successfulToolResults: okSteps')
+    // Bounded by the same brakes: fingerprint-measured progress rides along
+    // (a repeat of an earlier read is NOT new work — Codex P1 #850 r4).
+    expect(salvage.slice(scheduleAt, scheduleAt + 500)).toContain('successfulToolFingerprints')
     // Gate: the policy decision, not ad-hoc conditions.
     expect(salvage).toContain("shouldAutoContinueTurn({ deadlineHit: true, hasAskCard: false, tools: toolRecords })")
+    // A tool-free SYNTHESIS continuation slice still resumes (bounded by the
+    // dry-hop brake) instead of dying at the serverless ceiling.
+    expect(salvage).toContain("|| (options.continuation === true && Boolean(finalText.trim()))")
   })
 
   it('persists the work-remaining checkpoint BEFORE scheduling (binding authority)', () => {
@@ -37,17 +41,21 @@ describe('deadline-salvage server-side resume wiring', () => {
     expect(salvage.slice(checkpointAt, scheduleAt)).toContain("taskRef: turnId")
   })
 
-  it('a server-scheduled wake owns the resume — the client hint turns off', () => {
+  it('client recovery survives a failed wake for ANY resumable job; only a brake stop disables it', () => {
     const salvage = source.slice(source.indexOf('if (signal?.aborted) {'))
-    expect(salvage).toContain("let needContinue = serverResumeWake?.scheduled\n            ? false")
+    expect(salvage).toContain('let needContinue = serverResumeWake')
+    expect(salvage).toContain('!serverResumeWake.scheduled && !serverResumeWake.stop')
   })
 
-  it('the scheduling site of the normal path feeds the dry-hop brake with real progress', () => {
+  it('the scheduling site of the normal path feeds the dry-hop brake with fingerprinted progress', () => {
     const site = source.indexOf('if (taskUnfinished) {\n      const { scheduleSelfContinue }')
     expect(site).toBeGreaterThan(-1)
-    expect(source.slice(site, site + 700)).toContain(
-      "successfulToolResults: toolRecords.filter((r) => r.status === 'success').length",
-    )
+    expect(source.slice(site, site + 900)).toContain('successfulToolFingerprints')
+  })
+
+  it('a revoked turn is rechecked between the provider response and executeTool', () => {
+    const site = source.indexOf('if (calls.length > 0 && await isTurnCancelRequested(turnId))')
+    expect(site).toBeGreaterThan(-1)
   })
 
   it('a genuine owner message resets the chain; engine directives never do', () => {

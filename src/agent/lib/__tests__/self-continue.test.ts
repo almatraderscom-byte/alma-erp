@@ -235,6 +235,49 @@ describe('the wake-up chain', () => {
     expect(MAX_CONSECUTIVE_DRY_HOPS).toBe(2)
   })
 
+  it('repeated fingerprints are DRY even though the calls succeeded (Codex P1 #850 r4)', async () => {
+    const store = useKvStore()
+    const repeat = { successfulToolFingerprints: ['get_inventory_status:abc123'] }
+
+    // Hop 1 introduces the fingerprint — new work.
+    const first = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1', progress: repeat,
+    })
+    expect(first.scheduled).toBe(true)
+    expect(store.get('self_continue_dry:c1')).toBe('0')
+
+    // Hops 2 and 3 only repeat the same successful read — dry, then braked.
+    const second = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1', progress: repeat,
+    })
+    expect(second.scheduled).toBe(true)
+    expect(store.get('self_continue_dry:c1')).toBe('1')
+
+    continuation.enqueueAgentContinuation.mockClear()
+    const third = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1', progress: repeat,
+    })
+    expect(third.scheduled).toBe(false)
+    expect(third.stop).toBe('no_progress')
+    expect(continuation.enqueueAgentContinuation).not.toHaveBeenCalled()
+  })
+
+  it('a genuinely new fingerprint resets the dry counter', async () => {
+    const store = useKvStore({
+      'self_continue_dry:c1': '1',
+      'self_continue_seen:c1': JSON.stringify(['get_inventory_status:abc123']),
+    })
+
+    const res = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1',
+      progress: { successfulToolFingerprints: ['get_reorder_suggestions:def456'] },
+    })
+
+    expect(res.scheduled).toBe(true)
+    expect(store.get('self_continue_dry:c1')).toBe('0')
+    expect(JSON.parse(store.get('self_continue_seen:c1')!)).toContain('get_reorder_suggestions:def456')
+  })
+
   it('real progress resets the dry counter', async () => {
     const store = useKvStore({ 'self_continue_dry:c1': '1' })
 
@@ -295,7 +338,7 @@ describe('the wake-up chain', () => {
 
     expect(mockPrisma.agentKvSetting.deleteMany).toHaveBeenCalledTimes(2)
     expect(mockPrisma.agentKvSetting.deleteMany).toHaveBeenNthCalledWith(1, {
-      where: { key: { in: ['self_continue_hops:c1', 'self_continue_dry:c1', 'self_continue_stop:c1'] } },
+      where: { key: { in: ['self_continue_hops:c1', 'self_continue_dry:c1', 'self_continue_stop:c1', 'self_continue_seen:c1'] } },
     })
   })
 })
