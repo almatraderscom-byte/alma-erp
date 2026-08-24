@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import toast from 'react-hot-toast'
 import { Button, Card, Empty, Skeleton } from '@/components/ui'
@@ -96,9 +96,16 @@ export function TradingTelegramAdmin({
 
   const pendingCount = useMemo(() => drafts.filter(d => d.status === 'PENDING').length, [drafts])
 
+  // Clearing the interval does not cancel a request already in flight, so a slow
+  // poll could land after a filter change or a confirm and repaint the old rows.
+  // Every load takes a ticket; only the newest one is allowed to write state.
+  const loadGeneration = useRef(0)
+
   /** `quiet` = background poll: refresh the data without flashing the skeleton. */
   const load = useCallback(async (quiet = false) => {
     if (!canReviewDrafts) return
+    const generation = ++loadGeneration.current
+    const isCurrent = () => generation === loadGeneration.current
     if (!quiet) setLoading(true)
     setError(null)
     try {
@@ -117,6 +124,7 @@ export function TradingTelegramAdmin({
 
       if (!quiet) setMappingLoading(true)
       const draftRes = await fetch(`/api/trading/telegram/drafts?${draftQs}`).then(r => r.json())
+      if (!isCurrent()) return
       if (draftRes.error) throw new Error(draftRes.error)
 
       setDrafts(draftRes.drafts ?? [])
@@ -133,6 +141,7 @@ export function TradingTelegramAdmin({
           fetch('/api/trading/staff').then(r => r.json()),
           fetch('/api/trading/accounts?status=ACTIVE').then(r => r.json()),
         ])
+        if (!isCurrent()) return
         setUsers(u.users ?? [])
         setAliases(a.aliases ?? [])
         setChats(c.chats ?? [])
@@ -147,10 +156,12 @@ export function TradingTelegramAdmin({
         )
       }
     } catch (e) {
-      setError((e as Error).message)
+      if (isCurrent()) setError((e as Error).message)
     } finally {
-      setLoading(false)
-      setMappingLoading(false)
+      if (isCurrent()) {
+        setLoading(false)
+        setMappingLoading(false)
+      }
     }
   }, [canReviewDrafts, isStaffView, isAdmin, draftStatus, filterUserId, filterAccountId, duplicateOnly])
 
@@ -1049,6 +1060,9 @@ function DraftRow({
   // It stays confirmable so the retry is one tap, not an admin ticket.
   const isConfirming = d.status === 'APPROVED' && !d.tradingTradeId
   const canConfirm = d.status === 'PENDING' || isConfirming
+  // Never edit a CLAIMED draft: its ledger transaction may already have read the
+  // old numbers. The server refuses it too — this just keeps the button honest.
+  const canEdit = d.status === 'PENDING'
   const isPosted = d.status === 'POSTED'
 
   return (
@@ -1097,7 +1111,7 @@ function DraftRow({
         {isLocked && !isStaffView && (
           <Button variant="secondary" size="sm" disabled={busy} onClick={onReopen}>Reopen</Button>
         )}
-        {canConfirm && (
+        {canEdit && (
           <Button variant="secondary" size="sm" disabled={busy} onClick={onEdit}>Edit</Button>
         )}
         {isPosted && d.tradingTradeId && (

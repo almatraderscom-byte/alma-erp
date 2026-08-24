@@ -43,8 +43,12 @@ export async function updateTelegramDraft(
   const draft = await loadDraftForActor(ctx, draftId)
   assertDraftEditable(draft.status)
 
-  const updated = await prisma.tradingTelegramDraft.update({
-    where: { id: draftId },
+  // Only an UNCLAIMED draft is editable. A claimed one (APPROVED) may already be
+  // inside the ledger transaction, which read the old numbers — editing it there
+  // would post one set of values and leave the draft showing another. A stranded
+  // claim is recovered to PENDING by the sweep first, so this is not a dead end.
+  const edited = await prisma.tradingTelegramDraft.updateMany({
+    where: { id: draftId, businessId: TRADING_BUSINESS_ID, status: 'PENDING' },
     data: {
       ...(input.tradingAccountId !== undefined ? { tradingAccountId: input.tradingAccountId } : {}),
       ...(input.accountAlias !== undefined ? { accountAlias: input.accountAlias } : {}),
@@ -60,6 +64,13 @@ export async function updateTelegramDraft(
       confirmError: null,
       confirmErrorAt: null,
     },
+  })
+  if (edited.count === 0) {
+    throw new Error('This draft is being confirmed right now — refresh before editing it')
+  }
+
+  const updated = await prisma.tradingTelegramDraft.findFirstOrThrow({
+    where: { id: draftId, businessId: TRADING_BUSINESS_ID },
     include: {
       user: { select: { id: true, name: true, email: true, profileImageUrl: true, updatedAt: true } },
       tradingAccount: { select: { id: true, accountTitle: true } },
@@ -203,8 +214,14 @@ export async function rejectTelegramDraftRecord(ctx: TradingContext, draftId: st
     throw new Error('Locked drafts can only be rejected by an admin — ask admin to reopen first')
   }
 
-  const updated = await prisma.tradingTelegramDraft.update({
-    where: { id: draftId },
+  // Same claim rule as the edit path: rejecting a draft whose ledger transaction
+  // is mid-flight would race the POSTED write.
+  const rejected = await prisma.tradingTelegramDraft.updateMany({
+    where: {
+      id: draftId,
+      businessId: TRADING_BUSINESS_ID,
+      status: { in: ['PENDING', 'LOCKED'] },
+    },
     data: {
       status: 'REJECTED',
       rejectReason: reason,
@@ -213,6 +230,13 @@ export async function rejectTelegramDraftRecord(ctx: TradingContext, draftId: st
       confirmError: null,
       confirmErrorAt: null,
     },
+  })
+  if (rejected.count === 0) {
+    throw new Error('This draft is being confirmed right now — refresh before rejecting it')
+  }
+
+  const updated = await prisma.tradingTelegramDraft.findFirstOrThrow({
+    where: { id: draftId, businessId: TRADING_BUSINESS_ID },
   })
 
   await logTelegramDraftAudit({

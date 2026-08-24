@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  */
 
 const draftFindFirst = vi.fn()
+const draftFindFirstOrThrow = vi.fn()
 const draftFindMany = vi.fn()
 const draftUpdate = vi.fn()
 const draftUpdateMany = vi.fn()
@@ -27,6 +28,7 @@ vi.mock('@/lib/prisma', () => ({
   prisma: {
     tradingTelegramDraft: {
       findFirst: (...args: unknown[]) => draftFindFirst(...args),
+      findFirstOrThrow: (...args: unknown[]) => draftFindFirstOrThrow(...args),
       findMany: (...args: unknown[]) => draftFindMany(...args),
       update: (...args: unknown[]) => draftUpdate(...args),
       updateMany: (...args: unknown[]) => draftUpdateMany(...args),
@@ -41,7 +43,11 @@ vi.mock('@/lib/trading-trade-create', () => ({
 
 vi.mock('@/lib/user-display', () => ({ resolveProfileImageForUser: () => null }))
 
-import { approveTelegramDraftToLedger } from '@/lib/trading-telegram-drafts'
+import {
+  approveTelegramDraftToLedger,
+  rejectTelegramDraftRecord,
+  updateTelegramDraft,
+} from '@/lib/trading-telegram-drafts'
 import { healStuckApprovedTelegramDrafts } from '@/lib/trading-telegram-lock'
 import type { TradingContext } from '@/lib/trading'
 
@@ -164,6 +170,44 @@ describe('approveTelegramDraftToLedger', () => {
     expect(result).toEqual({ tradeId: 'trade-5', alreadyPosted: true })
     expect(createTradingTradeRecord).not.toHaveBeenCalled()
     expect(draftUpdateMany).not.toHaveBeenCalled()
+  })
+})
+
+describe('editing and rejecting a claimed draft', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    auditCreate.mockResolvedValue({})
+    draftFindFirstOrThrow.mockResolvedValue(pendingDraft())
+  })
+
+  it('edits only an unclaimed draft, so a mid-flight confirm cannot post stale numbers', async () => {
+    draftFindFirst.mockResolvedValue(pendingDraft())
+    draftUpdateMany.mockResolvedValue({ count: 1 })
+
+    await updateTelegramDraft(ctx, 'draft-1', { usdtAmount: 12 })
+
+    const where = (draftUpdateMany.mock.calls[0][0] as { where: { status: unknown } }).where
+    expect(where.status).toBe('PENDING')
+  })
+
+  it('refuses the edit when the draft is already claimed', async () => {
+    draftFindFirst.mockResolvedValue(pendingDraft({ status: 'APPROVED' }))
+    draftUpdateMany.mockResolvedValue({ count: 0 })
+
+    await expect(updateTelegramDraft(ctx, 'draft-1', { usdtAmount: 12 }))
+      .rejects.toThrow(/being confirmed right now/)
+  })
+
+  it('refuses the reject when the draft is already claimed', async () => {
+    draftFindFirst.mockResolvedValue(pendingDraft({ status: 'APPROVED' }))
+    draftUpdateMany.mockResolvedValue({ count: 0 })
+
+    await expect(rejectTelegramDraftRecord(ctx, 'draft-1', 'nope'))
+      .rejects.toThrow(/being confirmed right now/)
+
+    const where = (draftUpdateMany.mock.calls[0][0] as { where: { status: { in: string[] } } }).where
+    // LOCKED stays rejectable by an admin; APPROVED does not.
+    expect(where.status.in).toEqual(['PENDING', 'LOCKED'])
   })
 })
 

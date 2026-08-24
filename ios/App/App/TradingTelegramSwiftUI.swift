@@ -135,8 +135,12 @@ struct TradingTelegramDraft: Decodable, Identifiable, Equatable {
     /// A draft parked in APPROVED with no ledger trade is a confirm that never
     /// finished — it stays retryable rather than becoming an untouchable row.
     var isStalledConfirm: Bool { status == "APPROVED" && (tradingTradeId ?? "").isEmpty }
-    /// Every state where Confirm / Reject / Edit still apply.
+    /// Every state where Confirm / Reject still apply.
     var isActionable: Bool { status == "PENDING" || status == "LOCKED" || isStalledConfirm }
+    /// Editing is narrower: a CLAIMED draft may already be inside the ledger
+    /// transaction that read the old numbers, and a LOCKED one needs a reopen
+    /// first. The server refuses both — this keeps the pencil honest.
+    var isEditable: Bool { status == "PENDING" }
 
     /// Web DraftRow headline: "#12 · BUY · 500 USDT @ 122.5 · fee 0.5".
     var headline: String {
@@ -573,12 +577,19 @@ final class TradingTelegramVM {
         return out
     }
 
+    /// A slow poll must not repaint rows that a newer foreground load already
+    /// replaced (filter change, confirm). Every load takes a ticket; only the
+    /// newest one writes state.
+    private var loadGeneration = 0
+
     /// First paint + pull-to-refresh: drafts list + owner monitor together.
     /// `quiet` is the background poll — refresh the rows without the skeleton.
     func load(quiet: Bool = false) async {
+        loadGeneration &+= 1
+        let generation = loadGeneration
         if !quiet { loading = true }
         error = nil
-        defer { if !quiet { loading = false } }
+        defer { if !quiet && generation == loadGeneration { loading = false } }
         do {
             let resp: TradingTelegramDraftsResponse = try await AlmaAPI.shared.get(
                 "/api/trading/telegram/drafts",
@@ -588,17 +599,22 @@ final class TradingTelegramVM {
                         "userId": isAdmin && !filterUserId.isEmpty ? filterUserId : nil,
                         "tradingAccountId": filterAccountId.isEmpty ? nil : filterAccountId,
                         "duplicateOnly": duplicatesOnly ? "1" : nil])
+            guard generation == loadGeneration else { return }
             drafts = resp.drafts
             draftGroups = resp.groups
             draftDayGroups = resp.dayGroups
             authExpired = false
             // Monitor payload feeds the hero card — non-fatal if the role can't see it.
-            monitor = try? await AlmaAPI.shared.get("/api/trading/telegram/monitor", query: [:])
+            let m: TradingTelegramMonitor? = try? await AlmaAPI.shared.get(
+                "/api/trading/telegram/monitor", query: [:])
+            guard generation == loadGeneration else { return }
+            monitor = m
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
         } catch {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
             if quiet { return }                        // a blip mid-poll is not a screen error
+            guard generation == loadGeneration else { return }
             self.error = almaServerMessage(error)
         }
     }
@@ -1003,6 +1019,19 @@ struct TradingTelegramScreen: View {
             }
             await vm.load()
         }
+        // A draft typed into the Telegram group has to reach this list on its own —
+        // the reviewer should never have to guess when to pull-to-refresh. Attached
+        // to the SCREEN, not to a tail view inside the LazyVStack: a lazy row is not
+        // created until it scrolls into range, so a long list would never poll.
+        .task(id: vm.tab) {
+            guard vm.tab == .drafts else { return }
+            if vm.isAdmin { await vm.loadMapping() }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                if Task.isCancelled { return }
+                await vm.load(quiet: true)
+            }
+        }
         .overlay(alignment: .bottom) {
             if let t = vm.toast {
                 Text(t)
@@ -1147,17 +1176,6 @@ struct TradingTelegramScreen: View {
                 TradingTelegramDraftCard(draft: d, vm: vm)
             }
         }
-        // A draft typed into the Telegram group has to reach this list on its
-        // own — the reviewer should never have to guess when to pull-to-refresh.
-        Color.clear.frame(height: 0)
-            .task {
-                if vm.isAdmin { await vm.loadMapping() }
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 15_000_000_000)
-                    if Task.isCancelled { return }
-                    await vm.load(quiet: true)
-                }
-            }
     }
 
     /// Web DraftFiltersBar parity: narrow by ERP staff member and by account.
@@ -1469,7 +1487,7 @@ private struct TradingTelegramDraftBody: View {
                     .font(.footnote.weight(.bold).monospacedDigit())
                     .lineLimit(2)
                 Spacer(minLength: 4)
-                if let vm, draft.isActionable {
+                if let vm, draft.isEditable {
                     Button {
                         UISelectionFeedbackGenerator().selectionChanged()
                         showEdit = true
