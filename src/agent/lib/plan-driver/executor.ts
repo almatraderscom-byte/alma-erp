@@ -151,6 +151,12 @@ export async function executeStep(
       conversationId,
       binding,
       force: true,
+      // Execution SCOPE is validated here and must survive the continuation:
+      // an ALMA_TRADING plan may not run in the ALMA_LIFESTYLE tool/data
+      // context, and the owner's autodrive model may not be re-triaged away
+      // (Codex P1 #847 — the pre-source-binding inline path passed both).
+      businessId: opts.businessId,
+      modelId: opts.driverModelId,
       ...(opts.forceInline ? { forceInline: true } : {}),
     })
     if (!['queued', 'completed', 'observe', 'deferred'].includes(enqueued.outcome) || !enqueued.turnId) {

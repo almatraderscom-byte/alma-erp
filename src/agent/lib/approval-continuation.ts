@@ -21,6 +21,7 @@
 // is missing/stale, the continuation runs INLINE only when the caller still has
 // the full safe 90s budget (the revise-route pattern). A late caller instead
 // terminalizes with durable continuationNeeded, which the app claims exactly once.
+import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 import { prisma } from '@/lib/prisma'
 import { finalizeTurnIfRunning, linkTurnAssistantMessage } from '@/agent/lib/turn-status'
 import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
@@ -140,6 +141,12 @@ export async function runContinuationInline(opts: {
   conversationId: string
   message?: string
   continuationRequestId?: string
+  /** Execution SCOPE the caller already validated. A Plan-Driver step for
+   * ALMA_TRADING must not silently run in the ALMA_LIFESTYLE tool/data context,
+   * and the owner's autodrive model must not be re-triaged away (Codex P1 #847:
+   * the pre-source-binding inline path supplied both explicitly). */
+  businessId?: AgentBusinessId
+  modelId?: string
 }, turnId: string | null): Promise<ContinuationInlineResult> {
   let spoke = false
   let terminal: 'done' | 'error' | null = null
@@ -174,6 +181,10 @@ export async function runContinuationInline(opts: {
         // work was not the model that finished it after the owner's tap.
         continuation: true,
         projectSystemInstructions: directive,
+        // Validated execution scope rides through the continuation; dropping it
+        // ran the wrong business context and ignored the pinned driver model.
+        ...(opts.businessId ? { businessId: opts.businessId } : {}),
+        ...(opts.modelId ? { modelId: opts.modelId } : {}),
         // Bound internal turns need their exact DB identity all the way through routing.
         ...(boundRequestId ? { turnId } : {}),
       })) {
@@ -276,6 +287,9 @@ export async function enqueueAgentContinuation(opts: {
   inlineDeadlineAtMs?: number
   /** Test/driver fallback: use the same bound+flagged contract but skip Redis. */
   forceInline?: boolean
+  /** Caller-validated execution scope, carried into the inline path. */
+  businessId?: AgentBusinessId
+  modelId?: string
 }): Promise<ContinuationEnqueueResult> {
   if (!opts.conversationId) {
     return { outcome: 'rejected', turnId: null, requestId: null, status: 'invalid_conversation' }
@@ -346,6 +360,8 @@ export async function enqueueAgentContinuation(opts: {
   const inline = await runContinuationInline({
     conversationId: opts.conversationId,
     continuationRequestId: bound.requestId,
+    ...(opts.businessId ? { businessId: opts.businessId } : {}),
+    ...(opts.modelId ? { modelId: opts.modelId } : {}),
   }, turnId)
   return {
     outcome: inline.outcome === 'observe'

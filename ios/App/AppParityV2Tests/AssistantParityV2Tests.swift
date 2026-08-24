@@ -1298,6 +1298,32 @@ final class AssistantParityV2Tests: XCTestCase {
     /// copy to the tail's local id, leaving the already-mounted row with no
     /// incoming counterpart — reconciliation keeps it, and one durable message
     /// renders twice with identical tokens and cost.
+    /// Codex P1 (#847). A definitive 4xx on Continue means the source can never
+    /// resume; retaining its descriptor left `recoverableTurn` set forever, and
+    /// New Chat / other open tasks / ordinary sends all require it to be nil.
+    func testUnrecoverableOpenTaskContinuationFailuresAreClassifiedForRelease() {
+        // Permanently invalid sources — release the descriptor.
+        for status in [400, 403, 404, 409, 410, 422] {
+            XCTAssertTrue(
+                AssistantVM.openTaskContinuationIsUnrecoverable(
+                    AlmaAPIError.http(status: status, body: "")),
+                "HTTP \(status) can never become success on retry")
+        }
+        // Acceptance UNKNOWN — keep the descriptor so the route can replay the
+        // same source-bound turn.
+        for status in [401, 408, 429, 500, 502, 503, 504] {
+            XCTAssertFalse(
+                AssistantVM.openTaskContinuationIsUnrecoverable(
+                    AlmaAPIError.http(status: status, body: "")),
+                "HTTP \(status) leaves the claim ambiguous and must be retried")
+        }
+        XCTAssertFalse(AssistantVM.openTaskContinuationIsUnrecoverable(AlmaAPIError.notAuthenticated))
+        XCTAssertFalse(AssistantVM.openTaskContinuationIsUnrecoverable(
+            AlmaAPIError.transport(URLError(.networkConnectionLost))))
+        XCTAssertFalse(AssistantVM.openTaskContinuationIsUnrecoverable(
+            AlmaAPIError.decoding(URLError(.cannotParseResponse))))
+    }
+
     func testRecoveryTailClaimingAnAlreadyMountedServerRowDoesNotDuplicateIt() throws {
         let vm = AssistantVM()
         vm.debugClearChronologyAnchors()

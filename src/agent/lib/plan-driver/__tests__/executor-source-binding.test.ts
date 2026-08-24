@@ -99,6 +99,11 @@ describe('source-bound plan step execution', () => {
       conversationId: 'conversation-1',
       binding,
       force: true,
+      // Execution SCOPE must survive the continuation (Codex P1 #847): the
+      // pre-source-binding inline path passed both, and dropping them ran an
+      // ALMA_TRADING plan in the ALMA_LIFESTYLE context on the default head.
+      businessId: 'ALMA_LIFESTYLE',
+      modelId: 'or-deepseek-v4-flash',
     })
     expect(mocks.enqueueContinuation.mock.calls[0][0].message).toBeUndefined()
     expect(mocks.messageCreate).not.toHaveBeenCalled()
@@ -115,9 +120,20 @@ describe('source-bound plan step execution', () => {
 
     expect(mocks.enqueueContinuation).toHaveBeenCalledWith({
       conversationId: 'conversation-1', binding, force: true, forceInline: true,
+      businessId: 'ALMA_LIFESTYLE', modelId: 'or-deepseek-v4-flash',
     })
     expect(mocks.messageCreate).not.toHaveBeenCalled()
     expect(result).toMatchObject({ dispatched: true, turnId: 'bound-inline-turn' })
+  })
+
+  it('carries a TRADING plan scope and the pinned driver model into the continuation', async () => {
+    await executeStep(plan, step, {
+      businessId: 'ALMA_TRADING', driverModelId: 'gpt-5.6-luna', forceInline: true,
+    })
+
+    const passed = mocks.enqueueContinuation.mock.calls[0][0]
+    expect(passed.businessId).toBe('ALMA_TRADING')
+    expect(passed.modelId).toBe('gpt-5.6-luna')
   })
 
   it('fails visibly before model/lane/tool execution when source binding cannot be built', async () => {

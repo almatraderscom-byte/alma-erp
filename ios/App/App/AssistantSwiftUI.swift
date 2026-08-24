@@ -7544,10 +7544,38 @@ final class AssistantVM {
             await attachOpenTaskContinuationDescriptor(descriptor, trigger: "open-task-continue")
             await loadOpenTasks()
         } catch {
-            // Keep pendingDescriptor. The route's deterministic replay lookup
-            // resolves a claimed/lost response to this same source-bound turn.
-            errorToast = "Response পাওয়া যায়নি — একই কাজটি নিরাপদে আবার যাচাই হবে"
+            if Self.openTaskContinuationIsUnrecoverable(error) {
+                // A DEFINITIVE client error means this source can never resume:
+                // the task was deleted (404) or another device already resolved
+                // it (409/410). Retaining the descriptor would block New Chat,
+                // every other open task and ordinary sends forever — and each
+                // relaunch would retry the same dead source and retain it again
+                // (Codex P1 #847). Release it and let the refreshed list stand.
+                if recoverableTurn?.clientMessageId == pendingDescriptor.clientMessageId {
+                    recoverableTurn = nil
+                }
+                errorToast = "কাজটি আর চালু নেই — তালিকা নতুন করে দেখাচ্ছি"
+            } else {
+                // Keep pendingDescriptor. Acceptance is UNKNOWN for transport,
+                // 5xx and auth failures, so the route's deterministic replay
+                // lookup must still resolve it to this same source-bound turn.
+                errorToast = "Response পাওয়া যায়নি — একই কাজটি নিরাপদে আবার যাচাই হবে"
+            }
             await loadOpenTasks()
+        }
+    }
+
+    /// A server answer that can never become success on retry. Transport, 5xx
+    /// and auth stay RETRYABLE: those leave acceptance genuinely unknown, and a
+    /// claimed-but-lost response must keep its descriptor.
+    static func openTaskContinuationIsUnrecoverable(_ error: Error) -> Bool {
+        guard let api = error as? AlmaAPIError else { return false }
+        switch api {
+        case .http(let status, _):
+            // 401 is excluded on purpose: re-authentication makes it succeed.
+            return (400...499).contains(status) && status != 401 && status != 408 && status != 429
+        case .notAuthenticated, .transport, .decoding:
+            return false
         }
     }
 
