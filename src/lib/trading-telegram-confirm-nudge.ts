@@ -43,12 +43,21 @@ type PendingGroup = {
  * open, because today's rows cross that boundary at midnight.
  */
 export async function collectPendingConfirmGroups(urgency: ConfirmNudgeUrgency): Promise<PendingGroup[]> {
-  const { start: todayStart } = tradingBdDayBounds()
+  // Which drafts the imminent cutoff will actually take.
+  //
+  // The sweep locks `createdAt < todayStart` once the BD hour reaches the cutoff.
+  // An hour before a cutoff of 6, that is still today, so "before today" is the
+  // right population. But a cutoff of MIDNIGHT fires an hour after 23:00, by
+  // which time "today" has rolled over — the rows it takes are everything
+  // pending now, today's included. Filtering on `< todayStart` there would warn
+  // about nothing while the evening warning it displaced stayed suppressed.
+  const { start: todayStart, end: tomorrowStart } = tradingBdDayBounds()
+  const lockBoundary = telegramDraftLockHourBd() === 0 ? tomorrowStart : todayStart
 
   const where = {
     businessId: TRADING_BUSINESS_ID,
     status: 'PENDING' as const,
-    ...(urgency === 'FINAL' ? { createdAt: { lt: todayStart } } : {}),
+    ...(urgency === 'FINAL' ? { createdAt: { lt: lockBoundary } } : {}),
   }
 
   // Page through EVERY pending draft. A flat `take` silently warned only the

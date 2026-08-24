@@ -137,6 +137,21 @@ describe('approveTelegramDraftToLedger', () => {
     expect(claim.where.status).toBe('PENDING')
   })
 
+  it('re-applies the day cutoff after recovering, so a retry cannot skip the lock', async () => {
+    draftFindFirst
+      .mockResolvedValueOnce(pendingDraft({ status: 'APPROVED' }))   // loadDraftForActor
+      .mockResolvedValueOnce(pendingDraft({ status: 'LOCKED' }))     // re-read after the claim fails
+    // Recovery succeeds, the cutoff sweep then locks it, so the claim finds nothing.
+    draftUpdateMany
+      .mockResolvedValueOnce({ count: 1 })   // recover APPROVED → PENDING
+      .mockResolvedValueOnce({ count: 1 })   // cutoff sweep locks it
+      .mockResolvedValueOnce({ count: 0 })   // claim finds no PENDING row
+
+    await expect(approveTelegramDraftToLedger(ctx, 'draft-1'))
+      .rejects.toThrow(/locked past the daily cutoff/)
+    expect(createTradingTradeRecord).not.toHaveBeenCalled()
+  })
+
   it('recovers a stranded APPROVED draft before claiming it, then posts once', async () => {
     draftFindFirst
       .mockResolvedValueOnce(pendingDraft({ status: 'APPROVED' })) // loadDraftForActor

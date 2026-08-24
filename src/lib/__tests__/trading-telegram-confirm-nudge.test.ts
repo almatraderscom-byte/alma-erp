@@ -27,6 +27,7 @@ vi.mock('@/lib/trading-telegram-bot', () => ({
   sendTelegramMessage: (...a: unknown[]) => sendTelegramMessage(...a),
 }))
 
+import { tradingBdDayBounds } from '@/lib/trading-compliance'
 import {
   collectPendingConfirmGroups,
   confirmNudgeUrgencyForNow,
@@ -219,6 +220,21 @@ describe('confirmNudgeUrgencyForNow', () => {
     process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD = '12'
     expect(confirmNudgeUrgencyForNow(atDhakaHour(11))).toBe('FINAL')
     expect(confirmNudgeUrgencyForNow(atDhakaHour(5))).toBeNull()
+  })
+
+  it('a midnight cutoff warns about today\'s drafts too, not just yesterday\'s', async () => {
+    vi.clearAllMocks()          // this describe has no beforeEach of its own
+    process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD = '0'
+    draftFindMany.mockResolvedValue([])
+
+    await collectPendingConfirmGroups('FINAL')
+
+    // At 23:00 the midnight cutoff is an hour away and it will take TODAY's rows.
+    // A `< todayStart` filter would have warned about an empty set.
+    const where = (draftFindMany.mock.calls[0][0] as { where: { createdAt?: { lt: Date } } }).where
+    const { end: tomorrowStart } = tradingBdDayBounds()
+    expect(where.createdAt?.lt.getTime()).toBe(tomorrowStart.getTime())
+    delete process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD
   })
 
   it('wraps to the previous evening when the cutoff is midnight', () => {

@@ -4,6 +4,7 @@ import { TRADING_BUSINESS_ID } from '@/lib/trading'
 import { logTelegramDraftAudit } from '@/lib/trading-telegram-draft-audit'
 import {
   assertDraftEditable,
+  lockStalePendingTelegramDrafts,
   recoverStrandedApprovedDraft,
   sweepTelegramDraftStates,
 } from '@/lib/trading-telegram-lock'
@@ -161,8 +162,16 @@ export async function approveTelegramDraftToLedger(ctx: TradingContext, draftId:
   // A draft stranded by an earlier crash is recovered FIRST, and only once it is
   // old enough to be certain no confirm is still running. Claiming straight out
   // of APPROVED would let two concurrent reviewers both believe they won.
+  //
+  // Then re-apply the day cutoff, in the same order sweepTelegramDraftStates
+  // uses. Without it a prior-day draft recovered here would post immediately,
+  // walking straight past the admin-reopen control it would have hit had the
+  // list sweep reached it first — which is exactly the control the owner chose
+  // to keep.
   if (draft.status === 'APPROVED') {
-    await recoverStrandedApprovedDraft(draftId)
+    if (await recoverStrandedApprovedDraft(draftId)) {
+      await lockStalePendingTelegramDrafts()
+    }
   }
 
   // The claim is exclusive: exactly one request can move a draft out of PENDING.
@@ -185,6 +194,9 @@ export async function approveTelegramDraftToLedger(ctx: TradingContext, draftId:
     }
     if (now?.status === 'APPROVED') {
       throw new Error('This draft is being confirmed right now — refresh in a moment')
+    }
+    if (now?.status === 'LOCKED') {
+      throw new Error('Draft is locked past the daily cutoff — ask an admin to reopen it first')
     }
     throw new Error('Draft is no longer confirmable — refresh and check its status')
   }
