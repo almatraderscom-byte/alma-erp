@@ -42,6 +42,7 @@ import SafariServices
 import ObjectiveC
 import os.signpost
 import CoreText
+import Darwin
 
 // MARK: - Parity v2 subsystem rollout controls
 
@@ -439,6 +440,289 @@ struct ActiveConversationPointer: Decodable {
     let effortLevel: String?
 }
 
+// MARK: - Provider-neutral verified references (AgentReferenceV1)
+
+struct AgentReferenceEntityV1Wire: Decodable, Equatable, Sendable {
+    let namespace: String
+    let type: String
+    let id: String
+    let accountId: String?
+    let level: String?
+}
+
+struct AgentReferenceAudienceV1Wire: Decodable, Equatable, Sendable {
+    let businessId: String?
+    let businessScope: String
+    let roles: [String]
+}
+
+struct AgentReferenceProvenanceV1Wire: Decodable, Equatable, Sendable {
+    let source: String
+    let verifiedBy: String
+    let sourceTool: String?
+    let outputPath: String?
+    let connector: String?
+}
+
+/// Flattened decode of the server's closed destination union. `trusted` below
+/// checks which fields are legal for each `type`; renderers never infer a kind
+/// from a label or filename extension.
+struct AgentReferenceDestinationV1Wire: Decodable, Equatable, Sendable {
+    let type: String
+    let sectionId: String?
+    let webPath: String?
+    let nativePath: String?
+    let namespace: String?
+    let id: String?
+    let apiPath: String?
+    let url: String?
+    let provider: String?
+    let hostname: String?
+    let mediaType: String?
+    let artifactId: String?
+    let mimeType: String?
+    let fileName: String?
+}
+
+struct AgentReferenceV1Wire: Decodable, Equatable, Identifiable, Sendable {
+    let version: Int
+    let refId: String
+    let kind: String
+    let label: String
+    let destination: AgentReferenceDestinationV1Wire
+    let entity: AgentReferenceEntityV1Wire?
+    let purpose: String
+    let audience: AgentReferenceAudienceV1Wire
+    let provenance: AgentReferenceProvenanceV1Wire
+    let observedAt: String
+    let openMode: String
+    let aliases: [String]?
+
+    var id: String { refId }
+
+    var href: String? {
+        switch destination.type {
+        case "internal_section", "internal_entity": return destination.nativePath
+        case "external_object", "external_source", "external_media": return destination.url
+        case "artifact_report": return destination.apiPath
+        default: return nil
+        }
+    }
+
+    var trusted: Bool {
+        let allowedRoles: Set<String> = ["SUPER_ADMIN", "ADMIN", "HR", "STAFF", "VIEWER"]
+        let validBusinessIds: Set<String> = ["ALMA_LIFESTYLE", "CREATIVE_DIGITAL_IT", "ALMA_TRADING"]
+        let audienceCoherent: Bool = {
+            guard !audience.roles.isEmpty,
+                  audience.roles.allSatisfy({ allowedRoles.contains($0) }) else { return false }
+            switch audience.businessScope {
+            case "exact": return audience.businessId.map(validBusinessIds.contains) == true
+            case "cross_business", "personal": return audience.businessId == nil
+            default: return false
+            }
+        }()
+        guard version == 1,
+              refId.hasPrefix("ref_v1_"), refId.count <= 96,
+              !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              Self.validObservedAt(observedAt),
+              ["navigate", "source", "evidence", "media", "report"].contains(purpose),
+              ["internal_native", "protected_web", "universal_link_first", "artifact_viewer"].contains(openMode),
+              ["tool_output", "connector_output", "browser_observed", "user_provided", "server_registry"].contains(provenance.source),
+              ["server_registry", "explicit_extractor", "canonical_url_validator"].contains(provenance.verifiedBy),
+              audienceCoherent else { return false }
+        switch kind {
+        case "internal_section":
+            guard destination.type == kind,
+                  openMode == "internal_native" || openMode == "protected_web",
+                  destination.sectionId?.isEmpty == false,
+                  let web = destination.webPath, let native = destination.nativePath else { return false }
+            return Self.safeInternalPath(web) && Self.safeInternalPath(native)
+        case "internal_entity":
+            guard destination.type == kind, openMode == "internal_native",
+                  let namespace = destination.namespace, let id = destination.id,
+                  entity?.namespace == namespace, entity?.id == id,
+                  let web = destination.webPath, let native = destination.nativePath,
+                  let api = destination.apiPath else { return false }
+            return Self.safeIdentifier(namespace) && Self.safeIdentifier(id)
+                && Self.safeInternalPath(web) && Self.safeInternalPath(native)
+                && api.hasPrefix("/api/assistant/references/") && Self.safeInternalPath(api)
+        case "external_object", "external_source", "external_media":
+            guard destination.type == kind,
+                  openMode == "protected_web" || openMode == "universal_link_first",
+                  let raw = destination.url,
+                  let url = URL(string: raw), Self.safeExternalURL(url),
+                  url.absoluteString == raw,
+                  let host = url.host?.lowercased(),
+                  destination.hostname?.lowercased() == host,
+                  destination.provider == Self.provider(for: host) else { return false }
+            let metaProvider = ["facebook", "instagram", "meta"].contains(destination.provider ?? "")
+            let metaNamespace = entity?.namespace.hasPrefix("meta_") == true
+            if kind == "external_object", metaProvider || metaNamespace {
+                guard metaProvider, metaNamespace,
+                      let entityId = entity?.id, Self.safeIdentifier(entityId),
+                      entity?.accountId.flatMap({ Self.safeIdentifier($0) ? $0 : nil }) != nil,
+                      ["campaign", "ad_set", "ad", "creative", "commerce_order"].contains(entity?.level ?? "") else { return false }
+            }
+            return true
+        case "artifact_report":
+            guard destination.type == kind, openMode == "artifact_viewer",
+                  let artifactId = destination.artifactId,
+                  Self.safeIdentifier(artifactId), entity?.id == artifactId,
+                  let api = destination.apiPath else { return false }
+            return Self.safeArtifactAPIPath(api, artifactId: artifactId)
+        default:
+            return false
+        }
+    }
+
+    static func trustedOnly(_ values: [AgentReferenceV1Wire]?) -> [AgentReferenceV1Wire] {
+        var seen: Set<String> = []
+        return (values ?? []).filter { $0.trusted && seen.insert($0.refId).inserted }.prefix(50).map { $0 }
+    }
+
+    /// The only artifact URLs native code may fetch. Keep this byte-for-byte
+    /// aligned with the server validator and encode the id as one path segment;
+    /// notification payloads are rechecked here before they reach AlmaAPI.
+    static func safeArtifactAPIPath(_ value: String, artifactId: String) -> Bool {
+        guard safeIdentifier(artifactId) else { return false }
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-_.!~*'()") // JavaScript encodeURIComponent
+        guard let encodedId = artifactId.addingPercentEncoding(withAllowedCharacters: allowed) else {
+            return false
+        }
+        return value == "/api/assistant/artifacts/\(encodedId)/doc"
+            || value == "/api/assistant/artifacts/\(encodedId)/pdf"
+    }
+
+    private static func safeIdentifier(_ value: String) -> Bool {
+        guard !value.isEmpty, value.count <= 256 else { return false }
+        return value.range(of: "^[A-Za-z0-9][A-Za-z0-9._:-]*$", options: .regularExpression) != nil
+    }
+
+    private static func safeInternalPath(_ value: String) -> Bool {
+        value.hasPrefix("/") && !value.hasPrefix("//") && !value.contains("\\")
+            && !value.contains("\n") && !value.contains("\r") && !value.contains("\0")
+    }
+
+    private static func provider(for hostname: String) -> String {
+        if hostname == "youtu.be" || hostname == "youtube.com" || hostname.hasSuffix(".youtube.com") { return "youtube" }
+        if hostname == "instagram.com" || hostname.hasSuffix(".instagram.com") { return "instagram" }
+        if hostname == "facebook.com" || hostname.hasSuffix(".facebook.com")
+            || hostname == "fb.com" || hostname.hasSuffix(".fb.com") { return "facebook" }
+        if hostname == "meta.com" || hostname.hasSuffix(".meta.com") { return "meta" }
+        if hostname == "maps.google.com" || hostname == "maps.google.co.uk" || hostname == "goo.gl" { return "google_maps" }
+        return "web"
+    }
+
+    static func safeExternalURL(_ url: URL) -> Bool {
+        let raw = url.absoluteString
+        guard !raw.isEmpty, raw.utf8.count <= 4_096,
+              raw == raw.trimmingCharacters(in: .whitespacesAndNewlines),
+              raw.unicodeScalars.allSatisfy({ scalar in
+                  scalar.value > 0x1f && scalar.value != 0x7f && scalar.value != 0x5c
+              }),
+              !raw.lowercased().contains("%5c"),
+              raw.range(of: "%(?:0[0-9a-f]|1[0-9a-f]|7f)", options: [.regularExpression, .caseInsensitive]) == nil,
+              url.fragment == nil,
+              let rawHost = Self.rawASCIIHost(from: raw),
+              !rawHost.contains("%"),
+              !rawHost.split(separator: ".").contains(where: { $0.hasPrefix("xn--") }) else { return false }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
+              components.user == nil, components.password == nil,
+              let componentHost = components.host?.lowercased(),
+              componentHost != "localhost", !componentHost.hasSuffix(".localhost"),
+              !componentHost.hasSuffix(".local"), !componentHost.hasSuffix(".internal") else { return false }
+        let bracketlessHost = componentHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        let normalizedHost = bracketlessHost.hasSuffix(".") ? String(bracketlessHost.dropLast()) : bracketlessHost
+        guard normalizedHost.contains(".") || normalizedHost.contains(":") else { return false }
+        let canonicalRawHost = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
+        let labels = canonicalRawHost.split(separator: ".", omittingEmptySubsequences: false)
+        let numericLike = !labels.isEmpty && labels.allSatisfy { label in
+            let value = label.lowercased()
+            return !value.isEmpty && (value.allSatisfy(\.isNumber)
+                || (value.hasPrefix("0x") && value.dropFirst(2).allSatisfy(\.isHexDigit)))
+        }
+        let canonicalOctets: [Int]? = labels.count == 4 && labels.allSatisfy({ label in
+            !label.isEmpty && label.allSatisfy(\.isNumber)
+                && (label == "0" || !label.hasPrefix("0"))
+        }) ? labels.compactMap { Int($0) } : nil
+        if numericLike {
+            guard let octets = canonicalOctets, octets.count == 4,
+                  octets.allSatisfy({ (0...255).contains($0) }) else { return false }
+            let a = octets[0], b = octets[1]
+            if Self.unsafeIPv4(a, b) { return false }
+        }
+        if normalizedHost.contains(":"), Self.unsafeIPv6(normalizedHost) { return false }
+        if components.queryItems?.contains(where: { item in
+            Self.sensitiveQueryKey(item.name)
+        }) == true { return false }
+        let redirectKeys = ["redirect", "redirect_uri", "return", "return_to", "return_url", "continue", "next", "dest", "destination"]
+        if components.queryItems?.contains(where: {
+            redirectKeys.contains($0.name.lowercased().replacingOccurrences(of: "-", with: "_"))
+        }) == true { return false }
+        return true
+    }
+
+    /// Foundation exposes an IDN-decoded `URLComponents.host`, so inspect the
+    /// serialized authority as well. Server-minted references are ASCII and
+    /// canonical; any ambiguous authority fails closed on the client.
+    private static func rawASCIIHost(from raw: String) -> String? {
+        guard let schemeEnd = raw.range(of: "://") else { return nil }
+        let tail = raw[schemeEnd.upperBound...]
+        let authority = tail.prefix { $0 != "/" && $0 != "?" && $0 != "#" }
+        guard !authority.isEmpty, !authority.contains("@") else { return nil }
+        if authority.first == "[" {
+            guard let close = authority.firstIndex(of: "]") else { return nil }
+            return String(authority[authority.index(after: authority.startIndex)..<close]).lowercased()
+        }
+        let host = authority.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        guard !host.isEmpty, host.unicodeScalars.allSatisfy({ $0.isASCII }) else { return nil }
+        return host.lowercased()
+    }
+
+    private static func unsafeIPv4(_ a: Int, _ b: Int) -> Bool {
+        a == 0 || a == 10 || a == 127 || a >= 224
+            || (a == 100 && (64...127).contains(b))
+            || (a == 169 && b == 254)
+            || (a == 172 && (16...31).contains(b))
+            || (a == 192 && (b == 0 || b == 168))
+            || (a == 198 && (b == 18 || b == 19))
+    }
+
+    private static func unsafeIPv6(_ host: String) -> Bool {
+        var address = in6_addr()
+        guard inet_pton(AF_INET6, host, &address) == 1 else { return true }
+        let bytes = withUnsafeBytes(of: &address) { Array($0) }
+        guard bytes.count == 16 else { return true }
+        if bytes.allSatisfy({ $0 == 0 }) { return true }
+        if bytes.dropLast().allSatisfy({ $0 == 0 }) && bytes.last == 1 { return true }
+        // Deprecated IPv4-compatible ::/96 is reserved/ambiguous here.
+        if bytes[0..<12].allSatisfy({ $0 == 0 }) { return true }
+        // fc00::/7, fe80::/10, ff00::/8
+        if (bytes[0] & 0xfe) == 0xfc || (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80)
+            || bytes[0] == 0xff { return true }
+        // IPv4-mapped IPv6, compressed or expanded.
+        if bytes[0..<10].allSatisfy({ $0 == 0 }), bytes[10] == 0xff, bytes[11] == 0xff {
+            return unsafeIPv4(Int(bytes[12]), Int(bytes[13]))
+        }
+        return false
+    }
+
+    private static func sensitiveQueryKey(_ raw: String) -> Bool {
+        let key = raw.lowercased().replacingOccurrences(of: "-", with: "_")
+        let pattern = "(?:^|_)(?:(?:access|refresh|id)_?)?token(?:$|_)|(?:^|_)(?:auth(?:orization)?|oauth|session|sid|secret|password|passwd|api_?key|client_?secret|signature|signed|sig|code|state)(?:$|_)"
+        return key.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    private static func validObservedAt(_ value: String) -> Bool {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if fractional.date(from: value) != nil { return true }
+        return ISO8601DateFormatter().date(from: value) != nil
+    }
+}
+
 /// One heterogeneous content block — flat optionals instead of an enum so any
 /// new server block type degrades to "unknown" instead of failing the decode.
 struct AgentContentBlock: Decodable {
@@ -617,6 +901,12 @@ struct AgentMessageWire: Decodable {
     let presentation: AgentMessagePresentationWire?
     /// Prose lifecycle v2 — typed projection; see AgentMessagePresentationV2Wire.
     let presentationV2: AgentMessagePresentationV2Wire?
+    let references: [AgentReferenceV1Wire]?
+    /// Server-authoritative: is the reference contract live for this row? An
+    /// empty `references` alone cannot say whether the rollout is off/shadow or
+    /// the reply simply cited nothing — and treating those the same made shadow
+    /// mode turn every legacy link inert (Codex P1, PR #845).
+    let referencesActive: Bool?
     /// Build 103 Issue 3 — durable work-step tracker snapshot(s) anchored to
     /// this assistant message (cold history equals the settled live tracker).
     let workSteps: [AgentWorkStepsSnapshotColdWire]?
@@ -660,6 +950,7 @@ struct AgentMessagePresentationWire: Decodable {
     let blocks: [AgentPresentationBlockWire]?
     let usage: AgentPresentationUsageWire?
     let selfCorrected: Bool?
+    let references: [AgentReferenceV1Wire]?
 }
 
 struct AgentPresentationBlockWire: Decodable {
@@ -1761,6 +2052,15 @@ struct AgentChatMessage: Identifiable, Equatable {
     var localImages: [UIImage] = []   // optimistic composer thumbnails (user msgs)
     var confirmCards: [ConfirmCard] = []
     var askCards: [AskCard] = []
+    /// Message-scoped server-minted destinations. Markdown is inert without one.
+    var references: [AgentReferenceV1Wire] = []
+    /// Is the server's reference contract authoritative for THIS message? False
+    /// while the rollout is off/shadow and for pre-contract history, where the
+    /// legacy sanitized-link and inline-image rendering is the correct one.
+    var referencesActive = false
+    /// Distinguishes an authoritative explicit empty array from an older/thinner
+    /// history projection that did not know about the field at all.
+    var referenceProjectionPresent = false
     /// Live specialist delegations (web parity: rendered as cards, not tool rows).
     var delegations: [Delegation] = []
     /// The honesty guard superseded a draft this turn (live verification_retry, or
@@ -2088,6 +2388,22 @@ struct AgentChatMessage: Identifiable, Equatable {
         m.cacheRead = wire.cacheRead
         m.apiRounds = wire.apiRounds
         m.roundCostsUsd = wire.roundCostsUsd
+        let validReferencePresentation = wire.presentation.map {
+            $0.version == 1 && ($0.messageId == nil || $0.messageId == wire.id)
+        } == true
+        let projectedReferences = validReferencePresentation
+            ? (wire.presentation?.references ?? wire.references)
+            : wire.references
+        m.referenceProjectionPresent = validReferencePresentation
+            ? (wire.presentation?.references != nil || wire.references != nil)
+            : wire.references != nil
+        // A server that answers `referencesActive: false` is telling us the
+        // rollout is off/shadow: keep the projection authoritative (so links
+        // cached during ON are dropped by the kill switch) but render legacy.
+        m.referencesActive = wire.referencesActive == true
+        m.references = m.referencesActive
+            ? AgentReferenceV1Wire.trustedOnly(projectedReferences)
+            : []
         m.createdAt = wire.createdAt
         if let c = wire.costUsd {
             switch c {
@@ -2271,6 +2587,9 @@ struct AgentChatMessage: Identifiable, Equatable {
         message.supersededBlockIds = []
         if !projectedTools.isEmpty { message.tools = projectedTools }
         message.selfCorrected = presentation.selfCorrected == true || sawSupersededDraft
+        if presentation.references != nil {
+            message.references = AgentReferenceV1Wire.trustedOnly(presentation.references)
+        }
         if let usage = presentation.usage {
             message.tokensIn = usage.tokensIn ?? message.tokensIn
             message.tokensOut = usage.tokensOut ?? message.tokensOut
@@ -2575,6 +2894,85 @@ struct AgentChatMessage: Identifiable, Equatable {
         // Provider adapters are free to put `id` before `type`; stay inside one
         // shallow object and cap the look-ahead so this remains cheap per delta.
         pattern: #"(?:\[\s*)?\{[^{}]{0,1024}?"type"\s*:\s*"#)
+
+    /// Owner-facing text while a provider turn is still live. Some models first
+    /// author a complete HTML artifact (often inside an `html` fence) and replace
+    /// it with native Markdown before `done`. The native chat must not flash that
+    /// implementation artifact as prose or as a code card in the meantime.
+    ///
+    /// This is intentionally display-only and streaming-only: the canonical text
+    /// remains untouched for reducer reconciliation, persistence, copying, and an
+    /// explicit source-code answer once the turn settles.
+    static func ownerVisibleProse(_ text: String, whileStreaming: Bool) -> String {
+        guard whileStreaming, !text.isEmpty else { return text }
+
+        var firstArtifactStart: String.Index?
+        func consider(_ index: String.Index) {
+            guard !isInsideMarkdownCode(text, before: index) else { return }
+            if let current = firstArtifactStart {
+                if index < current { firstArtifactStart = index }
+            } else {
+                firstArtifactStart = index
+            }
+        }
+
+        let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        for regex in [streamedArtifactFenceRegex, streamedArtifactMarkupRegex].compactMap({ $0 }) {
+            for match in regex.matches(in: text, range: fullRange) {
+                if let range = Range(match.range, in: text) {
+                    consider(range.lowerBound)
+                }
+            }
+        }
+
+        // Hold an opener split across provider deltas ("<tab" / "<!-") so it
+        // cannot flash for a frame. If later bytes prove it was ordinary prose,
+        // the next cumulative render releases the original text byte-for-byte.
+        if let angle = text.lastIndex(of: "<"),
+           !isInsideMarkdownCode(text, before: angle) {
+            var tail = String(text[angle...]).lowercased()
+            if tail.hasPrefix("</") { tail.remove(at: tail.index(after: tail.startIndex)) }
+            if streamedArtifactPartialOpeners.contains(where: { $0.hasPrefix(tail) }) {
+                consider(angle)
+            }
+        }
+
+        // The language identifier itself can also be split across deltas. Only
+        // inspect the unfinished last line; a closing fence is rejected by the
+        // Markdown-code guard in `consider`.
+        let lineStart = text.lastIndex(of: "\n").map { text.index(after: $0) }
+            ?? text.startIndex
+        let lastLine = text[lineStart...]
+        let leadingWhitespace = lastLine.prefix { $0 == " " || $0 == "\t" }
+        let fenceStart = text.index(lineStart, offsetBy: leadingWhitespace.count)
+        let fenceTail = String(text[fenceStart...]).lowercased()
+        if fenceTail.hasPrefix("```"),
+           streamedArtifactPartialFences.contains(where: { $0.hasPrefix(fenceTail) }) {
+            consider(fenceStart)
+        }
+
+        guard let firstArtifactStart else { return text }
+        return String(text[..<firstArtifactStart])
+    }
+
+    private static let streamedArtifactFenceRegex = try? NSRegularExpression(
+        pattern: #"(?im)^[ \t]*```[ \t]*(?:html?|svg)[ \t]*(?:\r?\n|$)"#)
+
+    private static let streamedArtifactMarkupRegex = try? NSRegularExpression(
+        pattern: #"(?i)<!--|<!doctype\b|</?(?:html|head|title|meta|link|style|script|noscript|body|main|section|article|header|footer|nav|aside|address|blockquote|div|p|hr|pre|figure|figcaption|table|caption|colgroup|col|thead|tbody|tfoot|tr|th|td|ul|ol|li|dl|dt|dd|details|summary|dialog|fieldset|legend|form|svg|canvas)\b"#)
+
+    private static let streamedArtifactPartialFences = ["```html", "```htm", "```svg"]
+
+    private static let streamedArtifactPartialOpeners = [
+        "<!--", "<!doctype", "<html", "<head", "<title", "<meta", "<link",
+        "<style", "<script", "<noscript", "<body", "<main", "<section",
+        "<article", "<header", "<footer", "<nav", "<aside", "<address",
+        "<blockquote", "<div", "<p", "<hr", "<pre", "<figure", "<figcaption",
+        "<table", "<caption", "<colgroup", "<col", "<thead", "<tbody", "<tfoot",
+        "<tr", "<th", "<td", "<ul", "<ol", "<li", "<dl", "<dt", "<dd",
+        "<details", "<summary", "<dialog", "<fieldset", "<legend", "<form",
+        "<svg", "<canvas",
+    ]
 
     private static func isInsideMarkdownCode(_ text: String, before index: String.Index) -> Bool {
         let prefix = text[..<index]
@@ -5795,6 +6193,11 @@ final class AssistantVM {
             if incoming[i].skillHeldBack == nil {
                 incoming[i].skillHeldBack = old.skillHeldBack
             }
+            if !incoming[i].referenceProjectionPresent {
+                incoming[i].references = old.references
+                incoming[i].referenceProjectionPresent = old.referenceProjectionPresent
+                incoming[i].referencesActive = old.referencesActive
+            }
             if old.selfCorrected { incoming[i].selfCorrected = true }
             incoming[i].id = lid
         }
@@ -8531,6 +8934,8 @@ final class AssistantVM {
         messages[i].confirmCards = []
         messages[i].askCards = []
         messages[i].delegations = []
+        messages[i].references = []
+        messages[i].referenceProjectionPresent = false
         messages[i].suppressedRawToolEnvelope = nil
         messages[i].verificationReplacementText = nil
         messages[i].proseBlocks = []
@@ -8875,6 +9280,18 @@ final class AssistantVM {
                     queuedOwnerMessages.removeAll { delivered.contains($0.id) }
                     for id in delivered { steerAwaitingDelivery.removeValue(forKey: id) }
                 }
+            case .references(let references, let active):
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    // This projection is authoritative, including [] when the
+                    // rollout kill-switch clears links written during ON.
+                    messages[i].references = active
+                        ? AgentReferenceV1Wire.trustedOnly(references)
+                        : []
+                    messages[i].referenceProjectionPresent = true
+                    messages[i].referencesActive = active
+                    touchedStream = true
+                }
             case .preamble:
                 // The line already streamed in as text_delta; pin whichever prose
                 // block it landed in so the wipes below can spare it. (v2 turns
@@ -8956,7 +9373,8 @@ final class AssistantVM {
                     adoptNewConversationId(newId)
                 }
             case .done(let doneMessageId, let tokensIn, let tokensOut, let costUsd, let needContinue, let apiRounds,
-                       let cacheCreation, let cacheRead, let roundCostsUsd):
+                       let cacheCreation, let cacheRead, let roundCostsUsd, let doneReferences,
+                       let doneReferencesActive):
                 // Terminal server truth is also an acceptance proof. Some direct
                 // production streams can coalesce/omit the early id envelope;
                 // clear the matching focused composer here before finalizeTurn
@@ -8975,6 +9393,20 @@ final class AssistantVM {
                     // write can no longer canonicalize this tail against the
                     // wrong row.
                     if let doneMessageId, !doneMessageId.isEmpty { messages[i].serverId = doneMessageId }
+                    // Terminal reference projection is authoritative for this
+                    // row — including "the contract is OFF", which must clear
+                    // links rather than activate an empty set (Codex P1 #845).
+                    // An older server omits the flag; a non-empty projection
+                    // from one can only mean the rollout was ON.
+                    let terminalActive = doneReferencesActive
+                        ?? (doneReferences.map { !$0.isEmpty })
+                    if let terminalActive {
+                        messages[i].references = terminalActive
+                            ? AgentReferenceV1Wire.trustedOnly(doneReferences ?? [])
+                            : []
+                        messages[i].referenceProjectionPresent = true
+                        messages[i].referencesActive = terminalActive
+                    }
                     if messages[i].proseProtocol == 2 {
                         messages[i].settleProse()
                         messages[i].syncProseBlocks()
@@ -9010,9 +9442,6 @@ final class AssistantVM {
                     // the complete draft the owner can already see.
                     messages[i].verificationReplacementText = nil
                     messages[i].suppressedRawToolEnvelope = nil
-                    // Verification never produced a terminal replacement; retain
-                    // the complete draft the owner can already see.
-                    messages[i].verificationReplacementText = nil
                     // The server persisted a salvaged row (partial work + warning)
                     // before failing: bind it by identity so finalizeTurn pairs the
                     // tail with THAT row, never positionally with a concurrent one
@@ -9403,9 +9832,15 @@ final class AssistantVM {
         answer.serverId = answer.id
         answer.createdAt = "2026-07-21T06:31:00.000Z"
         let prose = """
-        ## সবচেয়ে practical setup
+        # Voice API সিদ্ধান্ত রিপোর্ট
 
-        Boss, বাংলা voice agent-এর জন্য **Deepgram STT → আপনার agent → Google TTS** সবচেয়ে ভারসাম্যপূর্ণ setup। এতে latency কম থাকে এবং provider বদলালেও conversation state ALMA-তেই থাকে।
+        **Bottom line:** বাংলা voice agent-এর জন্য Deepgram STT → ALMA agent → Google TTS সবচেয়ে practical setup।
+
+        ## নির্বাহী সারাংশ
+
+        এই setup-এ latency কম থাকে এবং provider বদলালেও conversation state ALMA-তেই থাকে। নিচের দামগুলো fixture evidence; production চালুর আগে live dashboard-এ আবার যাচাই করতে হবে।
+
+        ## KPI ও provider snapshot
 
         | API | আনুমানিক মূল্য | সবচেয়ে ভালো ব্যবহার |
         | --- | --- | --- |
@@ -9413,13 +9848,26 @@ final class AssistantVM {
         | Google Cloud TTS | ~$0.000004/character | স্বাভাবিক বাংলা voice |
         | ElevenLabs | ~$0.015/min | premium expressive voice |
 
-        > Live price বদলাতে পারে—production চালুর আগে provider dashboard থেকে আবার যাচাই করব।
+        ## মূল পর্যবেক্ষণ
 
-        **প্রস্তাবিত flow**
+        - Deepgram দ্রুত বাংলা speech-to-text-এর জন্য সেরা balance দেয়
+        - Google TTS কম খরচে স্বাভাবিক বাংলা output দেয়
+        - Conversation state ALMA-তে রাখলে provider lock-in কমে
 
-        - ফোনের audio stream Deepgram-এ যাবে
-        - transcript ALMA agent বুঝে উত্তর তৈরি করবে
-        - Google TTS উত্তরটি স্বাভাবিক বাংলায় বলবে
+        ## ঝুঁকি ও সীমাবদ্ধতা
+
+        > Live price বদলাতে পারে—production চালুর আগে provider dashboard থেকে আবার যাচাই করতে হবে।
+
+        ### প্রস্তাবিত flow
+
+        1. ফোনের audio stream Deepgram-এ যাবে
+        2. transcript ALMA agent বুঝে উত্তর তৈরি করবে
+        3. Google TTS উত্তরটি স্বাভাবিক বাংলায় বলবে
+
+        ### বাস্তবায়ন checklist
+
+        - [x] provider responsibility আলাদা করা
+        - [ ] production price পুনরায় যাচাই করা
 
         ```swift
         let pipeline = VoicePipeline(stt: .deepgram, tts: .google)
@@ -10304,6 +10752,28 @@ final class AssistantVM {
         answer.apiRounds = 3
         answer.roundCostsUsd = [0.012, 0.018, 0.021]
         answer.costUsd = "0.0510"
+        if let data = #"""
+        [
+          {
+            "version":1,"refId":"ref_v1_fixture_openai","kind":"external_source","label":"OpenAI",
+            "destination":{"type":"external_source","url":"https://openai.com/research","provider":"web","hostname":"openai.com"},
+            "purpose":"evidence","audience":{"businessId":null,"businessScope":"personal","roles":["SUPER_ADMIN"]},
+            "provenance":{"source":"tool_output","verifiedBy":"canonical_url_validator","sourceTool":"web_research","outputPath":"data.results[0].url"},
+            "observedAt":"2026-08-23T00:00:00.000Z","openMode":"protected_web","aliases":["OpenAI"]
+          },
+          {
+            "version":1,"refId":"ref_v1_fixture_costs","kind":"internal_section","label":"ALMA Costs",
+            "destination":{"type":"internal_section","sectionId":"agent_costs","webPath":"/agent/costs","nativePath":"/agent/costs"},
+            "purpose":"navigate","audience":{"businessId":null,"businessScope":"cross_business","roles":["SUPER_ADMIN"]},
+            "provenance":{"source":"server_registry","verifiedBy":"server_registry"},
+            "observedAt":"2026-08-23T00:00:00.000Z","openMode":"internal_native","aliases":["ALMA Costs"]
+          }
+        ]
+        """#.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode([AgentReferenceV1Wire].self, from: data) {
+            answer.references = AgentReferenceV1Wire.trustedOnly(decoded)
+            answer.referenceProjectionPresent = true
+        }
         let refs = (1...3).map {
             AgentFileRef(bucket: "fixture", path: "fixture/rich-image-\($0).jpg", mediaType: "image/jpeg")
         }
@@ -10738,7 +11208,7 @@ final class AssistantVM {
             return AgentTurnEvent(dto: dto)
         }
         if case .unknown(let t)? = decode(#"{"type":"future_thing"}"#) { check("unknown telemetried", t == "future_thing") } else { check("unknown telemetried", false) }
-        if case .done(let mid, let tin, _, let cost, let cont, _, _, _, _)? = decode(#"{"type":"done","messageId":"m1","tokensIn":5,"costUsd":0.1,"needContinue":true}"#) {
+        if case .done(let mid, let tin, _, let cost, let cont, _, _, _, _, _, _)? = decode(#"{"type":"done","messageId":"m1","tokensIn":5,"costUsd":0.1,"needContinue":true}"#) {
             check("done fields", mid == "m1" && tin == 5 && cost == 0.1 && cont)
         } else { check("done fields", false) }
         if case .turnSnapshot(let tid, _, let st, let seq, _, _)? = decode(#"{"type":"turn_snapshot","turnId":"t9","status":"running","lastSeq":7}"#) {
@@ -13103,6 +13573,26 @@ struct AlmaSelectableRichText: UIViewRepresentable {
 enum AgentMarkdownLinkDestination: Equatable {
     case almaPath(String)
     case external(URL)
+    case artifact(
+        id: String,
+        title: String,
+        apiPath: String,
+        mimeType: String?,
+        fileName: String?
+    )
+}
+
+/// Deterministic opening policy shared by the runtime branch and XCTest. A
+/// universal-link success means the installed provider app accepted the URL;
+/// Safari is presented only when that exact attempt reports failure.
+enum AgentExternalOpenPolicy {
+    static func usesUniversalLinkFirst(openMode: String) -> Bool {
+        openMode == "universal_link_first"
+    }
+
+    static func presentsSafariAfterUniversalLink(opened: Bool) -> Bool {
+        !opened
+    }
 }
 
 /// One allowlisted decision for citation chips, SwiftUI Markdown links and the
@@ -13119,7 +13609,11 @@ enum AgentMarkdownLinkRouter {
         }
     }
 
-    static func destination(for url: URL) -> AgentMarkdownLinkDestination? {
+    /// Legacy contract (rollout off/shadow, or a history row written before the
+    /// reference pipeline existed): the sanitized classifier alone decides, as it
+    /// did before. Requiring a reference in those modes turned every existing link
+    /// — and every trusted tool screenshot — inert (Codex P1, PR #845).
+    static func legacyDestination(for url: URL) -> AgentMarkdownLinkDestination? {
         if isUnsafeHref(url.absoluteString) { return nil }
         let scheme = url.scheme?.lowercased()
         if scheme == nil, url.host == nil {
@@ -13135,21 +13629,83 @@ enum AgentMarkdownLinkRouter {
         return .external(url)
     }
 
-    static func isALMAURL(_ url: URL) -> Bool {
-        if case .almaPath = destination(for: url) { return true }
+    /// A link is clickable ONLY when a server-minted reference on THIS message
+    /// names this exact destination. The raw-href guard still runs first so an
+    /// oversized/control-character href fails closed before any matching.
+    /// `contractActive == false` falls back to `legacyDestination(for:)`.
+    static func destination(for url: URL,
+                            references: [AgentReferenceV1Wire],
+                            contractActive: Bool = true) -> AgentMarkdownLinkDestination? {
+        if !contractActive { return legacyDestination(for: url) }
+        if isUnsafeHref(url.absoluteString) { return nil }
+        guard let reference = references.first(where: { matches(url, reference: $0) }),
+              reference.trusted else { return nil }
+        switch reference.destination.type {
+        case "artifact_report":
+            guard let artifactId = reference.destination.artifactId,
+                  let apiPath = reference.destination.apiPath,
+                  AgentReferenceV1Wire.safeArtifactAPIPath(
+                    apiPath, artifactId: artifactId) else { return nil }
+            return .artifact(
+                id: artifactId,
+                title: reference.label,
+                apiPath: apiPath,
+                mimeType: reference.destination.mimeType,
+                fileName: reference.destination.fileName)
+        case "internal_section", "internal_entity":
+            guard let href = reference.href, let verified = URL(string: href) else { return nil }
+            return internalPath(from: verified).map(AgentMarkdownLinkDestination.almaPath)
+        case "external_object", "external_source", "external_media":
+            guard let href = reference.href, let verified = URL(string: href),
+                  AgentReferenceV1Wire.safeExternalURL(verified) else { return nil }
+            return .external(verified)
+        default:
+            return nil
+        }
+    }
+
+    static func isALMAURL(_ url: URL, references: [AgentReferenceV1Wire]) -> Bool {
+        if case .almaPath = destination(for: url, references: references) { return true }
         return false
     }
 
     /// Exact ERP records are navigation actions, not research evidence. They
     /// remain tappable through `destination(for:)`, but must not also create a
     /// citation chip and a duplicate Sources-sheet row.
-    static func isALMAEntityDetailURL(_ url: URL) -> Bool {
-        guard case .almaPath = destination(for: url) else { return false }
+    static func isALMAEntityDetailURL(_ url: URL, references: [AgentReferenceV1Wire]) -> Bool {
+        guard case .almaPath = destination(for: url, references: references) else { return false }
         let parts = url.path.split(separator: "/", omittingEmptySubsequences: true)
         if parts.count == 2, parts[0] == "orders" || parts[0] == "employees" {
             return true
         }
         return parts.count == 3 && parts[0] == "trading" && parts[1] == "accounts"
+    }
+
+    static func matches(_ url: URL, reference: AgentReferenceV1Wire) -> Bool {
+        guard reference.trusted, let href = reference.href else { return false }
+        switch reference.destination.type {
+        case "internal_section", "internal_entity", "artifact_report":
+            let allowedHrefs: [String]
+            if reference.destination.type == "artifact_report" {
+                allowedHrefs = [reference.destination.apiPath].compactMap { $0 }
+            } else {
+                allowedHrefs = [reference.destination.webPath, reference.destination.nativePath]
+                    .compactMap { $0 }
+            }
+            guard !allowedHrefs.isEmpty, allowedHrefs.allSatisfy({ $0.hasPrefix("/") }) else { return false }
+            let scheme = url.scheme?.lowercased()
+            guard (scheme == nil && url.host == nil)
+                    || ((scheme == "http" || scheme == "https") && isALMAHost(url.host)) else { return false }
+            guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+            var path = components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
+            if let query = components.percentEncodedQuery, !query.isEmpty { path += "?\(query)" }
+            return allowedHrefs.contains(path)
+        case "external_object", "external_source", "external_media":
+            guard !href.hasPrefix("/"), url.scheme != nil, url.host != nil else { return false }
+            return url.absoluteString == href
+        default:
+            return false
+        }
     }
 
     private static func isALMAHost(_ host: String?) -> Bool {
@@ -13178,7 +13734,13 @@ struct AgentCitation: Identifiable, Equatable {
     let id: Int
     let title: String
     let url: URL
+    /// Copied only from the matched, trusted AgentReferenceV1 destination.
+    /// Never infer provider/source classification from display text or host.
+    let provider: String
+    let referenceKind: String
+    let purpose: String
     var domain: String { url.host?.replacingOccurrences(of: "www.", with: "") ?? url.absoluteString }
+    var sourceLabel: String { "\(provider) · \(domain)" }
     var faviconURL: URL? {
         guard let scheme = url.scheme, let host = url.host else { return nil }
         return URL(string: "\(scheme)://\(host)/favicon.ico")
@@ -13203,8 +13765,26 @@ struct AgentCitation: Identifiable, Equatable {
         return String(title[swiftRange])
     }
     var isALMAInternal: Bool {
-        AgentMarkdownLinkRouter.isALMAURL(url)
+        let host = url.host?.lowercased()
+        return host == AssistantNet.base.host?.lowercased() || host == "alma-erp-six.vercel.app"
     }
+}
+
+private struct AgentVerifiedMediaLink: Identifiable {
+    let id: String
+    let title: String
+    let url: URL
+    let mediaType: String
+    let provider: String
+    let hostname: String
+}
+
+private struct AgentVerifiedDestinationLink: Identifiable {
+    let id: String
+    let title: String
+    let url: URL
+    let provider: String
+    let hostname: String
 }
 
 @available(iOS 17.0, *)
@@ -13222,7 +13802,7 @@ private struct AgentCitationChips: View {
                                 .font(.system(size: 9, weight: .bold, design: .rounded))
                                 .frame(width: 17, height: 17)
                                 .background(AgentPalette.teal.opacity(0.22), in: Circle())
-                            Text(citation.domain).lineLimit(1)
+                            Text(citation.sourceLabel).lineLimit(1)
                         }
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(pal.mutedHi)
@@ -13230,7 +13810,8 @@ private struct AgentCitationChips: View {
                         .background(pal.card.opacity(0.65), in: Capsule())
                         .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
                     }
-                    .accessibilityLabel("Citation \(citation.id), \(citation.title), \(citation.domain)")
+                    .accessibilityLabel(
+                        "Citation \(citation.id), \(citation.title), \(citation.sourceLabel)")
                     .accessibilityIdentifier("agent.citation.inline.\(citation.id)")
                 }
             }
@@ -13272,19 +13853,15 @@ private struct AgentSourcesSheet: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { onOpen(citation) }
                 } label: {
                     HStack(alignment: .top, spacing: 12) {
-                        AsyncImage(url: citation.faviconURL) { phase in
-                            if let image = phase.image { image.resizable().scaledToFit() }
-                            else { Image(systemName: citation.isALMAInternal ? "building.2" : "globe") }
-                        }
+                        Image(systemName: citation.isALMAInternal ? "building.2" : "globe")
                         .frame(width: 24, height: 24)
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                         VStack(alignment: .leading, spacing: 4) {
                             Text(citation.title).font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(AgentPalette(scheme).ink)
                             HStack(spacing: 5) {
-                                Text(citation.domain)
-                                Text("·")
-                                Text(citation.isALMAInternal ? "ALMA" : "External")
+                                Text(citation.isALMAInternal ? "ALMA · \(citation.domain)"
+                                     : citation.sourceLabel)
                                 if let date = citation.dateLabel {
                                     Text("·")
                                     Text(date)
@@ -13329,6 +13906,11 @@ struct AgentMarkdownTable: Equatable {
 
 @available(iOS 17.0, *)
 struct AgentMarkdownText: View {
+    private struct ParsedMarkdownLink {
+        let title: String
+        let url: URL
+    }
+
     let text: String
     let pal: AgentPalette
     /// Settled agent prose sets this — paragraphs render as in-place selectable
@@ -13336,6 +13918,10 @@ struct AgentMarkdownText: View {
     var selectable = false
     var suppressRemoteImages = false
     var onAskSelection: ((String, Bool) -> Void)? = nil
+    var references: [AgentReferenceV1Wire] = []
+    /// False (rollout off/shadow, or pre-contract history) = legacy sanitized
+    /// links and inline images, exactly as before the reference pipeline.
+    var referencesActive = false
     @State private var showSources = false
 
     static func shouldRenderRemoteImages(suppressRemoteImages: Bool) -> Bool {
@@ -13350,10 +13936,10 @@ struct AgentMarkdownText: View {
         return regex.stringByReplacingMatches(in: source, range: range, withTemplate: "")
     }
 
-    private static func extractMarkdownLinks(_ source: String) -> [AgentCitation] {
+    private static func extractMarkdownLinks(_ source: String) -> [ParsedMarkdownLink] {
         let source = proseWithoutFencedCode(source)
         var seen: Set<String> = []
-        var result: [AgentCitation] = []
+        var result: [ParsedMarkdownLink] = []
         var cursor = source.startIndex
         while cursor < source.endIndex,
               let titleOpen = source[cursor...].firstIndex(of: "[") {
@@ -13370,21 +13956,37 @@ struct AgentMarkdownText: View {
             var scan = destinationStart
             var depth = 1
             var destinationEnd: String.Index?
-            while scan < source.endIndex {
-                let character = source[scan]
-                if character == "(" { depth += 1 }
-                if character == ")" {
-                    depth -= 1
-                    if depth == 0 {
-                        destinationEnd = scan
-                        break
+            var angleEnd: String.Index?
+            if scan < source.endIndex, source[scan] == "<" {
+                angleEnd = source[scan...].firstIndex(of: ">")
+                if let angleEnd {
+                    let closing = source.index(after: angleEnd)
+                    if closing < source.endIndex, source[closing] == ")" {
+                        destinationEnd = closing
                     }
                 }
-                scan = source.index(after: scan)
+            } else {
+                while scan < source.endIndex {
+                    let character = source[scan]
+                    if character == "(" { depth += 1 }
+                    if character == ")" {
+                        depth -= 1
+                        if depth == 0 {
+                            destinationEnd = scan
+                            break
+                        }
+                    }
+                    scan = source.index(after: scan)
+                }
             }
             guard let destinationEnd else { break }
             let title = String(source[afterOpen..<titleClose.lowerBound])
-            let raw = String(source[destinationStart..<destinationEnd])
+            let raw: String
+            if let angleEnd {
+                raw = String(source[source.index(after: destinationStart)..<angleEnd])
+            } else {
+                raw = String(source[destinationStart..<destinationEnd])
+            }
             cursor = source.index(after: destinationEnd)
             guard !title.isEmpty, !raw.isEmpty,
                   !raw.contains(where: { $0.isWhitespace }) else { continue }
@@ -13393,25 +13995,46 @@ struct AgentMarkdownText: View {
                 : URL(string: raw)
             guard let url, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
                   seen.insert(url.absoluteString).inserted else { continue }
-            result.append(.init(id: result.count + 1, title: title, url: url))
+            result.append(.init(title: title, url: url))
         }
         return result
     }
 
-    private static func isCitationEvidence(_ link: AgentCitation) -> Bool {
-        let actionLabel = #"^(?:download|open|view|click|copy|share|edit|save|play|watch|listen|ডাউনলোড|খুলুন|দেখুন|কপি|শেয়ার|সেভ)(?:\b|\s|:)"#
-        if link.title.range(of: actionLabel, options: [.regularExpression, .caseInsensitive]) != nil {
-            return false
-        }
-        if AgentMarkdownLinkRouter.isALMAEntityDetailURL(link.url) { return false }
-        if link.url.path.lowercased().hasPrefix("/api/") { return false }
-        let mediaExtensions: Set<String> = ["mp4", "mov", "m4v", "mp3", "m4a", "wav", "aac"]
-        return !mediaExtensions.contains(link.url.pathExtension.lowercased())
+    private static func citationReference(
+        for link: ParsedMarkdownLink,
+        references: [AgentReferenceV1Wire]
+    ) -> (reference: AgentReferenceV1Wire, provider: String)? {
+        guard let reference = references.first(where: {
+            AgentMarkdownLinkRouter.matches(link.url, reference: $0)
+                && ["external_source", "external_object"].contains($0.kind)
+                && ["source", "evidence"].contains($0.purpose)
+        }),
+              let provider = reference.destination.provider,
+              !provider.isEmpty else { return nil }
+        return (reference, provider)
     }
 
-    static func extractCitations(_ source: String) -> [AgentCitation] {
-        extractMarkdownLinks(source).filter(isCitationEvidence).enumerated().map { index, link in
-            .init(id: index + 1, title: link.title, url: link.url)
+    static func extractCitations(_ source: String,
+                                 references: [AgentReferenceV1Wire] = [],
+                                 contractActive: Bool = true) -> [AgentCitation] {
+        guard contractActive else { return [] }
+        return extractMarkdownLinks(source)
+            .compactMap { link -> (ParsedMarkdownLink, AgentReferenceV1Wire, String)? in
+                guard AgentMarkdownLinkRouter.destination(
+                    for: link.url, references: references) != nil,
+                      let match = citationReference(for: link, references: references)
+                else { return nil }
+                return (link, match.reference, match.provider)
+            }
+            .enumerated().map { index, value in
+                let (link, reference, provider) = value
+                return .init(
+                    id: index + 1,
+                    title: link.title,
+                    url: link.url,
+                    provider: provider,
+                    referenceKind: reference.kind,
+                    purpose: reference.purpose)
         }
     }
 
@@ -13419,24 +14042,76 @@ struct AgentMarkdownText: View {
     /// citation numbers. This lets the chip sit beside the claim it supports
     /// while the Sources sheet still owns one deduplicated bibliography.
     static func citationIDs(in paragraph: String, from citations: [AgentCitation]) -> [Int] {
+        citationIDs(in: paragraph, from: citations, references: [])
+    }
+
+    static func citationIDs(in paragraph: String, from citations: [AgentCitation],
+                            references: [AgentReferenceV1Wire],
+                            contractActive: Bool = true) -> [Int] {
+        guard contractActive else { return [] }
         let paragraphURLs = Set(
             extractMarkdownLinks(paragraph)
-                .filter(isCitationEvidence)
+                .filter { AgentMarkdownLinkRouter.destination(for: $0.url, references: references) != nil
+                    && citationReference(for: $0, references: references) != nil }
                 .map { $0.url.absoluteString })
         return citations.compactMap {
             paragraphURLs.contains($0.url.absoluteString) ? $0.id : nil
         }
     }
 
-    private static func extractMediaLinks(_ source: String) -> [AgentCitation] {
-        let mediaExtensions: Set<String> = ["mp4", "mov", "m4v", "mp3", "m4a", "wav", "aac"]
-        return extractMarkdownLinks(source).filter {
-            mediaExtensions.contains($0.url.pathExtension.lowercased())
+    private static func extractMediaLinks(_ source: String,
+                                          references: [AgentReferenceV1Wire]) -> [AgentVerifiedMediaLink] {
+        var seen: Set<String> = []
+        return extractMarkdownLinks(source).compactMap { link in
+            guard let reference = references.first(where: { reference in
+                reference.kind == "external_media" && reference.purpose == "media"
+                    && reference.destination.provider != "youtube"
+                    && AgentMarkdownLinkRouter.matches(link.url, reference: reference)
+            }), let mediaType = reference.destination.mediaType?.lowercased(),
+                  mediaType.hasPrefix("video/") || mediaType.hasPrefix("audio/"),
+                  let provider = reference.destination.provider,
+                  let hostname = reference.destination.hostname,
+                  seen.insert(reference.refId).inserted else { return nil }
+            return AgentVerifiedMediaLink(
+                id: reference.refId, title: link.title, url: link.url,
+                mediaType: mediaType, provider: provider, hostname: hostname)
         }
     }
 
-    private var citations: [AgentCitation] { Self.extractCitations(text) }
-    private var mediaLinks: [AgentCitation] { Self.extractMediaLinks(text) }
+    private static func extractExternalDestinations(
+        _ source: String,
+        references: [AgentReferenceV1Wire]
+    ) -> [AgentVerifiedDestinationLink] {
+        var seen: Set<String> = []
+        return extractMarkdownLinks(source).compactMap { link in
+            guard let reference = references.first(where: {
+                ["external_object", "external_source", "external_media"].contains($0.kind)
+                    && AgentMarkdownLinkRouter.matches(link.url, reference: $0)
+            }), let provider = reference.destination.provider,
+                  let hostname = reference.destination.hostname,
+                  !(["external_source", "external_object"].contains(reference.kind)
+                    && ["source", "evidence"].contains(reference.purpose)),
+                  !(reference.kind == "external_media"
+                    && reference.purpose == "media"
+                    && reference.destination.provider != "youtube"
+                    && ((reference.destination.mediaType?.hasPrefix("video/") == true)
+                        || (reference.destination.mediaType?.hasPrefix("audio/") == true))),
+                  seen.insert(reference.refId).inserted else { return nil }
+            return AgentVerifiedDestinationLink(
+                id: reference.refId, title: link.title, url: link.url,
+                provider: provider, hostname: hostname)
+        }
+    }
+
+    private var citations: [AgentCitation] {
+        Self.extractCitations(text, references: references, contractActive: referencesActive)
+    }
+    private var mediaLinks: [AgentVerifiedMediaLink] {
+        referencesActive ? Self.extractMediaLinks(text, references: references) : []
+    }
+    private var externalDestinations: [AgentVerifiedDestinationLink] {
+        referencesActive ? Self.extractExternalDestinations(text, references: references) : []
+    }
 
     private enum Segment: Identifiable {
         case paragraph(String)
@@ -13594,8 +14269,53 @@ struct AgentMarkdownText: View {
                 case .mermaid(let source): AgentMermaidDiagram(source: source, pal: pal)
                 case .form(let source): AgentInteractiveFormCard(source: source, pal: pal)
                 case .imageGroup(let images):
-                    if Self.shouldRenderRemoteImages(suppressRemoteImages: suppressRemoteImages) {
-                        AgentAdjacentRemoteImageGallery(images: images)
+                    // Legacy contract (rollout off/shadow, pre-contract history):
+                    // trusted tool output — camera and Mac screenshots return a
+                    // plain `imageUrl` and mint no media reference — renders
+                    // inline exactly as before (Codex P1, PR #845).
+                    if !referencesActive {
+                        if Self.shouldRenderRemoteImages(suppressRemoteImages: suppressRemoteImages) {
+                            AgentAdjacentRemoteImageGallery(images: images)
+                        }
+                    } else {
+                    let verifiedImages = images.filter { image in
+                        guard let url = URL(string: image.url) else { return false }
+                        return references.contains { reference in
+                            reference.kind == "external_media"
+                                && reference.purpose == "media"
+                                && reference.destination.mediaType?.lowercased().hasPrefix("image/") == true
+                                && AgentMarkdownLinkRouter.matches(url, reference: reference)
+                        }
+                    }
+                    if Self.shouldRenderRemoteImages(suppressRemoteImages: suppressRemoteImages),
+                       !verifiedImages.isEmpty {
+                            let sources = references.compactMap { reference -> String? in
+                                guard reference.kind == "external_media",
+                                      reference.purpose == "media",
+                                      reference.destination.mediaType?.lowercased().hasPrefix("image/") == true,
+                                      let provider = reference.destination.provider,
+                                      let hostname = reference.destination.hostname,
+                                      verifiedImages.contains(where: { image in
+                                          guard let url = URL(string: image.url) else { return false }
+                                          return AgentMarkdownLinkRouter.matches(url, reference: reference)
+                                      }) else { return nil }
+                                return "\(provider) · \(hostname)"
+                            }
+                            AgentRemoteImageConsentGallery(
+                                images: verifiedImages,
+                                sources: Array(Set(sources)).sorted(),
+                                pal: pal)
+                    }
+                    let visibleImages = Self.shouldRenderRemoteImages(suppressRemoteImages: suppressRemoteImages)
+                        ? verifiedImages : []
+                    let rejectedImages = images.filter { image in
+                        !visibleImages.contains(where: { $0.url == image.url && $0.alt == image.alt })
+                    }
+                    if !rejectedImages.isEmpty {
+                        Text(rejectedImages.map { Self.safeImageAlt($0.alt) }.joined(separator: " · "))
+                            .font(.footnote)
+                            .foregroundStyle(pal.mutedHi)
+                    }
                     }
                 }
             }
@@ -13603,8 +14323,29 @@ struct AgentMarkdownText: View {
                 AgentCitationStrip(citations: citations, pal: pal,
                                    onOpen: openCitation, onSources: { showSources = true })
             }
+            ForEach(externalDestinations) { destination in
+                Button { openMarkdownLink(destination.url) } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: destination.provider == "youtube" ? "play.rectangle" : "arrow.up.right.square")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(destination.title).lineLimit(1)
+                            Text("\(destination.provider) · \(destination.hostname)")
+                                .font(.system(size: 10)).foregroundStyle(pal.muted)
+                        }
+                        Spacer()
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(pal.mutedHi)
+                    .padding(10)
+                    .background(pal.card.opacity(0.72), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("agent.verified-destination")
+            }
             ForEach(mediaLinks) { media in
-                AgentMediaCard(title: media.title, url: media.url, pal: pal)
+                AgentMediaCard(
+                    title: media.title, url: media.url, mediaType: media.mediaType,
+                    provider: media.provider, hostname: media.hostname, pal: pal)
             }
         }
         .sheet(isPresented: $showSources) {
@@ -13622,21 +14363,59 @@ struct AgentMarkdownText: View {
     }
 
     private func openMarkdownLink(_ url: URL) {
-        guard let destination = AgentMarkdownLinkRouter.destination(for: url) else { return }
+        // Legacy contract: no reference is required — the sanitized classifier
+        // already decided this href is safe, and it is the only decision there is.
+        guard referencesActive else {
+            guard let legacy = AgentMarkdownLinkRouter.legacyDestination(for: url) else { return }
+            AlmaAgentHaptics.selection()
+            switch legacy {
+            case .almaPath(let path):
+                NotificationCenter.default.post(
+                    name: .almaOpenPath, object: nil, userInfo: ["path": path])
+            case .external(let target):
+                browserURL = target
+            case .artifact:
+                break
+            }
+            return
+        }
+        guard let reference = references.first(where: { AgentMarkdownLinkRouter.matches(url, reference: $0) }),
+              let destination = AgentMarkdownLinkRouter.destination(for: url, references: references) else { return }
         AlmaAgentHaptics.selection()
         switch destination {
         case .almaPath(let path):
             NotificationCenter.default.post(
                 name: .almaOpenPath, object: nil, userInfo: ["path": path])
+        case .artifact(let id, let title, let apiPath, let mimeType, let fileName):
+            var info: [String: Any] = [
+                "artifactId": id,
+                "title": title,
+                "apiPath": apiPath,
+            ]
+            if let mimeType { info["mimeType"] = mimeType }
+            if let fileName { info["fileName"] = fileName }
+            NotificationCenter.default.post(
+                name: Notification.Name("almaOpenReferenceArtifact"), object: nil,
+                userInfo: info)
         case .external(let safeURL):
-            browserURL = safeURL
+            if AgentExternalOpenPolicy.usesUniversalLinkFirst(openMode: reference.openMode) {
+                UIApplication.shared.open(safeURL, options: [.universalLinksOnly: true]) { opened in
+                    if AgentExternalOpenPolicy.presentsSafariAfterUniversalLink(opened: opened) {
+                        DispatchQueue.main.async { browserURL = safeURL }
+                    }
+                }
+            } else {
+                browserURL = safeURL
+            }
         }
     }
 
     @ViewBuilder private func paragraphWithCitations(_ source: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             paragraph(source)
-            let localIDs = Set(Self.citationIDs(in: source, from: citations))
+            let localIDs = Set(Self.citationIDs(
+                in: source, from: citations, references: references,
+                contractActive: referencesActive))
             let localCitations = citations.filter { localIDs.contains($0.id) }
             if !localCitations.isEmpty {
                 AgentCitationChips(citations: localCitations, pal: pal, onOpen: openCitation)
@@ -13646,7 +14425,8 @@ struct AgentMarkdownText: View {
 
     @ViewBuilder private func paragraph(_ s: String) -> some View {
         if selectable {
-            AlmaSelectableRichText(attributed: Self.attributedParagraph(s, pal: pal),
+            AlmaSelectableRichText(attributed: Self.attributedParagraph(
+                s, pal: pal, references: references, contractActive: referencesActive),
                                    onAskSelection: onAskSelection,
                                    onOpenURL: openMarkdownLink)
         } else {
@@ -13657,7 +14437,38 @@ struct AgentMarkdownText: View {
     /// Mirror of `plainParagraph`'s per-line styling as ONE NSAttributedString so a
     /// selection can span the whole paragraph: clear headers, lists and quiet body,
     /// resolved bold/italic/code (UITextView doesn't interpret markdown intents).
-    static func attributedParagraph(_ s: String, pal: AgentPalette) -> NSAttributedString {
+    private static func headingLevel(_ line: String) -> Int? {
+        if line.hasPrefix("### ") { return 3 }
+        if line.hasPrefix("## ") { return 2 }
+        if line.hasPrefix("# ") { return 1 }
+        return nil
+    }
+
+    private static func orderedListParts(_ line: String) -> (marker: String, body: String)? {
+        guard let range = line.range(of: #"^[0-9০-৯]+[.)]\s+"#, options: .regularExpression) else {
+            return nil
+        }
+        let marker = String(line[..<range.upperBound]).trimmingCharacters(in: .whitespaces)
+        let body = String(line[range.upperBound...])
+        return body.isEmpty ? nil : (marker, body)
+    }
+
+    private static func taskListParts(_ line: String) -> (checked: Bool, body: String)? {
+        let candidates: [(String, Bool)] = [
+            ("- [ ] ", false), ("* [ ] ", false),
+            ("- [x] ", true), ("- [X] ", true),
+            ("* [x] ", true), ("* [X] ", true),
+        ]
+        for (prefix, checked) in candidates where line.hasPrefix(prefix) {
+            let body = String(line.dropFirst(prefix.count))
+            return body.isEmpty ? nil : (checked, body)
+        }
+        return nil
+    }
+
+    static func attributedParagraph(_ s: String, pal: AgentPalette,
+                                    references: [AgentReferenceV1Wire] = [],
+                                    contractActive: Bool = true) -> NSAttributedString {
         let body = UIFontMetrics(forTextStyle: .body).scaledFont(
             for: UIFont.systemFont(ofSize: 16.5, weight: .regular))
         let ink = UIColor(pal.ink)
@@ -13671,24 +14482,42 @@ struct AgentMarkdownText: View {
             if trimmed.isEmpty { continue }
             if !first { out.append(NSAttributedString(string: "\n")) }
             first = false
-            if trimmed.hasPrefix("###") || trimmed.hasPrefix("##") || trimmed.hasPrefix("# ") {
+            if let level = headingLevel(trimmed) {
                 let title = String(trimmed.drop(while: { $0 == "#" || $0 == " " }))
-                let size: CGFloat = trimmed.hasPrefix("# ") ? 18 : 16
-                let heading = UIFontMetrics(forTextStyle: .headline)
-                    .scaledFont(for: UIFont.systemFont(ofSize: size, weight: .semibold))
+                let size: CGFloat = level == 1 ? 22 : (level == 2 ? 19 : 16.5)
+                let weight: UIFont.Weight = level == 3 ? .semibold : .bold
+                let system = UIFont.systemFont(ofSize: size, weight: weight)
+                let descriptor = system.fontDescriptor.withDesign(.serif) ?? system.fontDescriptor
+                let heading = UIFontMetrics(forTextStyle: level == 1 ? .title2 : .headline)
+                    .scaledFont(for: UIFont(descriptor: descriptor, size: size))
+                let color = level == 1
+                    ? UIColor(AgentPalette.coral)
+                    : (level == 3 ? UIColor(AgentPalette.teal) : ink)
                 out.append(NSAttributedString(string: title, attributes: [
                     .font: heading,
-                    .foregroundColor: ink,
+                    .foregroundColor: color,
                 ]))
-            } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("• ") {
-                out.append(NSAttributedString(string: "•  ", attributes: [.font: body, .foregroundColor: UIColor(pal.muted)]))
-                out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: ink))
+            } else if let task = taskListParts(trimmed) {
+                out.append(NSAttributedString(
+                    string: task.checked ? "☑  " : "☐  ",
+                    attributes: [.font: body, .foregroundColor: UIColor(AgentPalette.teal)]))
+                out.append(inlineNS(task.body, baseFont: body, color: ink, references: references, contractActive: contractActive))
+            } else if let item = orderedListParts(trimmed) {
+                out.append(NSAttributedString(string: "\(item.marker)  ", attributes: [
+                    .font: UIFont.systemFont(ofSize: body.pointSize, weight: .semibold),
+                    .foregroundColor: UIColor(AgentPalette.teal),
+                ]))
+                out.append(inlineNS(item.body, baseFont: body, color: ink, references: references, contractActive: contractActive))
+            } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") || trimmed.hasPrefix("• ") {
+                out.append(NSAttributedString(string: "•  ", attributes: [
+                    .font: body, .foregroundColor: UIColor(AgentPalette.coral.opacity(0.85))]))
+                out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: ink, references: references, contractActive: contractActive))
             } else if trimmed.hasPrefix("> ") {
                 out.append(NSAttributedString(string: "│  ", attributes: [
                     .font: body, .foregroundColor: UIColor(AgentPalette.coral.opacity(0.75))]))
-                out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: UIColor(pal.mutedHi)))
+                out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: UIColor(pal.mutedHi), references: references, contractActive: contractActive))
             } else {
-                out.append(inlineNS(line, baseFont: body, color: ink))
+                out.append(inlineNS(line, baseFont: body, color: ink, references: references, contractActive: contractActive))
             }
         }
         out.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: out.length))
@@ -13698,9 +14527,11 @@ struct AgentMarkdownText: View {
     /// Inline markdown line → NSAttributedString with **bold** / *italic* / `code`
     /// resolved to real fonts (AttributedString keeps them as presentation intents,
     /// which UIKit ignores).
-    private static func inlineNS(_ line: String, baseFont: UIFont, color: UIColor) -> NSAttributedString {
-        guard let md = try? AttributedString(markdown: line,
-                                             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) else {
+    private static func inlineNS(_ line: String, baseFont: UIFont, color: UIColor,
+                                 references: [AgentReferenceV1Wire],
+                                 contractActive: Bool = true) -> NSAttributedString {
+        guard let md = sanitizedInlineMarkdown(
+            line, references: references, contractActive: contractActive) else {
             return NSAttributedString(string: line, attributes: [.font: baseFont, .foregroundColor: color])
         }
         let out = NSMutableAttributedString()
@@ -13731,41 +14562,103 @@ struct AgentMarkdownText: View {
     }
 
     @ViewBuilder private func plainParagraph(_ s: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(s.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 if trimmed.isEmpty {
                     EmptyView()
-                } else if trimmed.hasPrefix("###") || trimmed.hasPrefix("##") || trimmed.hasPrefix("# ") {
-                    Text(trimmed.drop(while: { $0 == "#" || $0 == " " }))
-                        .font(.system(trimmed.hasPrefix("# ") ? .title3 : .headline, weight: .semibold))
-                        .foregroundStyle(pal.ink)
-                        .padding(.top, 2)
-                } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("• ") {
+                } else if let level = Self.headingLevel(trimmed) {
+                    let title = String(trimmed.drop(while: { $0 == "#" || $0 == " " }))
+                    let font: Font = level == 1
+                        ? .system(.title2, design: .serif, weight: .bold)
+                        : (level == 2
+                            ? .system(.title3, design: .serif, weight: .bold)
+                            : .system(.headline, design: .default, weight: .semibold))
+                    let color = level == 1 ? AgentPalette.coral : (level == 3 ? AgentPalette.teal : pal.ink)
+                    HStack(alignment: .firstTextBaseline, spacing: 9) {
+                        if level == 2 {
+                            Capsule().fill(AgentPalette.coral.opacity(0.8)).frame(width: 3, height: 20)
+                        }
+                        Text(title)
+                            .font(font)
+                            .foregroundStyle(color)
+                    }
+                    .padding(.top, level == 1 ? 8 : 5)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isHeader)
+                } else if let task = Self.taskListParts(trimmed) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: task.checked ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(AgentPalette.teal)
+                            .accessibilityHidden(true)
+                        inline(task.body).lineSpacing(4)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(Text(
+                        task.checked ? "সম্পন্ন, \(task.body)" : "অসম্পন্ন, \(task.body)"))
+                } else if let item = Self.orderedListParts(trimmed) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(item.marker)
+                            .font(.system(.body, design: .rounded, weight: .semibold))
+                            .foregroundStyle(AgentPalette.teal)
+                        inline(item.body).lineSpacing(4)
+                    }
+                } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") || trimmed.hasPrefix("• ") {
                     HStack(alignment: .top, spacing: 7) {
-                        Text("•").foregroundStyle(pal.muted)
-                        inline(String(trimmed.dropFirst(2)))
+                        Text("•").foregroundStyle(AgentPalette.coral.opacity(0.85))
+                        inline(String(trimmed.dropFirst(2))).lineSpacing(4)
                     }
                 } else if trimmed.hasPrefix("> ") {
                     HStack(alignment: .top, spacing: 9) {
                         Capsule().fill(AgentPalette.coral.opacity(0.65)).frame(width: 3)
-                        inline(String(trimmed.dropFirst(2))).foregroundStyle(pal.mutedHi)
+                        inline(String(trimmed.dropFirst(2))).foregroundStyle(pal.mutedHi).lineSpacing(4)
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(AgentPalette.coral.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityElement(children: .combine)
                 } else {
-                    inline(line)
+                    inline(line).lineSpacing(4)
                 }
             }
         }
     }
 
     private func inline(_ s: String) -> Text {
-        if let a = try? AttributedString(markdown: s,
-                                         options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+        if let a = Self.sanitizedInlineMarkdown(
+            s, references: references, contractActive: referencesActive) {
             return Text(a)
                 .font(.system(.body, design: .default))
                 .foregroundStyle(pal.ink)
         }
         return Text(s).font(.system(.body, design: .default)).foregroundStyle(pal.ink)
+    }
+
+    private static func sanitizedInlineMarkdown(
+        _ source: String,
+        references: [AgentReferenceV1Wire],
+        contractActive: Bool = true
+    ) -> AttributedString? {
+        guard var value = try? AttributedString(
+            markdown: source,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) else { return nil }
+        let untrustedRanges = value.runs.compactMap { run -> Range<AttributedString.Index>? in
+            guard let url = run.link,
+                  AgentMarkdownLinkRouter.destination(
+                    for: url, references: references, contractActive: contractActive) == nil else { return nil }
+            return run.range
+        }
+        for range in untrustedRanges { value[range].link = nil }
+        return value
+    }
+
+    private static func safeImageAlt(_ value: String) -> String {
+        let clean = value.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
+        let text = String(String.UnicodeScalarView(clean))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? "ছবি" : String(text.prefix(160))
     }
 
     /// Web parity: fenced ```copy/caption/post/text = the branded coral copy card;
@@ -13872,8 +14765,11 @@ struct AgentMarkdownText: View {
     }
 
     private func tableCell(_ value: String, header: Bool, column: Int) -> some View {
-        let content = (try? AttributedString(markdown: value,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+        // Table cells are a separate renderer — without the flag they defaulted to
+        // the strict contract and stripped every legacy link inside a Markdown
+        // table while the rollout was hidden (Codex P2, PR #845).
+        let content = Self.sanitizedInlineMarkdown(
+            value, references: references, contractActive: referencesActive)
             .map(Text.init) ?? Text(value)
         return content
             .font(.system(size: header ? 12.5 : 13.5,
@@ -14162,10 +15058,62 @@ private struct AgentInteractiveFormCard: View {
     }
 }
 
+enum AgentRemoteMediaConsentContract {
+    /// Keep remote-backed SwiftUI/AVFoundation views out of the tree until the
+    /// owner explicitly asks to load them; constructing those views can start
+    /// network work before playback or an image becomes visible.
+    static func permitsLoader(consented: Bool) -> Bool { consented }
+
+    static func sourceLabel(provider: String, hostname: String) -> String {
+        "\(provider) · \(hostname)"
+    }
+}
+
 @available(iOS 17.0, *)
 private struct AgentMediaCard: View {
     let title: String
     let url: URL
+    let mediaType: String
+    let provider: String
+    let hostname: String
+    let pal: AgentPalette
+    @State private var consented = false
+    private var isVideo: Bool { mediaType.lowercased().hasPrefix("video/") }
+
+    var body: some View {
+        Group {
+            if AgentRemoteMediaConsentContract.permitsLoader(consented: consented) {
+                AgentLoadedMediaCard(
+                    title: title, url: url, mediaType: mediaType,
+                    provider: provider, hostname: hostname, pal: pal)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(title, systemImage: isVideo ? "video" : "waveform")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(AgentRemoteMediaConsentContract.sourceLabel(
+                        provider: provider, hostname: hostname))
+                        .font(.system(size: 10)).foregroundStyle(pal.muted)
+                    Button(isVideo ? "ভিডিও লোড ও প্লে করুন" : "অডিও লোড ও প্লে করুন") {
+                        consented = true
+                    }
+                    .buttonStyle(.bordered).tint(AgentPalette.coral)
+                }
+                .padding(12)
+                .background(pal.card.opacity(0.72), in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(pal.borderSubtle))
+                .accessibilityIdentifier("agent.remote-media-consent")
+            }
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentLoadedMediaCard: View {
+    let title: String
+    let url: URL
+    let mediaType: String
+    let provider: String
+    let hostname: String
     let pal: AgentPalette
     @State private var player: AVPlayer
     @State private var audioClaimToken: AlmaLiveVoiceNonCallAudioRegistry.Token?
@@ -14175,16 +15123,22 @@ private struct AgentMediaCard: View {
     /// sit in a 16:9 letterbox). 16:9 only until the asset reports itself.
     @State private var videoAspect: CGFloat = 16.0 / 9.0
     @State private var isVideoPlaying = false
-    init(title: String, url: URL, pal: AgentPalette) {
-        self.title = title; self.url = url; self.pal = pal
+    init(title: String, url: URL, mediaType: String, provider: String, hostname: String, pal: AgentPalette) {
+        self.title = title; self.url = url; self.mediaType = mediaType
+        self.provider = provider; self.hostname = hostname; self.pal = pal
         _player = State(initialValue: AVPlayer(url: url))
     }
-    private var isVideo: Bool { ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased()) }
+    private var isVideo: Bool { mediaType.lowercased().hasPrefix("video/") }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label(title, systemImage: isVideo ? "video" : "waveform")
-                    .font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Label(title, systemImage: isVideo ? "video" : "waveform")
+                        .font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    Text(AgentRemoteMediaConsentContract.sourceLabel(
+                        provider: provider, hostname: hostname))
+                        .font(.system(size: 10)).foregroundStyle(pal.muted)
+                }
                 Spacer()
                 ShareLink(item: url) { Image(systemName: "square.and.arrow.up") }
             }
@@ -14369,6 +15323,10 @@ private struct AgentProgressiveMarkdownText: View {
     var selectable = false
     var suppressRemoteImages = false
     var onAskSelection: ((String, Bool) -> Void)? = nil
+    var references: [AgentReferenceV1Wire] = []
+    /// False (rollout off/shadow, or pre-contract history) = legacy sanitized
+    /// links and inline images, exactly as before the reference pipeline.
+    var referencesActive = false
     @State private var expanded = false
     private static let initialCharacterBudget = 12_000
 
@@ -14384,7 +15342,8 @@ private struct AgentProgressiveMarkdownText: View {
         VStack(alignment: .leading, spacing: 8) {
             AgentMarkdownText(text: visibleText, pal: pal, selectable: selectable,
                               suppressRemoteImages: suppressRemoteImages,
-                              onAskSelection: onAskSelection)
+                              onAskSelection: onAskSelection,
+                              references: references, referencesActive: referencesActive)
             if isGiant {
                 Button {
                     AlmaAgentHaptics.selection()
@@ -14490,6 +15449,36 @@ enum AgentGeneratedImageReadiness {
         let requested = Set(requestedPaths)
         guard !requested.isEmpty, requested.isDisjoint(with: failedPaths) else { return false }
         return requested.isSubset(of: readyPaths)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentRemoteImageConsentGallery: View {
+    let images: [(url: String, alt: String)]
+    let sources: [String]
+    let pal: AgentPalette
+    @State private var consented = false
+
+    var body: some View {
+        Group {
+            if AgentRemoteMediaConsentContract.permitsLoader(consented: consented) {
+                AgentAdjacentRemoteImageGallery(images: images)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(images.first?.alt.isEmpty == false ? images.first!.alt : "ছবি",
+                          systemImage: "photo")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(sources.joined(separator: " · "))
+                        .font(.system(size: 10)).foregroundStyle(pal.muted)
+                    Button("ছবি লোড করুন") { consented = true }
+                        .buttonStyle(.bordered).tint(AgentPalette.coral)
+                }
+                .padding(12)
+                .background(pal.card.opacity(0.72), in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(pal.borderSubtle))
+                .accessibilityIdentifier("agent.remote-image-consent")
+            }
+        }
     }
 }
 
@@ -15311,8 +16300,6 @@ struct AgentMessageRow: View {
     let onToolTap: (AgentChatMessage.Tool) -> Void
     let onActivitySheet: (AgentActivitySheetRequest) -> Void
     @Environment(\.colorScheme) private var scheme
-    @State private var expandedLong = false
-
     /// PA-4 — the voice-instruction chip state, derived from the turn that follows
     /// this message: no assistant yet → গৃহীত; streaming → চলছে; settled → শেষ.
     private enum VoiceTurnStatus { case received, working, done }
@@ -15535,17 +16522,23 @@ struct AgentMessageRow: View {
                             }
                         }
                         if !message.text.isEmpty {
-                            let long = message.text.count > 1500 && !message.isStreaming
                             VStack(alignment: .leading, spacing: 4) {
                                 if message.isStreaming {
-                                    HStack(alignment: .bottom, spacing: 2) {
-                                        AgentMarkdownText(
-                                            text: message.text, pal: pal,
-                                            suppressRemoteImages: !message.fileRefs.filter {
-                                                $0.mediaType.hasPrefix("image/")
-                                            }.isEmpty)
-                                            .modifier(AgentShimmerModifier())
-                                        AgentTypingCursor()
+                                    let visibleText = AgentChatMessage.ownerVisibleProse(
+                                        message.text, whileStreaming: true)
+                                    if !visibleText.trimmingCharacters(
+                                        in: .whitespacesAndNewlines).isEmpty {
+                                        HStack(alignment: .bottom, spacing: 2) {
+                                            AgentMarkdownText(
+                                                text: visibleText, pal: pal,
+                                                suppressRemoteImages: !message.fileRefs.filter {
+                                                    $0.mediaType.hasPrefix("image/")
+                                                }.isEmpty,
+                                                references: message.references,
+                                                referencesActive: message.referencesActive)
+                                                .modifier(AgentShimmerModifier())
+                                            AgentTypingCursor()
+                                        }
                                     }
                                 } else {
                                     AgentProgressiveMarkdownText(
@@ -15555,17 +16548,9 @@ struct AgentMessageRow: View {
                                         }.isEmpty,
                                         onAskSelection: { selection, side in
                                             Task { await vm.prepareSelectionQuestion(selection, inSideConversation: side) }
-                                        })
-                                        // 1.4: cap ONLY the collapsed state; expanded rows size
-                                        // naturally (never a greedy .infinity inside the lazy list).
-                                        .frame(maxHeight: long && !expandedLong ? 340 : nil, alignment: .top)
-                                        .clipped()
-                                        .mask(
-                                            LinearGradient(stops: long && !expandedLong
-                                                ? [.init(color: .black, location: 0), .init(color: .black, location: 0.78),
-                                                   .init(color: .clear, location: 1)]
-                                                : [.init(color: .black, location: 0), .init(color: .black, location: 1)],
-                                                startPoint: .top, endPoint: .bottom))
+                                        },
+                                        references: message.references,
+                                        referencesActive: message.referencesActive)
                                         .contentShape(Rectangle())
                                         // Owner issue #6 (build 69): long-press → copy + haptic.
                                         .contextMenu {
@@ -15582,21 +16567,6 @@ struct AgentMessageRow: View {
                                                 Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
                                             }
                                         }
-                                }
-                                if long {
-                                    Button {
-                                        AlmaAgentHaptics.selection()
-                                        withAnimation(.easeOut(duration: 0.3)) { expandedLong.toggle() }
-                                    } label: {
-                                        HStack(spacing: 4) {
-                                            Text(expandedLong ? "কম দেখুন" : "বিস্তারিত দেখুন")
-                                                .font(.system(size: 12, weight: .medium))
-                                            Image(systemName: "chevron.down")
-                                                .font(.system(size: 10))
-                                                .rotationEffect(.degrees(expandedLong ? 180 : 0))
-                                        }
-                                        .foregroundStyle(AgentPalette.coral.opacity(0.85))
-                                    }
                                 }
                             }
                         }
@@ -19262,14 +20232,18 @@ struct AgentTurnBlocksView: View {
     }
 
     @ViewBuilder private func proseBlock(_ text: String, isTail: Bool) -> some View {
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let visibleText = AgentChatMessage.ownerVisibleProse(
+            text, whileStreaming: message.isStreaming)
+        if !visibleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if isTail {
                 HStack(alignment: .bottom, spacing: 2) {
                     AgentMarkdownText(
-                        text: text, pal: pal,
+                        text: visibleText, pal: pal,
                         suppressRemoteImages: message.fileRefs.contains {
                             $0.mediaType.hasPrefix("image/")
-                        })
+                        },
+                        references: message.references,
+                        referencesActive: message.referencesActive)
                         .modifier(AgentShimmerModifier())
                     AgentTypingCursor()
                 }
@@ -19280,13 +20254,15 @@ struct AgentTurnBlocksView: View {
                 // native grabbers and the system Copy menu. No context menu here (it
                 // would swallow the long-press); whole-reply copy lives in the footer.
                 AgentProgressiveMarkdownText(
-                    text: text, pal: pal, selectable: true,
+                    text: visibleText, pal: pal, selectable: true,
                     suppressRemoteImages: message.fileRefs.contains {
                         $0.mediaType.hasPrefix("image/")
                     },
                     onAskSelection: { selection, side in
                         Task { await vm.prepareSelectionQuestion(selection, inSideConversation: side) }
-                    })
+                    },
+                    references: message.references,
+                    referencesActive: message.referencesActive)
                     .padding(.vertical, 2)
             }
         }
@@ -25151,6 +26127,14 @@ struct AgentAssistantBottomChromeMinYKey: PreferenceKey {
     }
 }
 
+private struct AgentReferenceArtifactSelection: Identifiable {
+    let id: String
+    let title: String
+    let apiPath: String
+    let mimeType: String?
+    let fileName: String?
+}
+
 @available(iOS 17.0, *)
 struct AssistantScreen: View {
     @State private var vm = AssistantVM()
@@ -25176,6 +26160,7 @@ struct AssistantScreen: View {
     @State private var showDeleteConversation = false
     @State private var renameConversationText = ""
     @State private var conversationShareURL: URL?
+    @State private var referenceArtifact: AgentReferenceArtifactSelection?
     @State private var timelineScrollTarget: String?
     /// DEBUG self-test hook (ALMA_ASSISTANT_VIEWERTEST=1) — presents the zoomable
     /// image viewer with its সংরক্ষণ button for a headless fixture screenshot.
@@ -25218,7 +26203,7 @@ struct AssistantScreen: View {
     private var hasBlockingPresentation: Bool {
         vm.showSidebar || vm.showVoice || debugViewer != nil || toolSheet != nil
             || activitySheet != nil || showLibrary || showProjectPicker
-            || showConversationSearch || showBackgroundTasks
+            || showConversationSearch || showBackgroundTasks || referenceArtifact != nil
     }
 
     /// During a new streaming turn the previous settled reply keeps ownership of
@@ -26045,6 +27030,28 @@ struct AssistantScreen: View {
         .sheet(item: $conversationShareURL) { url in
             AgentConversationShareSheet(url: url)
         }
+        .onReceive(NotificationCenter.default.publisher(
+            for: Notification.Name("almaOpenReferenceArtifact"))) { note in
+            guard let artifactId = note.userInfo?["artifactId"] as? String,
+                  let apiPath = note.userInfo?["apiPath"] as? String,
+                  AgentReferenceV1Wire.safeArtifactAPIPath(
+                    apiPath, artifactId: artifactId) else { return }
+            referenceArtifact = .init(
+                id: artifactId,
+                title: (note.userInfo?["title"] as? String) ?? "ALMA artifact",
+                apiPath: apiPath,
+                mimeType: note.userInfo?["mimeType"] as? String,
+                fileName: note.userInfo?["fileName"] as? String)
+        }
+        .sheet(item: $referenceArtifact) { selection in
+            AgentArtifactViewerSheet(
+                artifactId: selection.id,
+                fallbackTitle: selection.title,
+                vm: vm,
+                referenceAPIPath: selection.apiPath,
+                referenceMimeType: selection.mimeType,
+                referenceFileName: selection.fileName)
+        }
         .sheet(isPresented: $showBackgroundTasks) {
             AgentBackgroundTasksSheet(vm: vm, selectedDetent: $backgroundTaskDetent)
                 .presentationDetents([.medium, .large], selection: $backgroundTaskDetent)
@@ -26750,20 +27757,46 @@ struct AgentArtifactViewerSheet: View {
     let artifactId: String
     let fallbackTitle: String
     let vm: AssistantVM
+    /// Present only for a message-scoped `artifact_report` reference. Unlike the
+    /// ordinary conversation file card, this path is the exact server-verified
+    /// DOC/PDF destination carried by the reference and must be fetched directly.
+    let referenceAPIPath: String?
+    let referenceMimeType: String?
+    let referenceFileName: String?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
     @State private var artifact: AgentArtifactWire?
+    @State private var exactReferenceURL: URL?
     @State private var loadError: String?
     @State private var shareURL: URL?
     @State private var temporaryDirectoryURL: URL?
     @State private var showSource = false
     @State private var copied = false
 
+    init(
+        artifactId: String,
+        fallbackTitle: String,
+        vm: AssistantVM,
+        referenceAPIPath: String? = nil,
+        referenceMimeType: String? = nil,
+        referenceFileName: String? = nil
+    ) {
+        self.artifactId = artifactId
+        self.fallbackTitle = fallbackTitle
+        self.vm = vm
+        self.referenceAPIPath = referenceAPIPath
+        self.referenceMimeType = referenceMimeType
+        self.referenceFileName = referenceFileName
+    }
+
     var body: some View {
         let pal = AgentPalette(scheme)
         NavigationStack {
             Group {
-                if let a = artifact, let content = a.content {
+                if let exactReferenceURL {
+                    AgentQuickLookPreview(url: exactReferenceURL)
+                        .accessibilityIdentifier("agent.artifact.reference.quicklook")
+                } else if let a = artifact, let content = a.content {
                     artifactBody(a, content: content, pal: pal)
                 } else if let err = loadError {
                     ContentUnavailableView {
@@ -26879,6 +27912,10 @@ struct AgentArtifactViewerSheet: View {
     private func load() async {
         let started = Date()
         AlmaTurnLog.event("artifact.preview.begin", artifactId)
+        if let referenceAPIPath {
+            await loadExactReference(from: referenceAPIPath, started: started)
+            return
+        }
         // History/bootstrap already hydrate this conversation's artifacts. Use
         // that authoritative cache first so opening a just-created document is
         // instant (and the DEBUG simulator fixture remains fully offline).
@@ -26902,6 +27939,78 @@ struct AgentArtifactViewerSheet: View {
             loadError = "লোড ব্যর্থ — নেটওয়ার্ক দেখে আবার চেষ্টা করুন"
             AlmaTurnLog.event("artifact.preview.fail", "network")
         }
+    }
+
+    /// A reference tap must use the exact authenticated export path it verified;
+    /// looking the id up in the current conversation can select the wrong scope or
+    /// fail after a background/delegated artifact is reloaded.
+    private func loadExactReference(from apiPath: String, started: Date) async {
+        guard AgentReferenceV1Wire.safeArtifactAPIPath(apiPath, artifactId: artifactId) else {
+            loadError = "Reference path যাচাই করা যায়নি"
+            AlmaTurnLog.event("artifact.reference.fail", "invalid-path")
+            return
+        }
+        do {
+            let data = try await AlmaAPI.shared.getRaw(percentEncodedPath: apiPath)
+            guard !data.isEmpty else {
+                loadError = "ফাইলটি খালি"
+                return
+            }
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "alma-reference-artifact-\(artifactId)-\(UUID().uuidString)",
+                    isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(
+                    at: directory, withIntermediateDirectories: true)
+                let url = directory.appendingPathComponent(
+                    exactReferenceFilename(apiPath: apiPath), isDirectory: false)
+                try data.write(to: url, options: .atomic)
+                temporaryDirectoryURL = directory
+                shareURL = url
+                exactReferenceURL = url
+                AlmaTurnLog.event(
+                    "artifact.reference.ready",
+                    "format=\(apiPath.hasSuffix("/pdf") ? "pdf" : "doc") ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+            } catch {
+                try? FileManager.default.removeItem(at: directory)
+                throw error
+            }
+        } catch AlmaAPIError.notAuthenticated {
+            loadError = "এই ফাইল দেখার অনুমতি নেই"
+            AlmaTurnLog.event("artifact.reference.fail", "unauthorized")
+        } catch let error as AlmaAPIError {
+            if case .http(let status, _) = error, status == 404 || status == 410 {
+                loadError = "ফাইলটা আর নেই"
+            } else {
+                loadError = "লোড ব্যর্থ — নেটওয়ার্ক দেখে আবার চেষ্টা করুন"
+            }
+            AlmaTurnLog.event("artifact.reference.fail", "api")
+        } catch {
+            loadError = "Preview file প্রস্তুত করা গেল না"
+            AlmaTurnLog.event("artifact.reference.fail", "file")
+        }
+    }
+
+    /// The canonical API suffix, not a label/filename regex, owns the real file
+    /// format. Metadata supplies only the human filename and is sanitized before
+    /// writing inside a fresh temporary directory.
+    private func exactReferenceFilename(apiPath: String) -> String {
+        let fileExtension = apiPath.hasSuffix("/pdf") ? "pdf" : "doc"
+        let requested = String((referenceFileName ?? fallbackTitle).prefix(255))
+        let noControls = requested.unicodeScalars.filter {
+            !CharacterSet.controlCharacters.contains($0)
+        }
+        var base = String(String.UnicodeScalarView(noControls))
+            .components(separatedBy: CharacterSet(charactersIn: "/\\:*?\"<>|"))
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !(base as NSString).pathExtension.isEmpty {
+            base = (base as NSString).deletingPathExtension
+        }
+        base = String(base.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines)
+        if base.isEmpty || base == "." || base == ".." { base = "ALMA artifact" }
+        return "\(base).\(fileExtension)"
     }
 
     private func accept(_ value: AgentArtifactWire, started: Date) {

@@ -476,7 +476,7 @@ export function StudioV3Finishing({
       <StudioConfirmationDialog
         ariaLabel="Review mask repair queue request"
         confirmDisabled={!maskActionAvailable || !maskEstimate || busy}
-        confirmLabel={busy ? 'Revalidating…' : `Confirm up to ৳${maskEstimate?.maxCostBdt.toLocaleString('en-BD') ?? '—'}`}
+        confirmLabel={busy ? 'Revalidating…' : `Confirm up to ৳${maskEstimate?.estimateBdt.toLocaleString('en-BD') ?? '—'}`}
         onCancel={() => {
           setMaskConfirmOpen(false)
           setMaskRequest(null)

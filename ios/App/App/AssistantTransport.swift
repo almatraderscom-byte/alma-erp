@@ -792,6 +792,11 @@ struct AgentSSEEvent: Decodable {
     let needContinue: Bool?     // done — serverless deadline hit mid-task
     let apiRounds: Int?         // done
     let roundCostsUsd: [Double]?// done
+    let references: [AgentReferenceV1Wire]? // references + additive done metadata
+    /// Server-authoritative: is the verified-reference contract live for this
+    /// turn? An empty/absent array cannot say, and guessing breaks one mode or
+    /// the other (Codex P1 ×2, PR #845).
+    let referencesActive: Bool?
     let conversationId: String? // conversation_compacted + turn_snapshot
     let status: String?         // turn_snapshot
     let lastSeq: Int?           // turn_snapshot
@@ -908,10 +913,12 @@ enum AgentTurnEvent: Sendable {
     /// A mid-turn message the RUNNING TURN has now read — the step after "the
     /// server accepted it". Without this the phone showed both states the same.
     case steeringDelivered(clientMessageIds: [String])
+    case references([AgentReferenceV1Wire], active: Bool)
     case conversationCompacted(newConversationId: String)
     case done(messageId: String?, tokensIn: Int?, tokensOut: Int?, costUsd: Double?,
               needContinue: Bool, apiRounds: Int?, cacheCreation: Int?, cacheRead: Int?,
-              roundCostsUsd: [Double]?)
+              roundCostsUsd: [Double]?, references: [AgentReferenceV1Wire]? = nil,
+              referencesActive: Bool? = nil)
     /// `messageId` = the assistant row the server salvaged before failing
     /// (partial work + warning) — bound exactly like `done.messageId`.
     case turnError(message: String, messageId: String? = nil)
@@ -1044,6 +1051,15 @@ enum AgentTurnEvent: Sendable {
                                   reason: ev.reason ?? "")
         case "steering_delivered":
             self = .steeringDelivered(clientMessageIds: ev.clientMessageIds ?? [])
+        case "references":
+            let trusted = AgentReferenceV1Wire.trustedOnly(ev.references)
+            // A server that omits the flag can only be sending a live projection
+            // (hidden modes never emit this event); an explicit `false` is a
+            // rollout kill and must clear, not activate.
+            let active = ev.referencesActive ?? !trusted.isEmpty
+            self = (!active && ev.referencesActive == nil)
+                ? .unknown(type: "references/invalid")
+                : .references(trusted, active: active)
         case "conversation_compacted":
             self = ev.conversationId.map(AgentTurnEvent.conversationCompacted)
                 ?? .unknown(type: "conversation_compacted/noid")
@@ -1051,7 +1067,9 @@ enum AgentTurnEvent: Sendable {
             self = .done(messageId: ev.messageId, tokensIn: ev.tokensIn, tokensOut: ev.tokensOut,
                          costUsd: ev.costUsd, needContinue: ev.needContinue == true, apiRounds: ev.apiRounds,
                          cacheCreation: ev.cacheCreation, cacheRead: ev.cacheRead,
-                         roundCostsUsd: ev.roundCostsUsd)
+                         roundCostsUsd: ev.roundCostsUsd,
+                         references: ev.references.map { AgentReferenceV1Wire.trustedOnly($0) },
+                         referencesActive: ev.referencesActive)
         case "error":
             self = .turnError(message: ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন",
                               messageId: ev.messageId)

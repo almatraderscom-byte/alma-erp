@@ -9,8 +9,19 @@ async function loadDetector() {
   return (await import('../claim-verifier')).detectRoboticStyleViolations
 }
 
+async function loadReportDetector() {
+  return (await import('../claim-verifier')).detectProfessionalReportStyleViolations
+}
+
 describe('detectRoboticStyleViolations (BP6 — robotic-filler hard gate)', () => {
-  it('is a no-op when AGENT_STYLE_GATE is off (default)', async () => {
+  it('is active by default', async () => {
+    vi.resetModules()
+    const detect = await loadDetector()
+    expect(detect('অবশ্যই! আপনার প্রশ্নের উত্তর হলো ৫টা।')).toHaveLength(1)
+  })
+
+  it('has an instant rollback when AGENT_STYLE_GATE=off', async () => {
+    vi.stubEnv('AGENT_STYLE_GATE', 'off')
     vi.resetModules()
     const detect = await loadDetector()
     expect(detect('অবশ্যই! আপনার প্রশ্নের উত্তর হলো ৫টা।')).toEqual([])
@@ -67,6 +78,101 @@ describe('detectRoboticStyleViolations (BP6 — robotic-filler hard gate)', () =
   })
 })
 
+describe('professional long-report hard gate', () => {
+  const flatReport = Array.from({ length: 18 }, (_, index) =>
+    `সপ্তাহের পর্যবেক্ষণ ${index + 1}: বিক্রি, স্টক এবং অর্ডার পরিচালনার তথ্য যাচাই করে এই বিস্তারিত ফলাফল পাওয়া গেছে।`,
+  ).join(' ')
+
+  const structuredReport = `**Bottom line: বিক্রি স্থিতিশীল, কিন্তু stock coverage এখন প্রধান ঝুঁকি।**
+
+## নির্বাহী সারাংশ
+
+${Array.from({ length: 7 }, () => 'যাচাই করা সাপ্তাহিক তথ্য অনুযায়ী মূল ব্যবসায়িক অবস্থাটি স্থিতিশীল আছে।').join(' ')}
+
+## মূল পর্যবেক্ষণ
+
+- বিক্রি আগের সপ্তাহের কাছাকাছি আছে।
+- তিনটি SKU-তে stock coverage কম।
+- unavailable data আলাদা করে চিহ্নিত করা হয়েছে।
+
+## আগামী অগ্রাধিকার
+
+1. কম stock-এর SKU reorder করুন।
+2. pending order প্রতিদিন review করুন।
+3. সপ্তাহ শেষে ফলাফল আবার মাপুন।`
+
+  const inlineHtmlReport = `\`\`\`html
+<!doctype html>
+<html lang="bn">
+<head>
+  <style>
+    .bar-container { display: grid; gap: 8px; }
+    .bar { width: 75%; background: green; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="kpi"><strong>মোট স্টক</strong><span>১১৪</span></div>
+    <div class="bar-container"><div class="bar">৭৫%</div></div>
+    <table>
+      <thead><tr><th>SKU</th><th>স্টক</th><th>অবস্থা</th></tr></thead>
+      <tbody>
+${Array.from({ length: 18 }, (_, index) => `        <tr><td>SKU-${index + 1}</td><td>${20 + index}</td><td>যাচাই করা হয়েছে</td></tr>`).join('\n')}
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>
+\`\`\``
+
+  it('rejects an explicit long report delivered as flat prose', async () => {
+    const detect = await loadReportDetector()
+    expect(detect(flatReport, 'এই সপ্তাহের একটা বিস্তারিত business report দাও'))
+      .toEqual([expect.objectContaining({ ruleId: 'professional_report_structure' })])
+  })
+
+  it('rejects a terse stock answer when the owner requested a complete management report shape', async () => {
+    const detect = await loadReportDetector()
+    const ownerRequest =
+      'একটা professional management report দাও: bottom line, executive summary, KPI, findings, risks, recommendations এবং next steps সহ।'
+
+    expect(detect('স্টক এখন ১১৪টি। সবকিছু মোটামুটি ঠিক আছে।', ownerRequest))
+      .toEqual([expect.objectContaining({ ruleId: 'professional_report_structure' })])
+  })
+
+  it('accepts a scannable professional report', async () => {
+    const detect = await loadReportDetector()
+    expect(detect(structuredReport, 'এই সপ্তাহের একটা বিস্তারিত business report দাও')).toEqual([])
+  })
+
+  it('rejects a full inline HTML document for a normal management report', async () => {
+    const detect = await loadReportDetector()
+    expect(detect(inlineHtmlReport, 'বর্তমান inventory নিয়ে একটা professional management report দাও'))
+      .toEqual([expect.objectContaining({ ruleId: 'professional_report_inline_html' })])
+  })
+
+  it('preserves explicit HTML source and artifact requests', async () => {
+    const detect = await loadReportDetector()
+    expect(detect(inlineHtmlReport, 'inventory report-এর HTML source/code দাও')).toEqual([])
+    expect(detect(inlineHtmlReport, 'inventory report-টা আলাদা HTML artifact হিসেবে বানাও')).toEqual([])
+  })
+
+  it('does not force report chrome onto short or voice answers', async () => {
+    const detect = await loadReportDetector()
+    expect(detect('বস, রিপোর্টে বিক্রি স্থিতিশীল আছে।', 'এক লাইনে report দাও')).toEqual([])
+    expect(detect('বস, রিপোর্টে বিক্রি স্থিতিশীল আছে।', 'short professional management report দাও')).toEqual([])
+    expect(detect(flatReport, 'voice reply-তে weekly report বলে দাও')).toEqual([])
+    expect(detect(flatReport, 'সাপ্তাহিক report বলো', { voiceTurn: true })).toEqual([])
+  })
+
+  it('obeys the rollback switch', async () => {
+    vi.stubEnv('AGENT_STYLE_GATE', 'off')
+    vi.resetModules()
+    const detect = await loadReportDetector()
+    expect(detect(flatReport, 'weekly report দাও')).toEqual([])
+  })
+})
+
 describe('STYLE_EXEMPLARS (BP6 — few-shot bank)', () => {
   it('exemplars ship with the style module when AGENT_STYLE=on', async () => {
     vi.stubEnv('AGENT_STYLE', 'on')
@@ -83,5 +189,163 @@ describe('STYLE_EXEMPLARS (BP6 — few-shot bank)', () => {
     const { buildSystemPrompt } = await import('../system-prompt')
     const text = buildSystemPrompt().map((b) => b.text ?? '').join('\n')
     expect(text).not.toContain('নমুনা উত্তর')
+  })
+})
+
+describe('round-budget wrap-up holds the complete-report contract', () => {
+  // Live failure 2026-08-24: an explicit "professional inventory health
+  // management report … bottom line, executive summary, KPI table, findings,
+  // risks, recommendations and next steps" settled as a progress list ending
+  // "Boss, \"continue\" বললে…". The turn had exhausted its ROUND budget, and
+  // that final round both (a) receives a "tell Boss what you did so far" nudge
+  // and (b) skips the verification block — there is no round left to retry
+  // into. So on that round the nudge is the only thing holding the contract.
+  async function loadRequiresCompleteReport() {
+    return (await import('../claim-verifier')).requiresCompleteReport
+  }
+
+  it('recognises the request the live turn failed on', async () => {
+    const requires = await loadRequiresCompleteReport()
+    expect(requires(
+      'FINAL-LIVE-PROOF-20260824-0236 - Create a professional inventory health management '
+      + 'report using live ERP data. Include bottom line, executive summary, KPI table, '
+      + 'findings, risks, recommendations and next steps.',
+    )).toBe(true)
+    // two named sections are enough, even without the word "professional"
+    expect(requires('give me the KPI table and the next steps')).toBe(true)
+    // ordinary work is untouched
+    expect(requires('আজকের অর্ডারগুলো দেখাও')).toBe(false)
+    expect(requires('stock koto ache?')).toBe(false)
+  })
+
+  it('the final-round nudge asks for the report itself, not a progress list', async () => {
+    const { readFileSync } = await import('node:fs')
+    const source = readFileSync(
+      new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
+    const start = source.indexOf('const lastBudgetRound =')
+    const nudge = source.slice(start, start + 2400)
+    expect(nudge).toContain('requiresCompleteReport(currentOwnerInstructions)')
+    expect(nudge).toContain('পূর্ণ report-টা লিখে দাও')
+    expect(nudge).toContain('progress list দিও না')
+    // the honest-gap rule must survive: no invented numbers for missing data
+    expect(nudge).toContain('সংখ্যা বানাবে না')
+    // and the ordinary wrap-up is still there for non-report turns
+    expect(nudge).toContain('এ পর্যন্ত কী কী করেছ, কী পেলে')
+  })
+})
+
+describe('one-shot report repair round', () => {
+  // Second layer behind the nudge: if the wrap-up round still comes back as a
+  // progress list, the turn spends exactly ONE extra tool-free round writing
+  // the report from data it already holds, rather than settling the wrong
+  // deliverable. Source assertions — the branch lives inside the streaming
+  // generator, which needs a provider and a database to drive.
+  async function source() {
+    const { readFileSync } = await import('node:fs')
+    return readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
+  }
+
+  it('is gated on an explicit complete-report request and a real violation', async () => {
+    const s = await source()
+    const start = s.indexOf('roundBudgetWrapSent\n          && !reportRepairUsed')
+    expect(start).toBeGreaterThan(0)
+    const block = s.slice(start, start + 2200)
+    expect(block).toContain('requiresCompleteReport(currentOwnerInstructions)')
+    expect(block).toContain('detectProfessionalReportStyleViolations(')
+    expect(block).toContain('!signal?.aborted')
+  })
+
+  it('spends exactly one extra round and never loops', async () => {
+    const s = await source()
+    // one flag, set once, declared once
+    expect(s.match(/reportRepairUsed/g)?.length).toBe(3)
+    expect(s).toContain('reportRepairUsed = true')
+    expect(s).toContain('maxIterations = iteration + 2')
+    // the retry counter stays inside the owner-visible budget
+    expect(s).toContain('verifyRetries = Math.min(verifyRetries + 1, MAX_VERIFY_RETRIES)')
+  })
+
+  it('the repair prompt forbids invented numbers', async () => {
+    const s = await source()
+    const anchor = s.indexOf('উপরের উত্তরটি progress list, report নয়')
+    expect(anchor).toBeGreaterThan(0)
+    const prompt = s.slice(anchor - 300, anchor + 700)
+    expect(prompt).toContain('যাচাই করা যায়নি')
+    expect(prompt).toContain('কোনো সংখ্যা বানাবে না')
+    expect(prompt).toContain('INTERNAL CONTROL')
+  })
+})
+
+describe('explicit HTML format requests are honoured, not retried', () => {
+  // Codex P2 (PR #845): "Create the weekly report in HTML" was not recognised
+  // as an explicit format request, so a correctly formatted HTML answer was
+  // flagged `professional_report_inline_html` and sent through the retry path
+  // against Boss's own instruction.
+  const HTML_REPORT = '<!doctype html>\n<html><body><h1>Weekly</h1>'
+    + '<table><tr><td>বিক্রি</td><td>১২৩</td></tr></table>'.repeat(20)
+    + '</body></html>'
+
+  it.each([
+    'Create the weekly report in HTML',
+    'give me an HTML report',
+    'HTML-এ রিপোর্টটা দাও',
+    'রিপোর্টটা html করে দিন',
+  ])('accepts %s', async (instruction) => {
+    const detect = await loadReportDetector()
+    expect(detect(HTML_REPORT, instruction)).toEqual([])
+  })
+
+  it('still rejects inline HTML nobody asked for', async () => {
+    const detect = await loadReportDetector()
+    const violations = detect(HTML_REPORT, 'সাপ্তাহিক রিপোর্ট দাও')
+    expect(violations.map((v) => v.ruleId)).toContain('professional_report_inline_html')
+  })
+})
+
+describe('editorial review requests are not report requests', () => {
+  // Codex P2 (PR #845): the bare verb `review` made "Review and polish this
+  // email, preserving its tone" a report request, so a long corrected email
+  // with no headings was flagged and sent through the retry path.
+  const LONG_EMAIL = ('প্রিয় স্যার,\n\nআপনার পাঠানো অর্ডারটি আমরা পেয়েছি এবং আজই '
+    + 'প্যাক করে পাঠিয়ে দিচ্ছি। কোনো অসুবিধা হলে জানাবেন।\n\n').repeat(8)
+
+  it.each([
+    'Review and polish this email, preserving its tone.',
+    'proofread the message please',
+    'এই ইমেইলটা একটু ঠিক করে দাও',
+  ])('exempts %s', async (instruction) => {
+    const detect = await loadReportDetector()
+    expect(detect(LONG_EMAIL, instruction)).toEqual([])
+  })
+
+  it('still treats an explicit full review of the business as a report', async () => {
+    const detect = await loadReportDetector()
+    const violations = detect(LONG_EMAIL, 'give me a complete review of last month')
+    expect(violations.map((v) => v.ruleId)).toContain('professional_report_structure')
+  })
+})
+
+describe('a negated HTML mention is not an HTML request', () => {
+  // Codex P2 round 8 (PR #845): "Write the report in Markdown, not HTML"
+  // matched on proximity alone, so an HTML-dominated reply was accepted against
+  // the instruction.
+  const HTML_REPORT = '<!doctype html>\n<html><body><h1>Weekly</h1>'
+    + '<table><tr><td>বিক্রি</td><td>১২৩</td></tr></table>'.repeat(20)
+    + '</body></html>'
+
+  it.each([
+    'Write the report in Markdown, not HTML',
+    'give me the report, no HTML please',
+    'রিপোর্টটা দাও, html নয়',
+  ])('still flags inline HTML for %s', async (instruction) => {
+    const detect = await loadReportDetector()
+    expect(detect(HTML_REPORT, instruction).map((v) => v.ruleId))
+      .toContain('professional_report_inline_html')
+  })
+
+  it('does not mistake a different negation for an HTML refusal', async () => {
+    const detect = await loadReportDetector()
+    // "not a PDF" negates the PDF, not the HTML that was asked for.
+    expect(detect(HTML_REPORT, 'give me an HTML report, not a PDF')).toEqual([])
   })
 })

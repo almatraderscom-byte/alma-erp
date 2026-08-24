@@ -33,6 +33,11 @@ export type OfficeShiftMessage = {
   text: string
   /** Recorded duty cost — shown under ✅ feedback lines. */
   costUsd?: number
+  /** Same reference contract as the main thread: without these the office-shift
+   *  renderer fell back to the strict default and stripped every legacy link in
+   *  a day-shift narrative (Codex P2, PR #845). */
+  references?: import('@/agent/lib/references/types').AgentReferenceV1[]
+  referencesActive?: boolean
 }
 
 export type OfficeTaskBlock = {
@@ -218,7 +223,7 @@ export function OfficeShiftThreadRenderer({
   const renderAssistant = (msg: OfficeShiftMessage) => (
     <div>
       <div className="text-[15px] leading-[1.7] text-cream break-words [overflow-wrap:anywhere]">
-        <AgentMarkdown content={msg.text} />
+        <AgentMarkdown content={msg.text} references={msg.references} referencesActive={msg.referencesActive} />
       </div>
       {msg.costUsd != null && msg.costUsd >= 0 && DUTY_DONE.test(msg.text) && (
         <p className="mt-1.5 text-[11px] tabular-nums text-muted">

@@ -480,6 +480,12 @@ final class AssistantParityV2UITests: XCTestCase {
             NSPredicate(format: "label CONTAINS %@", "সবচেয়ে practical setup")
         ).firstMatch
         XCTAssertTrue(responseText.exists)
+        XCTAssertTrue(app.textViews.matching(
+            NSPredicate(format: "label CONTAINS %@", "Voice API সিদ্ধান্ত রিপোর্ট")
+        ).firstMatch.exists)
+        XCTAssertTrue(app.textViews.matching(
+            NSPredicate(format: "label CONTAINS %@", "ফোনের audio stream")
+        ).firstMatch.exists)
         XCTAssertTrue(app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "Deepgram")
         ).firstMatch.exists)
@@ -555,18 +561,16 @@ final class AssistantParityV2UITests: XCTestCase {
         XCTAssertTrue(firstInlineCitation.waitForExistence(timeout: 4))
         XCTAssertTrue(firstInlineCitation.isHittable,
                       "the claim-locus citation chip must be a tappable control")
-        XCTAssertTrue(app.buttons["agent.citation.inline.2"].exists,
-                      "all sources in the claim retain their response-wide citation ids")
+        XCTAssertFalse(app.buttons["agent.citation.inline.2"].exists,
+                       "a navigation-purpose ALMA section is not mislabeled as evidence")
         for _ in 0..<8 where !app.buttons["agent.sources.open"].isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(app.buttons["agent.sources.open"].waitForExistence(timeout: 4))
         app.buttons["agent.sources.open"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["agent.sources.sheet"]
             .waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["OpenAI"].exists)
-        XCTAssertTrue(app.staticTexts["ALMA Costs"].exists)
         XCTAssertTrue(app.buttons["agent.source.row.1"].isHittable)
-        XCTAssertTrue(app.buttons["agent.source.row.2"].isHittable,
-                      "external and ALMA source rows must both be tappable routed controls")
+        XCTAssertFalse(app.buttons["agent.source.row.2"].exists)
     }
 
     func testPendingImageApprovalHidesLegacyBdtAndExplainsUsd() {

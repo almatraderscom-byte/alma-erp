@@ -1355,10 +1355,125 @@ const EMOJI_IN_REPLY = /\p{Extended_Pictographic}/u
 const READY_COPY_BLOCK = /```(?:copy|caption|post|text)\s*\n[\s\S]*?\S[\s\S]*?\n```/i
 const FENCED_BLOCK = /```[^\n]*\n[\s\S]*?\n```/g
 const COPY_POST_WORK_PROMPT = /(?:[?？]|(?:এখন\s+)?চাইলে|approve|approval|অনুমোদন|বললে|বলুন|বলবেন|জানান|লাগলে|edit|এডিট|tweak|টুইক|আপনার\s+নির্দেশ|paste|পেস্ট|post|পোস্ট|publish|ads?\s*manager|campaign)/i
+const EXPLICIT_REPORT_REQUEST = /(?:\b(?:report|audit|review|briefing|analysis)\b|রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|পর্যালোচনা|প্রতিবেদন)/i
+/**
+ * "Review and polish this email, preserving its tone" is an editing job, not a
+ * report request — but the bare verb `review` matched, so a long polished draft
+ * was flagged as an unstructured report and retried (Codex P2, PR #845). A
+ * review aimed at a piece of WRITING is editorial; the report gate skips it.
+ */
+const EDITORIAL_REVIEW_REQUEST = /\b(?:review|proofread|polish|rewrite|edit|improve|tighten|check)\b[^\n।.!?]{0,40}\b(?:this|the|my|these|that)?\s*(?:email|e-mail|mail|message|copy|caption|post|reply|draft|text|letter|note|paragraph|wording|tone|sms|whatsapp)\b|(?:ইমেইল|মেসেজ|বার্তা|কপি|ক্যাপশন|পোস্ট|ড্রাফট|চিঠি|লেখাটা|টেক্সট)[^\n।.!?]{0,40}(?:ঠিক\s*করে|পলিশ|সংশোধন|এডিট|রিভিউ)/i
+const COMPLETE_REPORT_REQUEST = /(?:\b(?:complete|full|detailed|professional|management)\b[^\n।.!?]{0,48}\b(?:report|audit|review|briefing|analysis)\b|(?:সম্পূর্ণ|পূর্ণ|পুরো|বিস্তারিত|প্রফেশনাল|পেশাদার|ম্যানেজমেন্ট)[^\n।.!?]{0,48}(?:রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|পর্যালোচনা|প্রতিবেদন))/i
+const SHORT_REPORT_OUTPUT_REQUEST = /(?:\b(?:one[- ]?line|single[- ]?line|short|concise|summary[- ]?only)\b|এক\s*লাইনে|একটি?\s*লাইনে|সংক্ষেপে|ছোট\s*করে|শুধু\s*সারাংশ)/i
+const REQUESTED_REPORT_SECTION = /(?:\bbottom\s+line\b|\bexecutive\s+summary\b|\bkpis?\b|\bfindings?\b|\brisks?\b|\brecommendations?\b|\bnext\s+steps?\b|বটম\s*লাইন|নির্বাহী\s+সারাংশ|মূল\s+পর্যবেক্ষণ|ঝুঁকি|সুপারিশ|পরবর্তী\s+পদক্ষেপ)/gi
+// `report|audit|review|briefing|analysis` belong here beside source/code/file:
+// "Create the weekly report in HTML" / "give me an HTML report" is an explicit
+// format request, and treating it as a violation sent a correctly formatted
+// answer through the retry path against Boss's own instruction (Codex P2 #845).
+const EXPLICIT_HTML_OUTPUT_REQUEST = /(?:\bhtml\b[^\n।.!?]{0,60}(?:\b(?:source|code|document|file|artifact|dashboard|report|audit|review|briefing|analysis)\b|সোর্স|কোড|ডকুমেন্ট|ফাইল|আর্টিফ্যাক্ট|ড্যাশবোর্ড|রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|প্রতিবেদন)|(?:\b(?:source|code|document|file|artifact|dashboard|report|audit|review|briefing|analysis)\b|সোর্স|কোড|ডকুমেন্ট|ফাইল|আর্টিফ্যাক্ট|ড্যাশবোর্ড|রিপোর্ট|অডিট|রিভিউ|বিশ্লেষণ|প্রতিবেদন)[^\n।.!?]{0,60}\bhtml\b|\bhtml\s*(?:-|–|—)?\s*(?:এ|তে)\s*(?:দাও|দিন|চাই|বানাও|করো|করুন))/i
+/**
+ * "Write the report in Markdown, not HTML" mentions HTML but *forbids* it, and
+ * proximity alone read that as a request for it — so an HTML reply was accepted
+ * against the instruction (Codex P2 round 8, PR #845). English negation precedes
+ * the word; Bangla follows it. Deliberately narrow: "an HTML report, not a PDF"
+ * must NOT be caught, so no bare trailing-`not` rule.
+ */
+const HTML_OUTPUT_NEGATED = /\b(?:not|no|never|avoid|without|except|skip)\b[^\n।.!?]{0,24}\bhtml\b|\bhtml\b\s*(?:নয়|না\b|ছাড়া|বাদ)/i
+
+/** Positive, unnegated intent to receive HTML. */
+function explicitHtmlOutputRequested(ownerInstructions: string): boolean {
+  return EXPLICIT_HTML_OUTPUT_REQUEST.test(ownerInstructions)
+    && !HTML_OUTPUT_NEGATED.test(ownerInstructions)
+}
+
+const HTML_FENCED_BLOCK = /```[ \t]*(?:html|htm)\b[^\n]*\n[\s\S]*?\n```/gi
+const FULL_HTML_DOCUMENT = /<!doctype\s+html\b|<html(?:\s|>)/i
+const HTML_REPORT_TAG = /<\/?(?:html|head|body|style|main|section|div|table|thead|tbody|tr|th|td)\b[^>]*>/gi
+const VOICE_OUTPUT_REQUEST = /(?:\bvoice(?:\s|-)?(?:reply|answer|response)\b|\bspoken\s+(?:reply|answer)\b|ভ[য়য়]েসে|কথা\s+বলে|🎙️)/i
+const REPORT_MIN_CHARACTERS = 700
+
+function isHtmlDominatedReport(text: string): boolean {
+  if (FULL_HTML_DOCUMENT.test(text)) return true
+
+  const htmlFences = text.match(HTML_FENCED_BLOCK) ?? []
+  const htmlFencedCharacters = htmlFences.reduce((sum, block) => sum + block.length, 0)
+  if (htmlFencedCharacters > text.length * 0.45) return true
+
+  // Also catch an unfenced full HTML fragment without rejecting a small HTML
+  // example embedded inside an otherwise legitimate Markdown report.
+  const reportTags = text.match(HTML_REPORT_TAG) ?? []
+  return reportTags.length >= 8 && /<(?:style|div|table)\b/i.test(text)
+}
+
+/** Did Boss ask for a COMPLETE report — by name, or by naming two of its
+ *  sections? Exported so the turn loop can hold the same bar when it runs out
+ *  of rounds: a "what I did so far" wrap-up is not that deliverable. */
+export function requiresCompleteReport(ownerInstructions: string): boolean {
+  if (COMPLETE_REPORT_REQUEST.test(ownerInstructions)) return true
+  const requestedSections = ownerInstructions.match(REQUESTED_REPORT_SECTION) ?? []
+  return new Set(requestedSections.map((section) => section.toLowerCase().replace(/\s+/g, ' '))).size >= 2
+}
+
+/**
+ * A long explicit report that arrives as one flat wall of prose is not the
+ * requested deliverable. Keep this deliberately conservative: it only applies
+ * to explicit report/audit/review intent, never to ordinary long-form writing,
+ * copy-only work, voice output, or code-heavy answers.
+ */
+export function detectProfessionalReportStyleViolations(
+  replyText: string,
+  ownerInstructions: string,
+  context: { voiceTurn?: boolean } = {},
+): ClaimViolation[] {
+  if (!AGENT_STYLE_GATE) return []
+  const text = replyText.trim()
+  if (
+    !EXPLICIT_REPORT_REQUEST.test(ownerInstructions)
+    || (EDITORIAL_REVIEW_REQUEST.test(ownerInstructions)
+      && !COMPLETE_REPORT_REQUEST.test(ownerInstructions))
+    || SHORT_REPORT_OUTPUT_REQUEST.test(ownerInstructions)
+    || (text.length < REPORT_MIN_CHARACTERS && !requiresCompleteReport(ownerInstructions))
+    || context.voiceTurn === true
+    || VOICE_OUTPUT_REQUEST.test(ownerInstructions)
+    || isCopyOnlyOwnerRequest(ownerInstructions)
+  ) return []
+
+  // Boss asked for HTML and got HTML: this is the requested deliverable, so
+  // neither the inline-HTML rule nor the Markdown-structure rule below applies
+  // (an HTML document has no `##` headings by definition) — Codex P2, PR #845.
+  if (explicitHtmlOutputRequested(ownerInstructions) && isHtmlDominatedReport(text)) return []
+
+  if (!explicitHtmlOutputRequested(ownerInstructions) && isHtmlDominatedReport(text)) {
+    return [{
+      category: 'instruction_mismatch',
+      ruleId: 'professional_report_inline_html',
+      matchedSnippet: '(দীর্ঘ report-টি inline/fenced HTML; complete structured Markdown chat reply দরকার)',
+      requiredTools: [],
+    }]
+  }
+
+  const fenced = text.match(FENCED_BLOCK) ?? []
+  const fencedCharacters = fenced.reduce((sum, block) => sum + block.length, 0)
+  if (fencedCharacters > text.length * 0.45) return []
+
+  const prose = text.replace(FENCED_BLOCK, ' ')
+  const headings = prose.match(/^#{1,3}[ \t]+\S.*$/gm) ?? []
+  const hasScannableDetail = /^(?:[-*+]\s+\S|\d+[.)]\s+\S)/m.test(prose)
+    || /^\s*\|?.+\|.+\|\s*$\n\s*\|?\s*:?-{3,}/m.test(prose)
+
+  if (headings.length >= 2 && hasScannableDetail) return []
+  return [{
+    category: 'instruction_mismatch',
+    ruleId: 'professional_report_structure',
+    matchedSnippet: '(দীর্ঘ রিপোর্টটি flat prose; professional sections/list/table অনুপস্থিত)',
+    requiredTools: [],
+  }]
+}
 
 export function detectExplicitInstructionViolations(
   replyText: string,
   ownerInstructions: string,
+  context: { voiceTurn?: boolean } = {},
 ): ClaimViolation[] {
   const violations: ClaimViolation[] = []
 
@@ -1392,6 +1507,8 @@ export function detectExplicitInstructionViolations(
       }
     }
   }
+
+  violations.push(...detectProfessionalReportStyleViolations(replyText, ownerInstructions, context))
 
   return violations
 }
@@ -1510,6 +1627,7 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
   instruction_mismatch:
     'Boss-এর এই turn-এর স্পষ্ট output contract ভাঙা হয়েছে। no-emoji বললে সব emoji বাদ দিন। ' +
     'copy-only বললে সম্পূর্ণ ready-to-use লেখা একটি fenced ```copy block-এ দিন; কাজ হয়ে গেলে আর প্রশ্ন/option/permission চাইবেন না। ' +
+    'দীর্ঘ report/audit/review হলে bottom line আগে দিয়ে meaningful Markdown section, compact findings এবং দরকারি list/table-এ professionalভাবে সাজান। ' +
     'content/count/অন্য instruction বদলাবেন না।',
   fabricated_stat:
     'আপনি লাইভ ডেটা (সংখ্যা/অর্ডার/স্টক/বিক্রি/টাকা/হাজিরা) উল্লেখ করেছেন কিন্তু এই turn-এ কোনো read tool দিয়ে সেটা যাচাই করেননি। ' +

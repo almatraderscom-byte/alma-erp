@@ -45,7 +45,7 @@ const SAVE_TTL_DAYS = 30
 const MAX_ANSWER_CHARS = 1500
 const MIN_ANSWER_CHARS = 40
 
-export type AnswerGateBusinessId = 'ALMA_LIFESTYLE' | 'ALMA_TRADING'
+export type AnswerGateBusinessId = 'ALMA_LIFESTYLE' | 'CREATIVE_DIGITAL_IT' | 'ALMA_TRADING'
 export type AnswerGateScope = 'personal' | `business:${AnswerGateBusinessId}`
 
 /** Never let one business's stable FAQ row answer inside another business. */

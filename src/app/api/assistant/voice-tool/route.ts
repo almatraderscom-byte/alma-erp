@@ -4,6 +4,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { executeTool } from '@/agent/tools/registry'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
+import { toolResultForReferenceRollout } from '@/agent/lib/references/flags'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -46,6 +47,15 @@ export function liveVoiceToolInput(
   return input && typeof input === 'object' ? { ...input } : {}
 }
 
+/** Provider-visible fast-lane payload; never fall back to the whole successful
+ * envelope when `data` is absent because that envelope may carry shadow refs. */
+export function liveVoiceToolResult<T extends { success?: boolean; data?: unknown }>(
+  result: T,
+): unknown {
+  const exposed = toolResultForReferenceRollout(result)
+  return result.success !== false ? exposed.data ?? null : exposed
+}
+
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
@@ -75,7 +85,7 @@ export async function POST(req: NextRequest) {
       ),
     ])
     // Compact payload: Gemini only needs enough to phrase a short spoken answer.
-    const raw = JSON.stringify(result.success ? result.data ?? result : result)
+    const raw = JSON.stringify(liveVoiceToolResult(result))
     return Response.json({
       ok: result.success !== false,
       tool,

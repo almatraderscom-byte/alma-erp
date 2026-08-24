@@ -90,10 +90,11 @@ export function toolResultPreview(result: unknown, maxChars = 2000): string | un
   let payload: unknown = result
   if (typeof result === 'object') {
     const r = result as Record<string, unknown>
+    const { references: _references, entityLinks: _entityLinks, ...safeEnvelope } = r
     // Prefer the meaningful body: data on success, error message on failure.
     if ('data' in r && r.data !== undefined) payload = r.data
     else if ('error' in r && r.error) payload = r.error
-    else payload = r
+    else payload = safeEnvelope
   }
   let text: string
   try {
