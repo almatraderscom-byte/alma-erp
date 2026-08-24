@@ -220,6 +220,21 @@ describe('editing and rejecting a claimed draft', () => {
       .rejects.toThrow(/being confirmed right now/)
   })
 
+  it('rejects a stranded APPROVED draft by recovering it first', async () => {
+    draftFindFirst
+      .mockResolvedValueOnce(pendingDraft({ status: 'APPROVED' }))  // loadDraftForActor
+      .mockResolvedValueOnce(pendingDraft())                        // re-read after recovery
+    draftUpdateMany
+      .mockResolvedValueOnce({ count: 1 })   // recover APPROVED → PENDING
+      .mockResolvedValueOnce({ count: 0 })   // cutoff sweep leaves it alone
+      .mockResolvedValueOnce({ count: 1 })   // reject lands
+    draftFindFirstOrThrow.mockResolvedValue(pendingDraft({ status: 'REJECTED' }))
+
+    const updated = await rejectTelegramDraftRecord(ctx, 'draft-1', 'wrong numbers')
+
+    expect(updated.status).toBe('REJECTED')
+  })
+
   it('refuses the reject when the draft is already claimed', async () => {
     draftFindFirst.mockResolvedValue(pendingDraft({ status: 'APPROVED' }))
     draftUpdateMany.mockResolvedValue({ count: 0 })
@@ -227,8 +242,11 @@ describe('editing and rejecting a claimed draft', () => {
     await expect(rejectTelegramDraftRecord(ctx, 'draft-1', 'nope'))
       .rejects.toThrow(/being confirmed right now/)
 
-    const where = (draftUpdateMany.mock.calls[0][0] as { where: { status: { in: string[] } } }).where
-    // LOCKED stays rejectable by an admin; APPROVED does not.
+    // calls[0] is the recovery attempt (refused by the staleness guard here);
+    // the reject write is the last one.
+    const calls = draftUpdateMany.mock.calls
+    const where = (calls[calls.length - 1][0] as { where: { status: { in: string[] } } }).where
+    // LOCKED stays rejectable by an admin; a live APPROVED claim does not.
     expect(where.status.in).toEqual(['PENDING', 'LOCKED'])
   })
 })

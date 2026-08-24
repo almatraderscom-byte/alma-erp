@@ -235,8 +235,20 @@ export async function approveTelegramDraftToLedger(ctx: TradingContext, draftId:
 }
 
 export async function rejectTelegramDraftRecord(ctx: TradingContext, draftId: string, reason: string) {
-  const draft = await loadDraftForActor(ctx, draftId)
+  let draft = await loadDraftForActor(ctx, draftId)
   if (draft.status === 'POSTED') throw new Error('Cannot reject a posted draft')
+
+  // A draft stranded in APPROVED is rejectable — it is exactly the row someone
+  // wants to get rid of. Recover it the same way the confirm path does (the
+  // staleness guard means a confirm genuinely in flight is left alone), then
+  // re-apply the cutoff so a prior-day row still needs an admin. Without this,
+  // Reject was offered on those rows and always answered "being confirmed right
+  // now".
+  if (draft.status === 'APPROVED' && await recoverStrandedApprovedDraft(draftId)) {
+    await lockStalePendingTelegramDrafts()
+    draft = await loadDraftForActor(ctx, draftId)
+  }
+
   if (draft.status === 'LOCKED' && !ctx.isAdmin) {
     throw new Error('Locked drafts can only be rejected by an admin — ask admin to reopen first')
   }
