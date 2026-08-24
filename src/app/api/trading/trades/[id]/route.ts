@@ -217,6 +217,12 @@ export async function PATCH(req: NextRequest, props: RouteContext) {
       if (ctx.role !== 'SUPER_ADMIN') return NextResponse.json({ error: 'Only Super Admin can approve deletes' }, { status: 403 })
       if (!trade.deleteReason || trade.deletedAt) return NextResponse.json({ error: 'No pending delete request found' }, { status: 400 })
       const result = await prisma.$transaction(async tx => {
+        // Same account-row lock every writer of this account's totals takes
+        // (see createTradingTradeRecord). A deletion aggregates the account
+        // afterwards; unlocked it can overwrite a balance a concurrent
+        // confirm just wrote, with a summary taken before that trade landed.
+        await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${trade.tradingAccountId} FOR UPDATE`
+
         const now = new Date()
         const updated = await tx.tradingTrade.update({
           where: { id: trade.id },
