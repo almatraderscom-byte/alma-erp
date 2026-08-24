@@ -99,13 +99,21 @@ export function TradingTelegramAdmin({
   // Clearing the interval does not cancel a request already in flight, so a slow
   // poll could land after a filter change or a confirm and repaint the old rows.
   // Every load takes a ticket; only the newest one is allowed to write state.
+  //
+  // The mapping half keeps its OWN ticket. Quiet polls skip mapping entirely, so
+  // sharing one counter meant a poll firing mid-fetch invalidated six responses
+  // nothing would ever re-request — leaving the mapping tabs and the filter
+  // options blank on a slow connection.
   const loadGeneration = useRef(0)
+  const mappingGeneration = useRef(0)
 
   /** `quiet` = background poll: refresh the data without flashing the skeleton. */
   const load = useCallback(async (quiet = false) => {
     if (!canReviewDrafts) return
     const generation = ++loadGeneration.current
     const isCurrent = () => generation === loadGeneration.current
+    const mappingGen = quiet ? mappingGeneration.current : ++mappingGeneration.current
+    const mappingIsCurrent = () => mappingGen === mappingGeneration.current
     if (!quiet) setLoading(true)
     setError(null)
     try {
@@ -124,12 +132,12 @@ export function TradingTelegramAdmin({
 
       if (!quiet) setMappingLoading(true)
       const draftRes = await fetch(`/api/trading/telegram/drafts?${draftQs}`).then(r => r.json())
-      if (!isCurrent()) return
-      if (draftRes.error) throw new Error(draftRes.error)
-
-      setDrafts(draftRes.drafts ?? [])
-      setDraftGroups(draftRes.groups ?? [])
-      setDraftDayGroups(draftRes.dayGroups ?? [])
+      if (isCurrent()) {
+        if (draftRes.error) throw new Error(draftRes.error)
+        setDrafts(draftRes.drafts ?? [])
+        setDraftGroups(draftRes.groups ?? [])
+        setDraftDayGroups(draftRes.dayGroups ?? [])
+      }
 
       // Mapping/config data barely changes — the poll only needs the drafts.
       if (isAdmin && !quiet) {
@@ -141,7 +149,7 @@ export function TradingTelegramAdmin({
           fetch('/api/trading/staff').then(r => r.json()),
           fetch('/api/trading/accounts?status=ACTIVE').then(r => r.json()),
         ])
-        if (!isCurrent()) return
+        if (!mappingIsCurrent()) return
         setUsers(u.users ?? [])
         setAliases(a.aliases ?? [])
         setChats(c.chats ?? [])
@@ -158,10 +166,8 @@ export function TradingTelegramAdmin({
     } catch (e) {
       if (isCurrent()) setError((e as Error).message)
     } finally {
-      if (isCurrent()) {
-        setLoading(false)
-        setMappingLoading(false)
-      }
+      if (isCurrent()) setLoading(false)
+      if (mappingIsCurrent()) setMappingLoading(false)
     }
   }, [canReviewDrafts, isStaffView, isAdmin, draftStatus, filterUserId, filterAccountId, duplicateOnly])
 
