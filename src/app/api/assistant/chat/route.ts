@@ -34,7 +34,15 @@ import {
   requestTurnCancel,
 } from '@/agent/lib/turn-status'
 import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
-import { createTurnEventPublisher } from '@/agent/lib/turn-events'
+import {
+  createTurnEventPublisher,
+  getReplayEvents,
+  pollTurnEvents,
+  sanitizeTurnEventPayloadForReferenceRollout,
+  subscribeTurnEvents,
+} from '@/agent/lib/turn-events'
+import { runTurnTail } from '@/agent/lib/turn-stream-tailer'
+import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
 import {
   ProseLifecycleTracker,
   negotiateProseProtocol,
@@ -395,16 +403,23 @@ export async function POST(req: NextRequest) {
 
   // Demo instance: a visitor can send as many messages as they like and each one
   // spends the owner's model budget, so the day has a hard ceiling. Inert unless
-  // DEMO_MODE is set.
-  const demoCap = await reserveDemoAssistantTurn()
-  if (demoCap.blocked) {
-    return Response.json(
-      {
-        error: 'demo_daily_limit',
-        message: `এই ডেমোতে দিনে ${demoCap.limit}টি প্রশ্ন করা যায়, আজকের সীমা শেষ। আগামীকাল আবার চেষ্টা করুন।`,
-      },
-      { status: 429 },
-    )
+  // DEMO_MODE is set. An internal callback that RE-RUNS an existing turn (the
+  // VPS worker's chat call for a handed-off long turn, or a bound continuation
+  // hop) is the same owner request the outer request already reserved — a
+  // second reservation double-billed the daily cap and could refuse the very
+  // callback that produces the answer (Codex P1 #850).
+  const internalExistingTurnRerun = isInternalCall && typeof body.turnId === 'string' && Boolean(body.turnId)
+  if (!internalExistingTurnRerun) {
+    const demoCap = await reserveDemoAssistantTurn()
+    if (demoCap.blocked) {
+      return Response.json(
+        {
+          error: 'demo_daily_limit',
+          message: `এই ডেমোতে দিনে ${demoCap.limit}টি প্রশ্ন করা যায়, আজকের সীমা শেষ। আগামীকাল আবার চেষ্টা করুন।`,
+        },
+        { status: 429 },
+      )
+    }
   }
 
   // Roadmap Phase 3 — client idempotency key. A retry (timeout / reconnect /
@@ -765,10 +780,18 @@ export async function POST(req: NextRequest) {
   // at 4.7 minutes even though the function had 13. That gap is most of the
   // reason long work had to be pushed into Plan-Drive at all. Use the budget the
   // function actually has; the Math.min still guarantees a clean final persist.
-  const TURN_HARD_CAP_MS = Math.min(
-    Number(process.env.AGENT_TURN_HARD_CAP_MS) || 760_000,
-    (maxDuration - 20) * 1000,
-  )
+  // A worker-driven re-run of an existing turn (VPS long-turn lane) gets the
+  // FULL function budget: the env cap exists to end client-facing inline turns
+  // early enough to salvage, but the worker lane's whole point (2026-08-24) is
+  // that a report-class job should not die at a tuned-down inline ceiling. The
+  // 20s persist headroom still applies.
+  const workerDrivenRerun = isInternalCall && typeof body.turnId === 'string' && Boolean(body.turnId)
+  const TURN_HARD_CAP_MS = workerDrivenRerun
+    ? (maxDuration - 20) * 1000
+    : Math.min(
+        Number(process.env.AGENT_TURN_HARD_CAP_MS) || 760_000,
+        (maxDuration - 20) * 1000,
+      )
   const turnAbort = new AbortController()
   const turnCapTimer = setTimeout(() => turnAbort.abort(), TURN_HARD_CAP_MS)
 
@@ -881,6 +904,111 @@ export async function POST(req: NextRequest) {
   }
   const proseLifecycle = new ProseLifecycleTracker({ protocol: proseProtocol, turnId })
 
+  // ── LONG JOBS OFF SERVERLESS (2026-08-24) ─────────────────────────────────
+  // CLAUDE.md rule: >30s agentic work belongs on the VPS worker queue. A
+  // report/audit-class owner turn (or a conversation already in a long_run job)
+  // is handed to the SAME BullMQ `long-agent-task` lane the /turn route uses;
+  // this function then only TAILS the worker's durable event log back over its
+  // own SSE response, so installed clients see an ordinary /chat stream. If the
+  // tail dies at maxDuration the worker keeps going and the client recovers via
+  // the existing turn-status poll / turn stream replay.
+  //
+  // Execution-ceiling contract (Codex #850): the worker still executes each
+  // turn by POSTing back into this route, so a single SLICE remains bounded by
+  // this function's budget (maxDuration - 20s — the worker rerun gets the full
+  // budget, not the tuned-down inline cap). A job larger than one slice is NOT
+  // lost at that ceiling: the deadline salvage writes its work-remaining
+  // checkpoint and schedules a bounded SERVER-side self-continue hop through
+  // the durable binding contract, so the job proceeds in full-budget slices —
+  // detached from any client — until it completes or a brake (hop budget /
+  // dry-hop / authority guard) stops it honestly. Moving the model loop
+  // natively onto the VPS process would remove the per-slice ceiling entirely
+  // and stays a follow-up; the durable slice chain is what this PR guarantees.
+  if (!isInternalCall && !internalControl && !resume && !autoContinueFromTurnId && message && turnId && conversationId) {
+    try {
+      const { shouldRouteOwnerTurnToWorker, longTurnLaneCooldownActive } = await import('@/agent/lib/long-turn-lane')
+      const { loadRememberedWorkClass } = await import('@/agent/lib/turn-work-class')
+      const remembered = await loadRememberedWorkClass(conversationId)
+      const routeToWorker = !(await longTurnLaneCooldownActive(conversationId)) && shouldRouteOwnerTurnToWorker({
+        message,
+        rememberedLongRun: remembered?.workClass === 'long_run',
+        isInternalCall,
+        internalControl,
+        resume: Boolean(resume),
+        autoContinue: Boolean(autoContinueFromTurnId),
+        voiceTurn: body.voice === true,
+        streamMode: req.nextUrl.searchParams.get('stream') !== 'false',
+      })
+      if (routeToWorker && isTurnHandoffConfigured()) {
+        const { workerTurnConsumerAlive } = await import('@/agent/lib/approval-continuation')
+        if (await workerTurnConsumerAlive()) {
+          const jobData = buildTurnJobData(turnId, conversationId, {
+            message,
+            files,
+            projectId: convProjectId,
+            personalMode,
+            clientRequestId,
+            askCardId: askCardRef,
+            agentProseProtocol: requestedProseProtocol,
+          })
+          // This lane fails CLOSED on ambiguity, so the enqueue must never
+          // hop transports: an HTTP attempt whose response was lost may have
+          // delivered the job already (Codex P1 #850 r7).
+          const jobId = jobData
+            ? await enqueueTurnJob(jobData, { allowCrossTransportFallback: false })
+            : null
+          if (jobId) {
+            clearTimeout(turnCapTimer)
+            await traceTurnStage(turnId, 'continuation_enqueued', 'long_turn_worker_lane').catch(() => {})
+            console.log(`[assistant/chat] long-turn worker handoff: turn ${turnId} job ${jobId}`)
+            return tailWorkerTurnAsChatStream({
+              turnId,
+              conversationId,
+              personalMode,
+              businessId: businessId ?? null,
+              proseProtocol,
+            })
+          }
+          if (jobData) {
+            // The enqueue was ATTEMPTED and failed ambiguously — an HTTP
+            // handoff whose response was lost/timed out may already have
+            // delivered the job, so running the same turn inline here could
+            // double-execute the model and every tool mutation (Codex P1
+            // #850). Fail the turn closed instead: the worker's own status
+            // guard (index.mjs — "turn already '<status>'") skips any ghost
+            // delivery of a non-running turn, so exactly zero or one
+            // execution can happen. The client retries with a fresh turn.
+            clearTimeout(turnCapTimer)
+            // Revoke BEFORE finalizing (Codex P1 #850 round 3): a ghost
+            // delivery that already passed the worker's running pre-check is
+            // mid-execution and cannot be stopped by a status flip alone.
+            // cancelRequested is the cross-instance execution revocation the
+            // Stop button uses — the ghost's turn loop observes it at its next
+            // poll and stands down, so the advertised inline retry cannot run
+            // concurrently with a live ghost for more than one poll interval.
+            await requestTurnCancel(turnId).catch(() => {})
+            await finalizeTurnIfRunning(turnId, 'error')
+            // The advertised retry must actually run: keep this conversation
+            // off the worker lane briefly so the re-send takes the inline path
+            // (no enqueue attempted there — unambiguous, safe).
+            const { markLongTurnLaneCooldown } = await import('@/agent/lib/long-turn-lane')
+            await markLongTurnLaneCooldown(conversationId)
+            console.warn(`[assistant/chat] long-turn worker enqueue ambiguous-failed — turn ${turnId} failed closed (no inline duplicate)`)
+            return failedWorkerHandoffChatStream({
+              turnId,
+              conversationId,
+              personalMode,
+              businessId: businessId ?? null,
+              proseProtocol,
+            })
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[assistant/chat] long-turn lane decision failed — running inline:', err instanceof Error ? err.message : err)
+    }
+  }
+
   // P0-2: for a continuation this stamp lands in a DIFFERENT process from the
   // approve route's stamps, which is exactly the point — the gap between
   // `continuation_enqueued` and this one is the Redis + worker-pickup cost, the
@@ -954,8 +1082,14 @@ export async function POST(req: NextRequest) {
     // (Codex P1 #765 round 4). Voice keeps the buffered whole-round emission.
     voiceTurn: body.voice === true,
     businessId,
+    // A worker rerun of an EXISTING web turn keeps the conversation's own
+    // model pin — the internal default silently swapped a picked model for
+    // defaultHeadModelId on every handed-off report (Codex P2 #850 r7). Bound
+    // continuation hops (internalControl) keep the default: their job pin is
+    // restored inside run-owner-turn and must not be outranked by an
+    // 'explicit' conversation pin here.
     modelId: isInternalCall
-      ? defaultHeadModelId
+      ? (internalExistingTurnRerun && !internalControl ? conversationModelId : defaultHeadModelId)
       : (resumeModelId ?? conversationModelId),
     // The chat's thinking level rides every turn of that chat — including an
     // approval continuation, which is the same job and must not silently
@@ -1416,6 +1550,151 @@ export async function POST(req: NextRequest) {
       'X-Conversation-Id': conversationId!,
       'X-Personal-Mode': personalMode ? 'true' : 'false',
       'X-Business-Id': personalMode ? 'PERSONAL' : (businessId ?? 'ALMA_LIFESTYLE'),
+    },
+  })
+}
+
+/**
+ * Long-turn worker lane (2026-08-24): the turn now executes on the VPS worker;
+ * this function only relays the worker's durable event log over the ordinary
+ * /chat SSE wire so every installed client keeps working unchanged. The same
+ * gap-healed tailer as /api/assistant/turn/[id]/stream; if THIS function dies
+ * at its deadline the worker keeps executing and the client recovers through
+ * the existing turn-status poll / turn stream replay.
+ */
+function tailWorkerTurnAsChatStream(input: {
+  turnId: string
+  conversationId: string
+  personalMode: boolean
+  businessId: string | null
+  proseProtocol: ProseProtocol
+}): Response {
+  const { turnId, conversationId, personalMode, proseProtocol } = input
+  const encoder = new TextEncoder()
+  let tailHandle: { close(): Promise<void> } | null = null
+  const stream = new ReadableStream({
+    async start(controller) {
+      let closed = false
+      let keepAlive: ReturnType<typeof setInterval> | undefined
+      const enqueue = (evt: unknown) => {
+        if (closed) return
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`))
+        } catch { /* client disconnected — the worker keeps running */ }
+      }
+      // The same preamble frames the inline path sends, so client reducers
+      // cannot tell the lanes apart.
+      enqueue({ type: 'conversation_id', id: conversationId })
+      enqueue({ type: 'personal_mode', active: personalMode })
+      enqueue({ type: 'turn_id', id: turnId })
+      enqueue({ type: 'turn_protocol', agentProseProtocol: proseProtocol })
+
+      const tail = runTurnTail(
+        {
+          getReplay: (after, limit) => getReplayEvents(turnId, after, limit, { throwOnError: true }),
+          subscribe: (onEvent, signal) => subscribeTurnEvents(turnId, onEvent, { signal }),
+          getStatus: async () => {
+            const current = await getTurnSnapshot(turnId)
+            return current
+              ? {
+                  turnId: current.id,
+                  conversationId: current.conversationId,
+                  status: current.status,
+                  lastSeq: current.lastSeq,
+                  assistantMessageId: current.assistantMessageId,
+                  continuationNeeded: current.continuationNeeded,
+                }
+              : null
+          },
+          poll: (after, onEvent) => pollTurnEvents(turnId, after, onEvent),
+          // The worker mirrored the exact events this client's protocol needs
+          // (the turn row carries the negotiated protocol); only the reference
+          // kill switch applies at the delivery boundary.
+          emit: (evt) => enqueue(sanitizeTurnEventPayloadForReferenceRollout(evt.payload)),
+          control: (payload) => enqueue(payload),
+          finish: () => {
+            if (closed) return
+            closed = true
+            if (keepAlive) clearInterval(keepAlive)
+            try { controller.close() } catch { /* already closed */ }
+          },
+          log: (event, detail) => console.warn(`[assistant/chat] worker-lane tail ${event}`, detail),
+        },
+        {
+          turnId,
+          afterSeq: -1,
+          snapshotLastSeq: null,
+          snapshotStatus: null,
+          snapshotConversationId: conversationId,
+        },
+      )
+      tailHandle = tail
+      await tail.ready
+      if (closed) return
+      keepAlive = setInterval(() => {
+        if (closed) return
+        try { controller.enqueue(encoder.encode(`: ping\n\n`)) } catch { /* closed */ }
+      }, 10_000)
+    },
+    cancel() {
+      // Client disconnected (app backgrounded): the WORKER keeps executing; we
+      // only stop tailing. The client recovers via turn-status poll / replay.
+      void tailHandle?.close()
+    },
+  })
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Conversation-Id': conversationId,
+      'X-Personal-Mode': personalMode ? 'true' : 'false',
+      'X-Business-Id': personalMode ? 'PERSONAL' : (input.businessId ?? 'ALMA_LIFESTYLE'),
+    },
+  })
+}
+
+/**
+ * Ambiguous worker-enqueue failure (Codex P1 #850): the job MAY exist on the
+ * worker, so this route must not execute inline. The turn was failed closed;
+ * tell the client cleanly over the ordinary SSE wire so it can retry with a
+ * fresh turn (a ghost delivery of this one is skipped by the worker's
+ * non-running status guard).
+ */
+function failedWorkerHandoffChatStream(input: {
+  turnId: string
+  conversationId: string
+  personalMode: boolean
+  businessId: string | null
+  proseProtocol: ProseProtocol
+}): Response {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    start(controller) {
+      const enqueue = (evt: unknown) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`))
+        } catch { /* client gone */ }
+      }
+      enqueue({ type: 'conversation_id', id: input.conversationId })
+      enqueue({ type: 'personal_mode', active: input.personalMode })
+      enqueue({ type: 'turn_id', id: input.turnId })
+      enqueue({ type: 'turn_protocol', agentProseProtocol: input.proseProtocol })
+      enqueue({
+        type: 'error',
+        message: 'দীর্ঘ কাজটা worker queue-তে দেওয়া যায়নি — মেসেজটা আবার পাঠান, এবারে সরাসরি চালিয়ে দেখব।',
+      })
+      try { controller.close() } catch { /* already closed */ }
+    },
+  })
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Conversation-Id': input.conversationId,
+      'X-Personal-Mode': input.personalMode ? 'true' : 'false',
+      'X-Business-Id': input.personalMode ? 'PERSONAL' : (input.businessId ?? 'ALMA_LIFESTYLE'),
     },
   })
 }

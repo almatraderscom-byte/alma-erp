@@ -15,23 +15,65 @@
  *     open. This module schedules it SERVER-side, on the worker queue, so the
  *     work continues whether or not he is looking.
  *
- * Bounded by design: a hop counter per conversation (MAX_SELF_CONTINUE_HOPS),
- * the existing cost caps, and the unanswered-ask-card block — a question to Boss
- * still stops everything.
+ * Bounded by design — THREE brakes, not one (2026-08-24 runaway: 12 hops,
+ * ~98k tokens, no report; one hop fully blocked by the owner-input binding
+ * guard yet the chain kept going):
+ *
+ *  1. HOP BUDGET — the per-conversation counter (MAX_SELF_CONTINUE_HOPS).
+ *  2. DRY-HOP BRAKE — a hop that ends with zero NEW successful tool results is
+ *     "dry"; MAX_CONSECUTIVE_DRY_HOPS dry hops in a row stop the chain honestly
+ *     instead of paying for more hops that visibly achieve nothing.
+ *  3. HALT MARKER — a hop that was blocked by a binding/authority guard calls
+ *     haltSelfContinueChain(); a halted chain refuses every further schedule
+ *     until a genuine owner message resets it. The stop reason is persisted so
+ *     the tracker/checkpoint can show WHY the agent stopped.
+ *
+ * The existing cost caps and the unanswered-ask-card block still apply on top —
+ * a question to Boss stops everything. Owner "continue" (any real message on
+ * the conversation) is the only override: resetSelfContinueChain() clears all
+ * three brakes so a renewed budget starts fresh.
  */
 import { prisma } from '@/lib/prisma'
 import { mayContinueChain } from '@/agent/lib/continuation-policy'
 
 const HOPS_PREFIX = 'self_continue_hops:'
+const DRY_PREFIX = 'self_continue_dry:'
+const STOP_PREFIX = 'self_continue_stop:'
+const SEEN_PREFIX = 'self_continue_seen:'
+
+/** Cap on remembered tool fingerprints per conversation (newest kept). */
+const MAX_SEEN_FINGERPRINTS = 300
 
 /** ~30s: long enough for the function to unwind, short enough to feel continuous. */
 export const SELF_CONTINUE_DELAY_MS = 30_000
 
-const hopsKey = (conversationId: string) => `${HOPS_PREFIX}${conversationId}`
+/**
+ * Two consecutive hops with zero new successful tool results = the chain is
+ * spinning, not working. Two (not one) because a single hop can legitimately be
+ * all model reasoning (e.g. compiling the final report from earlier tool data)
+ * — but two in a row means the next hop will not be different either.
+ */
+export const MAX_CONSECUTIVE_DRY_HOPS = 2
 
-export async function readHops(conversationId: string): Promise<number> {
+const hopsKey = (conversationId: string) => `${HOPS_PREFIX}${conversationId}`
+const dryKey = (conversationId: string) => `${DRY_PREFIX}${conversationId}`
+const stopKey = (conversationId: string) => `${STOP_PREFIX}${conversationId}`
+const seenKey = (conversationId: string) => `${SEEN_PREFIX}${conversationId}`
+
+async function readSeenFingerprints(conversationId: string): Promise<string[]> {
   try {
-    const row = await prisma.agentKvSetting.findUnique({ where: { key: hopsKey(conversationId) } })
+    const row = await prisma.agentKvSetting.findUnique({ where: { key: seenKey(conversationId) } })
+    if (!row?.value) return []
+    const parsed: unknown = JSON.parse(row.value)
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+async function readIntKey(key: string): Promise<number> {
+  try {
+    const row = await prisma.agentKvSetting.findUnique({ where: { key } })
     const n = row?.value ? parseInt(row.value, 10) : 0
     return Number.isFinite(n) && n > 0 ? n : 0
   } catch {
@@ -39,11 +81,91 @@ export async function readHops(conversationId: string): Promise<number> {
   }
 }
 
-async function writeHops(conversationId: string, hops: number): Promise<void> {
-  const key = hopsKey(conversationId)
+async function writeKey(key: string, value: string): Promise<void> {
   await prisma.agentKvSetting
-    .upsert({ where: { key }, update: { value: String(hops) }, create: { key, value: String(hops) } })
+    .upsert({ where: { key }, update: { value }, create: { key, value } })
     .catch(() => {})
+}
+
+export async function readHops(conversationId: string): Promise<number> {
+  return readIntKey(hopsKey(conversationId))
+}
+
+async function writeHops(conversationId: string, hops: number): Promise<void> {
+  await writeKey(hopsKey(conversationId), String(hops))
+}
+
+/** Why a chain stopped, persisted so the tracker/checkpoint can show it. */
+export type SelfContinueStopReason = 'hop_limit' | 'no_progress' | 'authority_blocked'
+
+export interface SelfContinueStop {
+  reason: SelfContinueStopReason
+  hops: number
+  at: string
+  /** Free-form detail (e.g. which guard blocked the hop). */
+  detail?: string
+}
+
+export async function readSelfContinueStop(conversationId: string): Promise<SelfContinueStop | null> {
+  try {
+    const row = await prisma.agentKvSetting.findUnique({ where: { key: stopKey(conversationId) } })
+    if (!row?.value) return null
+    const parsed: unknown = JSON.parse(row.value)
+    if (
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      && typeof (parsed as SelfContinueStop).reason === 'string'
+    ) return parsed as SelfContinueStop
+    return null
+  } catch {
+    return null
+  }
+}
+
+async function writeStop(conversationId: string, stop: SelfContinueStop): Promise<void> {
+  await writeKey(stopKey(conversationId), JSON.stringify(stop))
+}
+
+/**
+ * A hop that was refused by a binding/authority guard (owner-input binding,
+ * continuation binding) must NOT get a successor: the guard means this chain no
+ * longer has valid execution authority, and every further hop would hit the
+ * same wall and bill Boss for it (live 2026-08-24: the chain kept scheduling
+ * past a fully blocked hop, all the way to hop 12). The stop reason survives
+ * durably; a genuine owner message resets it.
+ */
+export async function haltSelfContinueChain(
+  conversationId: string,
+  detail: string,
+): Promise<void> {
+  const hops = await readHops(conversationId)
+  await writeStop(conversationId, {
+    reason: 'authority_blocked',
+    hops,
+    at: new Date().toISOString(),
+    detail: detail.slice(0, 200),
+  })
+}
+
+/**
+ * A genuine owner message renews the budget: hops, dry counter and any stop
+ * marker all clear, so "continue" (or any fresh instruction) starts a fresh
+ * chain. This is the ONLY override for a braked chain — deliberately owner-only.
+ */
+export async function resetSelfContinueChain(conversationId: string): Promise<void> {
+  await prisma.agentKvSetting
+    .deleteMany({
+      where: { key: { in: [hopsKey(conversationId), dryKey(conversationId), stopKey(conversationId), seenKey(conversationId)] } },
+    })
+    .catch(() => {})
+}
+
+/**
+ * Engine-authored directives (heartbeat wake, self-continue resume) persist as
+ * role=user rows but are NOT Boss speaking — they must never renew the hop
+ * budget the way a real owner message does.
+ */
+export function isEngineDirectiveText(text: string): boolean {
+  return /^\[(?:স্বয়ংক্রিয় হার্টবিট|SELF-CONTINUE)/.test(text.trim())
 }
 
 /** A turn that finished its work resets the chain. */
@@ -52,23 +174,54 @@ export async function clearHops(conversationId: string): Promise<void> {
   // its durable reconciliation path may both observe completion). `delete`
   // raises Prisma P2025 when the first cleanup already removed the row, which
   // Prisma logs even though this fail-open call catches the rejection.
-  await prisma.agentKvSetting.deleteMany({ where: { key: hopsKey(conversationId) } }).catch(() => {})
+  await prisma.agentKvSetting
+    .deleteMany({
+      where: { key: { in: [hopsKey(conversationId), dryKey(conversationId), stopKey(conversationId), seenKey(conversationId)] } },
+    })
+    .catch(() => {})
+  // A finished chain also closes the deadline-slice work-remaining checkpoints
+  // its salvage hops wrote — otherwise they sit open forever and keep feeding
+  // stale resume context to later turns (Codex P2 #850 r6).
+  try {
+    const { resolveDeadlineSliceCheckpoints } = await import('@/agent/lib/checkpoint')
+    await resolveDeadlineSliceCheckpoints(conversationId)
+  } catch { /* best-effort */ }
 }
 
 export interface SelfContinueResult {
   scheduled: boolean
   hops: number
   reason?: string
+  /** Set when a brake (not a transport failure) stopped the chain. */
+  stop?: SelfContinueStopReason
 }
 
 /**
- * Schedule the next hop of the same task. Fail-open: if anything here breaks the
- * turn still ends cleanly with its checkpoint, and Boss can type "continue".
+ * What THIS hop actually achieved. `successfulToolFingerprints` identifies each
+ * successful tool call by name + input hash; a hop whose every fingerprint was
+ * already seen on an earlier hop produced NOTHING NEW — re-reading the same
+ * inventory on every hop is exactly the stall the incident showed, and a raw
+ * success COUNT cannot see it (Codex P1 #850 r4). `successfulToolResults`
+ * remains as the coarse fallback for callers without fingerprints. Callers
+ * that cannot measure at all omit the field (fail-open: the dry brake only
+ * engages on measured hops).
+ */
+export interface SelfContinueProgress {
+  successfulToolResults?: number
+  successfulToolFingerprints?: string[]
+}
+
+/**
+ * Schedule the next hop of the same task. Fail-open on transport: if anything
+ * here breaks the turn still ends cleanly with its checkpoint, and Boss can
+ * type "continue". Fail-CLOSED on the three brakes above.
  */
 export async function scheduleSelfContinue(input: {
   conversationId: string
   /** Exact predecessor whose persisted checkpoint/workflow authorizes the wake. */
   sourceTurnId: string
+  /** This hop's measured progress; drives the dry-hop brake. */
+  progress?: SelfContinueProgress
 }): Promise<SelfContinueResult> {
   const { conversationId } = input
   const sourceTurnId = input.sourceTurnId.trim()
@@ -77,9 +230,60 @@ export async function scheduleSelfContinue(input: {
   }
   try {
     const hops = await readHops(conversationId)
+
+    // Brake 3 — a guard already halted this chain; nothing schedules until a
+    // genuine owner message resets it.
+    const stopped = await readSelfContinueStop(conversationId)
+    if (stopped) {
+      return {
+        scheduled: false,
+        hops,
+        reason: `chain halted (${stopped.reason})${stopped.detail ? `: ${stopped.detail}` : ''}`,
+        stop: stopped.reason,
+      }
+    }
+
+    // Brake 1 — the hop budget.
     if (!mayContinueChain(hops)) {
-      await clearHops(conversationId)
-      return { scheduled: false, hops, reason: 'hop limit reached — reporting instead of looping' }
+      await writeStop(conversationId, { reason: 'hop_limit', hops, at: new Date().toISOString() })
+      return { scheduled: false, hops, reason: 'hop limit reached — reporting instead of looping', stop: 'hop_limit' }
+    }
+
+    // Brake 2 — the dry-hop brake, only on measured hops. NEW work means a
+    // successful tool call whose (name + input) fingerprint no earlier hop of
+    // this chain produced — a hop that only repeats earlier reads is dry even
+    // though its raw success count is positive (Codex P1 #850 r4).
+    if (input.progress) {
+      const fingerprints = input.progress.successfulToolFingerprints
+      let madeNewWork: boolean
+      if (fingerprints) {
+        const seen = new Set(await readSeenFingerprints(conversationId))
+        const fresh = fingerprints.filter((f) => !seen.has(f))
+        madeNewWork = fresh.length > 0
+        if (fresh.length > 0) {
+          const merged = [...seen, ...fresh].slice(-MAX_SEEN_FINGERPRINTS)
+          await writeKey(seenKey(conversationId), JSON.stringify(merged))
+        }
+      } else {
+        madeNewWork = (input.progress.successfulToolResults ?? 0) > 0
+      }
+      const prevDry = await readIntKey(dryKey(conversationId))
+      const dry = madeNewWork ? 0 : prevDry + 1
+      if (dry >= MAX_CONSECUTIVE_DRY_HOPS) {
+        await writeStop(conversationId, {
+          reason: 'no_progress',
+          hops,
+          at: new Date().toISOString(),
+          detail: `${dry} consecutive hops with zero NEW successful tool results`,
+        })
+        return {
+          scheduled: false,
+          hops,
+          reason: `${dry} consecutive dry hops — stopping instead of burning more`,
+          stop: 'no_progress',
+        }
+      }
+      await writeKey(dryKey(conversationId), String(dry))
     }
 
     const next = hops + 1
@@ -94,9 +298,28 @@ export async function scheduleSelfContinue(input: {
       // approval convenience — it must not depend on the auto-continue toggle.
       force: true,
       binding,
+      // A wake is scheduled from INSIDE a turn that is at (or past) its own
+      // deadline — the 90s inline fallback must never run here: it would eat
+      // the route's 20s persistence headroom and let the platform kill the
+      // request before the salvage/terminal persists (Codex P1 #850). A
+      // worker-down wake defers to the durable binding instead of executing.
+      inlineDeadlineAtMs: Date.now(),
     })
-    if (['queued', 'completed', 'observe', 'deferred'].includes(enqueued.outcome)) {
+    if (['queued', 'completed', 'observe'].includes(enqueued.outcome)) {
       return { scheduled: true, hops: next }
+    }
+    if (enqueued.outcome === 'deferred') {
+      // The binding is durable and retryable, but nothing server-side is
+      // actually going to fire — claiming "scheduled" here would tell Boss the
+      // agent resumes itself while the worker is down. The bind above already
+      // created a source-bound successor turn; left 'running' it would strand
+      // (Codex P1 #850 r5) and shadow the client fallback, so it is settled
+      // before the client lane is invited to claim its own continuation.
+      if (enqueued.turnId) {
+        const { finalizeTurnIfRunning } = await import('@/agent/lib/turn-status')
+        await finalizeTurnIfRunning(enqueued.turnId, 'canceled')
+      }
+      return { scheduled: false, hops: next, reason: 'worker_unavailable_deferred_to_owner' }
     }
     return { scheduled: false, hops: next, reason: enqueued.status || enqueued.outcome }
   } catch (err) {

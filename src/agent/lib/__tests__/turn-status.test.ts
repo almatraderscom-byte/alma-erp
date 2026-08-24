@@ -24,6 +24,7 @@ type Row = {
   continuationOfTurnId: string | null
   continuationNeeded: boolean
   continuationClaimedAt: Date | null
+  userMessageId?: string | null
 }
 
 // Hoisted so the (hoisted) vi.mock factory can reference the same store/mock.
@@ -51,6 +52,7 @@ const h = vi.hoisted(() => {
         continuationOfTurnId: data.continuationOfTurnId ?? null,
         continuationNeeded: data.continuationNeeded ?? false,
         continuationClaimedAt: data.continuationClaimedAt ?? null,
+        userMessageId: data.userMessageId ?? null,
       }
       store.set(id, row)
       if (!select) return row
@@ -186,5 +188,19 @@ describe('exactly-once request and continuation claims', () => {
     expect(replay.claimed).toBe(false)
     expect(replay.turnId).toBe(first.turnId)
     expect(store.size).toBe(2)
+  })
+
+  it('a claimed continuation inherits the predecessor owner-message link (Codex P1 #850 r5)', async () => {
+    const predecessor = await createTurn('conv7')
+    store.get(predecessor!)!.userMessageId = 'owner-msg-1'
+    await finalizeTurnIfRunning(predecessor, 'done', { continuationNeeded: true })
+
+    const claim = await claimContinuationTurn('conv7', predecessor!)
+
+    expect(claim.claimed).toBe(true)
+    // Without the link the continuation turn resolved owner input
+    // 'unavailable' and every client auto-continue died on
+    // OWNER_INPUT_BINDING_BLOCKER.
+    expect(store.get(claim.turnId!)!.userMessageId).toBe('owner-msg-1')
   })
 })

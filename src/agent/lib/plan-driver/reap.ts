@@ -42,6 +42,17 @@ export interface ReapResult {
   costUsd: number
 }
 
+/**
+ * Was this assistant row written by a server execution guard instead of a real
+ * model turn? Guard rows stamp `usage.model` as `server-<name>-guard`
+ * (persistServerRoutingBlocker and the route guards in run-owner-turn.ts).
+ */
+export function isServerGuardBlockedMessage(usage: unknown): boolean {
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return false
+  const model = (usage as { model?: unknown }).model
+  return typeof model === 'string' && model.startsWith('server-') && model.endsWith('-guard')
+}
+
 /** Is an owner approval card waiting on this conversation right now? */
 async function hasOpenApproval(conversationId: string | null | undefined): Promise<boolean> {
   if (!conversationId) return false
@@ -99,16 +110,29 @@ async function reapStep(plan: Plan, step: PlanStep, now: Date): Promise<ReapResu
   const message = turn.assistantMessageId
     ? await db.agentMessage.findUnique({
         where: { id: turn.assistantMessageId },
-        select: { content: true, costUsd: true },
+        select: { content: true, costUsd: true, usage: true },
       })
     : await db.agentMessage.findFirst({
         where: { conversationId: turn.conversationId, role: 'assistant', createdAt: { gte: step.dispatchedAt ?? undefined } },
         orderBy: { createdAt: 'desc' },
-        select: { content: true, costUsd: true },
+        select: { content: true, costUsd: true, usage: true },
       })
 
   const summary = message ? messageContentText(message.content).slice(0, 4000) : ''
   const costUsd = message?.costUsd != null ? Number(message.costUsd) : 0
+
+  // A server GUARD refused this turn before any tool could run (owner-input /
+  // continuation binding, route guards — usage.model = `server-*-guard`). The
+  // turn row still ends 'done', which used to make this step "done" with the
+  // BLOCKER TEXT as its result — the plan then marched to the next step and the
+  // chain re-hit the same wall every hop (live runaway 2026-08-24). A blocked
+  // step made no progress: surface the blocker as the step failure so retries
+  // are counted and the plan escalates with the real reason instead of looping.
+  if (isServerGuardBlockedMessage(message?.usage)) {
+    const detail = `execution guard blocked the step: ${summary.slice(0, 280) || 'server guard blocker'}`
+    await markStepFailed(step.id, detail, now)
+    return { stepId: step.id, outcome: 'failed', detail, costUsd }
+  }
 
   // An approval card raised during the turn outranks its text: the work is NOT
   // done, it is waiting for Boss. Back to 'pending' so approving it resumes the

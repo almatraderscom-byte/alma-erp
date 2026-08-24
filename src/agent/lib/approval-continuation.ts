@@ -70,7 +70,7 @@ export async function autoContinueEnabled(): Promise<boolean> {
  * the last 3 minutes. The worker only writes this key while its BullMQ long-agent-task
  * consumer is genuinely running, so a half-alive worker (HTTP poll loop up, Redis
  * consumer dead — the 2026-07-13 incident) correctly reads as "down" here. */
-async function workerTurnConsumerAlive(): Promise<boolean> {
+export async function workerTurnConsumerAlive(): Promise<boolean> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const row = await (prisma as any).agentKvSetting.findUnique({ where: { key: 'worker_heartbeat_at' } })

@@ -178,11 +178,28 @@ async function enqueueOverHttp(
  * approval-continuation path started relying on it).
  * Returns the job id, or null if no queue is configured / the add failed.
  */
-export async function enqueueTurnJob(data: TurnJobData): Promise<string | null> {
+export async function enqueueTurnJob(
+  data: TurnJobData,
+  options: {
+    /**
+     * Default true (historic behavior): an HTTP handoff failure falls through
+     * to the shared Redis queue rather than dropping the turn. Callers that
+     * FAIL CLOSED on an ambiguous enqueue (the /chat long-turn lane) pass
+     * false: an HTTP attempt whose response was lost may already have
+     * delivered the job to the worker's LOCAL queue, and re-submitting to the
+     * separate cloud queue would let both deliveries execute — jobId dedupe
+     * only holds within one queue (Codex P1 #850 r7).
+     */
+    allowCrossTransportFallback?: boolean
+  } = {},
+): Promise<string | null> {
   // HTTP first when enabled; a failure falls through to Redis rather than
-  // dropping the turn.
-  const viaHttp = await enqueueOverHttp('turn', data)
-  if (viaHttp) return viaHttp
+  // dropping the turn (unless the caller forbids crossing transports).
+  if (httpHandoff()) {
+    const viaHttp = await enqueueOverHttp('turn', data)
+    if (viaHttp) return viaHttp
+    if (options.allowCrossTransportFallback === false) return null
+  }
   const url = longTaskRedisUrl()
   if (!url) return null
   try {

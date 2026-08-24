@@ -839,6 +839,14 @@ async function* runAlternateProviderTurn(
         ? 'continuation-binding-guard'
         : 'owner-input-binding-guard',
     )
+    // HOP BRAKE (runaway 2026-08-24): a hop refused by an authority guard has
+    // no valid execution authority — no successor may be scheduled. The halt
+    // marker makes every later scheduleSelfContinue() on this conversation
+    // refuse until a genuine owner message resets the chain.
+    try {
+      const { haltSelfContinueChain } = await import('@/agent/lib/self-continue')
+      await haltSelfContinueChain(conversationId, routingBlocker.slice(0, 120))
+    } catch { /* the visible blocker text is the guarantee; the halt is belt-and-braces */ }
     yield { type: 'text_delta', delta: routingBlocker }
     yield {
       type: 'done',
@@ -854,6 +862,16 @@ async function* runAlternateProviderTurn(
     return
   }
   const lastUserText = scopedOwnerInput.authoritativeText
+  // Owner "continue" is the cost-ceiling override: any GENUINE owner message
+  // (not an engine directive, not a continuation hop) renews the self-continue
+  // budget — hops, dry counter and halt marker all reset, so a braked chain can
+  // be restarted only by Boss himself.
+  if (options.continuation !== true && scopedOwnerInput.state === 'exact' && lastUserText) {
+    try {
+      const { isEngineDirectiveText, resetSelfContinueChain } = await import('@/agent/lib/self-continue')
+      if (!isEngineDirectiveText(lastUserText)) await resetSelfContinueChain(conversationId)
+    } catch { /* a stale brake costs one manual reset, never the turn */ }
+  }
   const explicitAskCardId = scopedOwnerInput.state === 'exact'
     ? scopedOwnerInput.askCardId
     : null
@@ -4063,6 +4081,15 @@ async function* runAlternateProviderTurn(
       const progressCallCount = withholdProspectivePlanProse
         ? acceptedProspectivePlanCalls.size
         : calls.length
+      // Codex P1 #850 r4: the round-start cancel check leaves a window — the
+      // provider round can complete AFTER a Stop/ghost-fence revocation
+      // landed, and every tool in this round would still execute its
+      // mutations. Re-check once here, after the provider response and before
+      // any executeTool, so a revoked turn cannot start new external effects.
+      if (calls.length > 0 && await isTurnCancelRequested(turnId)) {
+        canceled = true
+        break
+      }
       for (const call of calls) {
         if (withholdProspectivePlanProse && !acceptedProspectivePlanCalls.has(call)) {
           const rejected = {
@@ -5427,16 +5454,44 @@ async function* runAlternateProviderTurn(
       } catch { /* completion truth must survive even if checkpoint storage blips */ }
     }
 
-    let selfContinueWake: { scheduled: boolean; hops: number; reason?: string } | null = null
+    let selfContinueWake: { scheduled: boolean; hops: number; reason?: string; stop?: string } | null = null
     if (taskUnfinished) {
       const { scheduleSelfContinue } = await import('@/agent/lib/self-continue')
       const wake = await scheduleSelfContinue({
         conversationId,
         sourceTurnId: turnId ?? '',
+        // The dry-hop brake measures what THIS hop actually achieved. NEW work
+        // is identified by tool-name + input fingerprints, not a raw success
+        // count — a hop that merely re-reads the same inventory every time is
+        // dry even though its calls "succeed" (Codex P1 #850 r4; the runaway:
+        // 12 hops, ~98k tokens, nothing produced).
+        progress: {
+          successfulToolFingerprints: toolRecords
+            .filter((r) => r.status === 'success')
+            .map((r) => `${r.toolName}:${shortHash(JSON.stringify(r.input ?? null))}`),
+        },
       })
       selfContinueWake = wake
       if (wake.scheduled) {
         const note = `\n\n_(কাজ শেষ হয়নি — নিজে থেকেই ${Math.round(SELF_CONTINUE_DELAY_MS / 1000)} সেকেন্ড পরে বাকিটা চালিয়ে যাব, hop ${wake.hops}. আপনাকে কিছু বলতে হবে না।)_`
+        finalText += note
+        yield { type: 'text_delta', delta: note }
+      } else if (wake.stop) {
+        // A BRAKE stopped the chain (hop budget / dry hops / authority guard) —
+        // one honest owner message: what happened, what remains, why stopped.
+        const doneRows = planCompletion?.rows.filter((row) => row.status === 'done') ?? []
+        const openRows = planCompletion?.rows.filter((row) => row.status !== 'done') ?? []
+        const stopWhy = wake.stop === 'hop_limit'
+          ? `${wake.hops}টা auto-hop-এর বাজেট শেষ`
+          : wake.stop === 'no_progress'
+            ? 'পরপর দুটো hop-এ নতুন কোনো কাজ এগোয়নি'
+            : 'execution authority guard কাজটা আটকে দিয়েছে'
+        const note = [
+          `\n\n⚠️ Boss, কাজটা এখানে থামালাম — ${stopWhy}, তাই নিজে থেকে আর চালাচ্ছি না (টাকা পুড়িয়ে লাভ নেই)।`,
+          doneRows.length > 0 ? `যা হয়েছে: ${doneRows.slice(-5).map((row) => row.action).join(' · ')} (${doneRows.length}/${planCompletion!.rows.length} ধাপ)।` : '',
+          openRows.length > 0 ? `যা বাকি: ${openRows.slice(0, 5).map((row) => row.action).join(' · ')}।` : '',
+          '"continue" বললে ঠিক এখান থেকে নতুন বাজেটে আবার ধরব।',
+        ].filter(Boolean).join(' ')
         finalText += note
         yield { type: 'text_delta', delta: note }
       } else {
@@ -5956,14 +6011,98 @@ async function* runAlternateProviderTurn(
       if (!canceled && (finalText.trim() || toolRecords.length > 0)) {
         try {
           const okSteps = toolRecords.filter((r) => r.status === 'success').length
+          // DURABLE SERVER-SIDE RESUME (2026-08-24): this salvage used to end
+          // with "continue বললে…" plus a CLIENT-driven needContinue hint, so a
+          // backgrounded/closed app meant the job simply died at the deadline.
+          // The server now schedules its own bounded hop through the same
+          // source-binding contract the normal path uses; the client hint stays
+          // only as the fallback when scheduling fails. The direct-YouTube lane
+          // keeps its own settlement machinery untouched.
+          let serverResumeWake: { scheduled: boolean; hops: number; reason?: string; stop?: string } | null = null
+          // A continuation slice that is SYNTHESIZING (composing the report
+          // from findings earlier slices persisted) legitimately makes no tool
+          // calls before the deadline — requiring a successful tool here would
+          // kill exactly the job the slice chain exists for (Codex P1 #850
+          // r4). Such a dry slice still resumes; the fingerprint dry-hop brake
+          // bounds how many dry slices may chain.
+          const salvageResumeEligible =
+            shouldAutoContinueTurn({ deadlineHit: true, hasAskCard: false, tools: toolRecords })
+            || (options.continuation === true && Boolean(finalText.trim()))
+          if (
+            directBrowserLane == null
+            && emittedAskCards.length === 0
+            && turnId
+            && salvageResumeEligible
+          ) {
+            try {
+              // The "work remaining" record the wake binds to: an exact-turn
+              // checkpoint (taskRef = this turn) is the persisted source
+              // authority buildSelfContinueBinding requires for a turn that has
+              // no workflow/focus row — without it the wake would be refused as
+              // continuation_self_authority_missing on plain chat jobs. But a
+              // turn that ALREADY carries strong evidence (its own binding, a
+              // workflow event, an intake focus) must NOT get this generic
+              // checkpoint beside it — two identities make the binder reject
+              // the wake as ambiguous (Codex P1 #850 r6).
+              const { hasStrongSelfContinueEvidence } = await import('@/agent/lib/continuation-binding')
+              const strongEvidence = await hasStrongSelfContinueEvidence({
+                conversationId,
+                sourceTurnId: turnId,
+              })
+              const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+              // Dedicated task type: the completion sweep must be able to
+              // close THESE rows without touching an unrelated long job's
+              // checkpoint in the same conversation (Codex P2 #850 r7).
+              if (!strongEvidence) await writeCheckpoint({
+                taskRef: turnId,
+                taskType: 'deadline_slice',
+                state: 'continuing',
+                goal: (lastUserText || 'চলমান দীর্ঘ কাজ').slice(0, 120),
+                summaryBn: `টার্নটা সার্ভার-সময়সীমায় থেমেছে — ${okSteps}টা ধাপ হয়ে গেছে; server নিজে থেকেই resume করবে।`,
+                doneSteps: toolRecords
+                  .filter((r) => r.status === 'success')
+                  .slice(-8)
+                  .map((r) => r.toolName),
+                currentStep: 'deadline-এ থামা কাজের ঠিক পরের ধাপ',
+                artifacts: [],
+                nextActions: ['doneSteps-এ যা আছে তা আবার কোরো না — ঠিক পরের ধাপ থেকে চালাও'],
+                resumeHint: `মূল কাজ: ${(lastUserText || '').slice(0, 300)}। শেষ সফল ধাপ: ${toolRecords.filter((r) => r.status === 'success').slice(-5).map((r) => r.toolName).join(', ') || '—'}।`,
+                conversationId,
+                businessId,
+              })
+              const { scheduleSelfContinue } = await import('@/agent/lib/self-continue')
+              serverResumeWake = await scheduleSelfContinue({
+                conversationId,
+                sourceTurnId: turnId,
+                progress: {
+                  successfulToolFingerprints: toolRecords
+                    .filter((r) => r.status === 'success')
+                    .map((r) => `${r.toolName}:${shortHash(JSON.stringify(r.input ?? null))}`),
+                },
+              })
+            } catch { serverResumeWake = null }
+          }
           const salvageSuffix = [
             `⏱️ সার্ভারের সময়সীমায় টার্ন থেমেছে${okSteps > 0 ? ` — ${okSteps}টা ধাপ হয়ে গেছে` : ''}।`,
-            'Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।',
+            serverResumeWake?.scheduled
+              ? `নিজে থেকেই ${Math.round(SELF_CONTINUE_DELAY_MS / 1000)} সেকেন্ড পরে ঠিক এখান থেকে চালিয়ে যাব (hop ${serverResumeWake.hops}) — আপনাকে কিছু বলতে হবে না।`
+              : serverResumeWake?.stop
+                ? 'Auto-hop বাজেট/অগ্রগতির সীমায় থেমেছি — "continue" বললে নতুন বাজেটে ঠিক এখান থেকে ধরব।'
+                : 'Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।',
           ].join('\n')
           const playbackGate = hardGateUnavailableDirectYouTubeLane(directBrowserLane)
             ?? hardGateMediaPlaybackFinalText(browserOwnerText, finalText, toolRecords)
           const abortedBrowserTurn = toolRecords.some((r) => r.toolName.startsWith('live_browser_'))
-          let needContinue = abortedBrowserTurn && emittedAskCards.length === 0
+          // A server-scheduled wake OWNS the resume: the client must not also
+          // re-send (double hop). When the wake was ATTEMPTED but could not be
+          // scheduled (worker down, binding refusal), the client fallback must
+          // hold for ANY resumable job — the old browser-only derivation left
+          // a generic report/tool deadline with no resume path at all (Codex
+          // P1 #850 r4). A BRAKE stop is the one deliberate exception: the
+          // chain was stopped on purpose, so nothing may auto-resume it.
+          let needContinue = serverResumeWake
+            ? (!serverResumeWake.scheduled && !serverResumeWake.stop && emittedAskCards.length === 0)
+            : abortedBrowserTurn && emittedAskCards.length === 0
           let salvageText = directBrowserLane?.state === 'unavailable'
             ? playbackGate.text
             : [playbackGate.text.trim(), salvageSuffix].filter(Boolean).join('\n\n')
@@ -6507,6 +6646,12 @@ export async function* runOwnerTurn(
         ? 'continuation-binding-guard'
         : 'owner-input-binding-guard',
     )
+    // HOP BRAKE (runaway 2026-08-24): a guard-blocked hop must not get a
+    // successor — halt the chain durably; only a real owner message resets it.
+    try {
+      const { haltSelfContinueChain } = await import('@/agent/lib/self-continue')
+      await haltSelfContinueChain(conversationId, authorityBlocker.slice(0, 120))
+    } catch { /* the visible blocker text is the guarantee; the halt is belt-and-braces */ }
     yield { type: 'text_delta', delta: authorityBlocker }
     yield {
       type: 'done',

@@ -323,12 +323,24 @@ export async function claimContinuationTurn(
           status: (existing?.status as TurnStatus | undefined) ?? null,
         }
       }
+      // The continuation executes the SAME owner instruction as its
+      // predecessor, so it inherits that exact owner-message link. Without it
+      // the new turn had no userMessageId, loadTurnOwnerInputBinding resolved
+      // 'unavailable', and every client auto-continue was refused by
+      // OWNER_INPUT_BINDING_BLOCKER — the client resume lane was dead on
+      // arrival (Codex P1 #850 r5; one of the blocked hops in the 2026-08-24
+      // production runaway was exactly this).
+      const prev = await tx.agentTurn.findUnique({
+        where: { id: previousTurnId },
+        select: { userMessageId: true },
+      })
       const row = await tx.agentTurn.create({
         data: {
           conversationId,
           continuationOfTurnId: previousTurnId,
           status: 'running',
           executionMode: 'inline',
+          userMessageId: (prev?.userMessageId as string | null | undefined) ?? null,
           versions: turnVersionsFor(proseProtocol),
         },
         select: { id: true, status: true },

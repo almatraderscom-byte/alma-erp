@@ -26,8 +26,36 @@ const sourceBinding = vi.hoisted(() => ({
 }))
 vi.mock('@/agent/lib/continuation-binding', () => sourceBinding)
 
+const turnStatus = vi.hoisted(() => ({
+  finalizeTurnIfRunning: vi.fn(async () => {}),
+}))
+vi.mock('@/agent/lib/turn-status', () => turnStatus)
+
 import { shouldAutoContinueTurn, mayContinueChain, MAX_SELF_CONTINUE_HOPS } from '@/agent/lib/continuation-policy'
-import { scheduleSelfContinue, clearHops } from '@/agent/lib/self-continue'
+import {
+  scheduleSelfContinue,
+  clearHops,
+  haltSelfContinueChain,
+  resetSelfContinueChain,
+  isEngineDirectiveText,
+  MAX_CONSECUTIVE_DRY_HOPS,
+} from '@/agent/lib/self-continue'
+
+/** Per-key KV store backing findUnique/upsert, for the brake tests. */
+function useKvStore(initial: Record<string, string> = {}) {
+  const store = new Map(Object.entries(initial))
+  mockPrisma.agentKvSetting.findUnique.mockImplementation(async ({ where }: { where: { key: string } }) =>
+    store.has(where.key) ? { key: where.key, value: store.get(where.key) } : null)
+  mockPrisma.agentKvSetting.upsert.mockImplementation(async ({ where, create }: { where: { key: string }; create: { value: string } }) => {
+    store.set(where.key, create.value)
+    return {}
+  })
+  mockPrisma.agentKvSetting.deleteMany.mockImplementation(async ({ where }: { where: { key: { in: string[] } } }) => {
+    for (const key of where.key.in) store.delete(key)
+    return { count: 0 }
+  })
+  return store
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -154,6 +182,31 @@ describe('the wake-up chain', () => {
     expect(mockPrisma.agentKvSetting.upsert).not.toHaveBeenCalled()
   })
 
+  it('never runs the 90s inline fallback from inside a deadline turn (Codex P1 #850)', async () => {
+    const res = await scheduleSelfContinue({ conversationId: 'c1', sourceTurnId: 'source-turn-1' })
+
+    expect(res.scheduled).toBe(true)
+    const call = continuation.enqueueAgentContinuation.mock.calls[0][0]
+    // hasSafeInlineContinuationBudget(now) is false at a zero-remaining
+    // deadline, so a worker-down enqueue defers instead of executing inline.
+    expect(typeof call.inlineDeadlineAtMs).toBe('number')
+    expect(call.inlineDeadlineAtMs).toBeLessThanOrEqual(Date.now())
+  })
+
+  it('a worker-down deferral is reported honestly, never as a scheduled wake — and the stranded bound turn is settled', async () => {
+    continuation.enqueueAgentContinuation.mockResolvedValue({
+      outcome: 'deferred', turnId: 'next-turn', requestId: 'self-request', status: 'running',
+    })
+
+    const res = await scheduleSelfContinue({ conversationId: 'c1', sourceTurnId: 'source-turn-1' })
+
+    expect(res.scheduled).toBe(false)
+    expect(res.reason).toBe('worker_unavailable_deferred_to_owner')
+    // The bind created a source-bound successor turn; left 'running' it would
+    // strand and shadow the client fallback (Codex P1 #850 r5).
+    expect(turnStatus.finalizeTurnIfRunning).toHaveBeenCalledWith('next-turn', 'canceled')
+  })
+
   it('does not claim a wake was scheduled when bound enqueue is rejected', async () => {
     continuation.enqueueAgentContinuation.mockResolvedValue({
       outcome: 'rejected', turnId: null, requestId: null, status: 'binding_required',
@@ -166,13 +219,134 @@ describe('the wake-up chain', () => {
     expect(res).toMatchObject({ scheduled: false, hops: 1, reason: 'binding_required' })
   })
 
+  it('stops after two consecutive dry hops instead of burning more (runaway 2026-08-24)', async () => {
+    const store = useKvStore()
+
+    // Hop 1: dry (zero new successful tool results) — still allowed.
+    const first = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1',
+      progress: { successfulToolResults: 0 },
+    })
+    expect(first.scheduled).toBe(true)
+    expect(store.get('self_continue_dry:c1')).toBe('1')
+
+    // Hop 2: dry again — the brake fires, nothing is enqueued, the stop reason persists.
+    continuation.enqueueAgentContinuation.mockClear()
+    const second = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1',
+      progress: { successfulToolResults: 0 },
+    })
+    expect(second.scheduled).toBe(false)
+    expect(second.stop).toBe('no_progress')
+    expect(continuation.enqueueAgentContinuation).not.toHaveBeenCalled()
+    expect(JSON.parse(store.get('self_continue_stop:c1')!)).toMatchObject({ reason: 'no_progress' })
+    expect(MAX_CONSECUTIVE_DRY_HOPS).toBe(2)
+  })
+
+  it('repeated fingerprints are DRY even though the calls succeeded (Codex P1 #850 r4)', async () => {
+    const store = useKvStore()
+    const repeat = { successfulToolFingerprints: ['get_inventory_status:abc123'] }
+
+    // Hop 1 introduces the fingerprint — new work.
+    const first = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1', progress: repeat,
+    })
+    expect(first.scheduled).toBe(true)
+    expect(store.get('self_continue_dry:c1')).toBe('0')
+
+    // Hops 2 and 3 only repeat the same successful read — dry, then braked.
+    const second = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1', progress: repeat,
+    })
+    expect(second.scheduled).toBe(true)
+    expect(store.get('self_continue_dry:c1')).toBe('1')
+
+    continuation.enqueueAgentContinuation.mockClear()
+    const third = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1', progress: repeat,
+    })
+    expect(third.scheduled).toBe(false)
+    expect(third.stop).toBe('no_progress')
+    expect(continuation.enqueueAgentContinuation).not.toHaveBeenCalled()
+  })
+
+  it('a genuinely new fingerprint resets the dry counter', async () => {
+    const store = useKvStore({
+      'self_continue_dry:c1': '1',
+      'self_continue_seen:c1': JSON.stringify(['get_inventory_status:abc123']),
+    })
+
+    const res = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1',
+      progress: { successfulToolFingerprints: ['get_reorder_suggestions:def456'] },
+    })
+
+    expect(res.scheduled).toBe(true)
+    expect(store.get('self_continue_dry:c1')).toBe('0')
+    expect(JSON.parse(store.get('self_continue_seen:c1')!)).toContain('get_reorder_suggestions:def456')
+  })
+
+  it('real progress resets the dry counter', async () => {
+    const store = useKvStore({ 'self_continue_dry:c1': '1' })
+
+    const res = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1',
+      progress: { successfulToolResults: 3 },
+    })
+
+    expect(res.scheduled).toBe(true)
+    expect(store.get('self_continue_dry:c1')).toBe('0')
+  })
+
+  it('a halted chain (authority guard) refuses every further hop until the owner resets it', async () => {
+    const store = useKvStore()
+
+    await haltSelfContinueChain('c1', 'owner-input binding guard blocked the hop')
+    const blocked = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1',
+      progress: { successfulToolResults: 5 },
+    })
+    expect(blocked.scheduled).toBe(false)
+    expect(blocked.stop).toBe('authority_blocked')
+    expect(continuation.enqueueAgentContinuation).not.toHaveBeenCalled()
+
+    // A genuine owner message renews the budget.
+    await resetSelfContinueChain('c1')
+    expect(store.has('self_continue_stop:c1')).toBe(false)
+    const resumed = await scheduleSelfContinue({
+      conversationId: 'c1', sourceTurnId: 'source-turn-1',
+      progress: { successfulToolResults: 5 },
+    })
+    expect(resumed.scheduled).toBe(true)
+  })
+
+  it('persists the hop-limit stop reason durably for the tracker', async () => {
+    const store = useKvStore({ 'self_continue_hops:c1': String(MAX_SELF_CONTINUE_HOPS) })
+
+    const res = await scheduleSelfContinue({ conversationId: 'c1', sourceTurnId: 'source-turn-1' })
+
+    expect(res.scheduled).toBe(false)
+    expect(res.stop).toBe('hop_limit')
+    expect(JSON.parse(store.get('self_continue_stop:c1')!)).toMatchObject({
+      reason: 'hop_limit',
+      hops: MAX_SELF_CONTINUE_HOPS,
+    })
+  })
+
+  it('engine directives never count as the owner speaking', () => {
+    expect(isEngineDirectiveText('[স্বয়ংক্রিয় হার্টবিট — তুমি নিজে থেকে জেগেছ]')).toBe(true)
+    expect(isEngineDirectiveText('[SELF-CONTINUE hop 3]')).toBe(true)
+    expect(isEngineDirectiveText('আজকের inventory-র রিপোর্ট দাও')).toBe(false)
+    expect(isEngineDirectiveText('continue')).toBe(false)
+  })
+
   it('clears an already-absent hop counter without a record-not-found error', async () => {
     await clearHops('c1')
     await clearHops('c1')
 
     expect(mockPrisma.agentKvSetting.deleteMany).toHaveBeenCalledTimes(2)
     expect(mockPrisma.agentKvSetting.deleteMany).toHaveBeenNthCalledWith(1, {
-      where: { key: 'self_continue_hops:c1' },
+      where: { key: { in: ['self_continue_hops:c1', 'self_continue_dry:c1', 'self_continue_stop:c1', 'self_continue_seen:c1'] } },
     })
   })
 })
