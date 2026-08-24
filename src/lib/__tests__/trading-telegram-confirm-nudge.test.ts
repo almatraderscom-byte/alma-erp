@@ -33,8 +33,10 @@ import {
   sendPendingConfirmNudges,
 } from '@/lib/trading-telegram-confirm-nudge'
 
+let pendingSeq = 0
 function pending(overrides: Record<string, unknown> = {}) {
   return {
+    id: `draft-${pendingSeq += 1}`,
     telegramUserId: '7921737198',
     telegramChatId: '-5157095212',
     telegramUsername: 'Hossainmuqtadir',
@@ -138,6 +140,38 @@ describe('sendPendingConfirmNudges', () => {
     expect(where.detail).toEqual({ startsWith: 'FINAL' })
   })
 
+  it('reserves on a deterministic key so a losing run does not send', async () => {
+    auditCreate.mockRejectedValue(new Error('duplicate key'))
+
+    const result = await sendPendingConfirmNudges('FINAL')
+
+    // The insert IS the reservation: losing it means another run owns this
+    // warning, so this one must stay quiet.
+    expect(sendTelegramMessage).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ sent: 0, skipped: 1 })
+  })
+
+  it('keys the reservation by urgency, chat, staffer and hour', async () => {
+    await sendPendingConfirmNudges('FINAL')
+
+    const id = (auditCreate.mock.calls[0][0] as { data: { id: string } }).data.id
+    expect(id).toMatch(/^nudge:FINAL:-5157095212:7921737198:\d{4}-\d{2}-\d{2}T\d{2}$/)
+  })
+
+  it('pages through every pending draft, not just the first batch', async () => {
+    const page = Array.from({ length: 500 }, () => pending())
+    draftFindMany.mockResolvedValueOnce(page).mockResolvedValueOnce([pending()])
+
+    await sendPendingConfirmNudges('FINAL')
+
+    // A full page must trigger another read — a flat take silently dropped every
+    // staffer whose drafts sat past it.
+    expect(draftFindMany).toHaveBeenCalledTimes(2)
+    const second = draftFindMany.mock.calls[1][0] as { cursor?: unknown; skip?: number }
+    expect(second.cursor).toBeDefined()
+    expect(second.skip).toBe(1)
+  })
+
   it('claims the cooldown before calling Telegram, not after', async () => {
     const order: string[] = []
     auditCreate.mockImplementation(async () => { order.push('claim'); return { id: 'claim-1' } })
@@ -156,7 +190,9 @@ describe('sendPendingConfirmNudges', () => {
     const result = await sendPendingConfirmNudges('EVENING')
 
     expect(result).toMatchObject({ sent: 0, skipped: 1 })
-    expect(auditDelete).toHaveBeenCalledWith({ where: { id: 'claim-1' } })
+    // Released under the same deterministic key it was reserved with.
+    const deleted = (auditDelete.mock.calls[0][0] as { where: { id: string } }).where.id
+    expect(deleted).toMatch(/^nudge:EVENING:-5157095212:7921737198:/)
   })
 })
 

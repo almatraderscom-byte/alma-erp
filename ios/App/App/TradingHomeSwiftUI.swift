@@ -2314,7 +2314,6 @@ struct TradingHomeExpenseSheet: View {
                 notes: notes, attachmentUrl: attachmentUrl))
             UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
             if ok {
-                TradingFormDrafts.clear(TradingFormDrafts.screenshotKey)
                 dismiss()
             }
         }
@@ -2474,7 +2473,11 @@ struct TradingHomeShotSheet: View {
             let ok = await vm.uploadScreenshot(
                 accountId: accountId, data: imageData, shotDate: shotDate, note: note)
             UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
-            if ok { dismiss() }
+            if ok {
+                // Only this sheet's own success clears this sheet's draft.
+                TradingFormDrafts.clear(TradingFormDrafts.screenshotKey)
+                dismiss()
+            }
         }
     }
 }

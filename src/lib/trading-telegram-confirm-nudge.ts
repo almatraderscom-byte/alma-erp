@@ -45,23 +45,48 @@ type PendingGroup = {
 export async function collectPendingConfirmGroups(urgency: ConfirmNudgeUrgency): Promise<PendingGroup[]> {
   const { start: todayStart } = tradingBdDayBounds()
 
-  const drafts = await prisma.tradingTelegramDraft.findMany({
-    where: {
-      businessId: TRADING_BUSINESS_ID,
-      status: 'PENDING',
-      ...(urgency === 'FINAL' ? { createdAt: { lt: todayStart } } : {}),
-    },
-    select: {
-      telegramUserId: true,
-      telegramChatId: true,
-      telegramUsername: true,
-      usdtAmount: true,
-      createdAt: true,
-      user: { select: { name: true } },
-    },
-    orderBy: { createdAt: 'asc' },
-    take: 500,
-  })
+  const where = {
+    businessId: TRADING_BUSINESS_ID,
+    status: 'PENDING' as const,
+    ...(urgency === 'FINAL' ? { createdAt: { lt: todayStart } } : {}),
+  }
+
+  // Page through EVERY pending draft. A flat `take` silently warned only the
+  // staff who happened to own the oldest rows, and under-counted the groups it
+  // did warn — and because the cooldown then skipped those same groups, the
+  // omitted ones were never reached before the cutoff.
+  const drafts: Array<{
+    telegramUserId: string
+    telegramChatId: string
+    telegramUsername: string | null
+    usdtAmount: unknown
+    createdAt: Date
+    user: { name: string } | null
+  }> = []
+  const pageSize = 500
+  let cursor: string | undefined
+  for (;;) {
+    const page = await prisma.tradingTelegramDraft.findMany({
+      where,
+      select: {
+        id: true,
+        telegramUserId: true,
+        telegramChatId: true,
+        telegramUsername: true,
+        usdtAmount: true,
+        createdAt: true,
+        user: { select: { name: true } },
+      },
+      orderBy: { id: 'asc' },
+      take: pageSize,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    })
+    drafts.push(...page)
+    if (page.length < pageSize) break
+    cursor = page[page.length - 1].id
+  }
+  // Oldest-first so the first row seen in a group really is its oldest.
+  drafts.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
 
   const groups = new Map<string, PendingGroup>()
   for (const draft of drafts) {
@@ -138,6 +163,16 @@ async function nudgedRecently(
   return Boolean(recent)
 }
 
+/**
+ * Deterministic primary key for one warning: one per staffer, per chat, per
+ * urgency, per BD hour. Two runs in the same hour compute the same id, so the
+ * database decides the winner.
+ */
+function reservationId(urgency: ConfirmNudgeUrgency, group: PendingGroup): string {
+  const hourStamp = tradingBdNow().toISOString().slice(0, 13)   // YYYY-MM-DDTHH, Dhaka
+  return `nudge:${urgency}:${group.telegramChatId}:${group.telegramUserId}:${hourStamp}`
+}
+
 export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
   const groups = await collectPendingConfirmGroups(urgency)
   const sent: string[] = []
@@ -149,12 +184,15 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
       continue
     }
 
-    // Claim BEFORE calling Telegram. Checking and then sending leaves both an
-    // overlapping cron run and a manual test able to pass the check before
-    // either has written its row, and staff get the same reminder twice. The
-    // claim is released if Telegram refuses, so the next run retries.
-    const claim = await prisma.tradingTelegramAuditLog.create({
+    // Reserve BEFORE calling Telegram, and reserve EXCLUSIVELY. A plain insert is
+    // not a reservation: two overlapping runs both succeed and staff get the
+    // reminder twice. Composing the PRIMARY KEY from (urgency, chat, staffer,
+    // hour) makes the second insert fail on the key itself — atomic, and no new
+    // table or unique index. A run that loses the race does not send.
+    const claimId = reservationId(urgency, group)
+    const reserved = await prisma.tradingTelegramAuditLog.create({
       data: {
+        id: claimId,
         businessId: TRADING_BUSINESS_ID,
         eventType: NUDGE_EVENT,
         telegramUserId: group.telegramUserId,
@@ -164,13 +202,16 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
       },
       select: { id: true },
     }).catch(() => null)
+    if (!reserved) {
+      skipped.push(group.telegramUserId)
+      continue
+    }
 
     const result = await sendTelegramMessage(group.telegramChatId, confirmNudgeText(group, urgency))
     if (!result.ok) {
       skipped.push(group.telegramUserId)
-      if (claim) {
-        await prisma.tradingTelegramAuditLog.delete({ where: { id: claim.id } }).catch(() => {})
-      }
+      // Release so the next hour retries rather than inheriting a phantom warning.
+      await prisma.tradingTelegramAuditLog.delete({ where: { id: claimId } }).catch(() => {})
       continue
     }
 

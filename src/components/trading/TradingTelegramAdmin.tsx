@@ -278,19 +278,39 @@ export function TradingTelegramAdmin({
     void load()
   }
 
+  /** Only these can reach the ledger — LOCKED needs a reopen first. */
+  const confirmableIds = useMemo(() => {
+    const byId = new Map(drafts.map(d => [d.id, d]))
+    return [...selected].filter(id => {
+      const d = byId.get(id)
+      return d ? d.status === 'PENDING' || (d.status === 'APPROVED' && !d.tradingTradeId) : false
+    })
+  }, [drafts, selected])
+
   async function bulkConfirm() {
     if (!selected.size) return
+    // "Select all pending" also picks LOCKED rows so they can be bulk-rejected.
+    // Sending those to confirm just manufactures failures — assertDraftEditable
+    // rejects every one — so the confirm half uses the confirmable subset.
+    const lockedCount = selected.size - confirmableIds.length
+    if (!confirmableIds.length) {
+      toast.error('Selected drafts are locked — reopen them before confirming.')
+      return
+    }
     if (!(await confirmDialog({
       title: 'Post to ledger',
-      message: `Post ${selected.size} draft(s) to the ledger? This updates balances and P/L.`,
+      message: `Post ${confirmableIds.length} draft(s) to the ledger? This updates balances and P/L.`,
       confirmLabel: 'Post to ledger',
       danger: true,
     }))) return
+    if (lockedCount > 0) {
+      toast(`${lockedCount} locked draft(s) skipped — reopen them first.`, { duration: 6000 })
+    }
     setBusy(true)
     const res = await fetch('/api/trading/telegram/drafts/bulk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ draftIds: [...selected] }),
+      body: JSON.stringify({ draftIds: confirmableIds }),
     })
     setBusy(false)
     const data = await res.json()

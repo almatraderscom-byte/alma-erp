@@ -141,6 +141,10 @@ struct TradingTelegramDraft: Decodable, Identifiable, Equatable {
     /// transaction that read the old numbers, and a LOCKED one needs a reopen
     /// first. The server refuses both — this keeps the pencil honest.
     var isEditable: Bool { status == "PENDING" }
+    /// Can actually reach the ledger. LOCKED is selectable (so it can be bulk
+    /// REJECTED) but assertDraftEditable turns every locked confirm into a
+    /// failure, so the confirm half must not send them.
+    var isConfirmable: Bool { status == "PENDING" || isStalledConfirm }
 
     /// Web DraftRow headline: "#12 · BUY · 500 USDT @ 122.5 · fee 0.5".
     var headline: String {
@@ -708,8 +712,21 @@ final class TradingTelegramVM {
 
     /// POST /drafts/bulk — confirm ({draftIds}) posts to ledger; reject adds
     /// {action:'reject', reason}. Exact server response counts surface in the toast.
+    /// Ids in the current selection that a confirm can actually post.
+    var confirmableSelection: [String] {
+        let all = drafts + draftGroups.flatMap(\.drafts) + draftDayGroups.flatMap(\.drafts)
+        let confirmable = Set(all.filter(\.isConfirmable).map(\.id))
+        return selectedDrafts.filter { confirmable.contains($0) }
+    }
+
     func bulkAction(reject: Bool, reason: String = "Rejected") async {
         guard !selectedDrafts.isEmpty, !bulkBusy else { return }
+        let ids = reject ? Array(selectedDrafts) : confirmableSelection
+        if !reject, ids.isEmpty {
+            toast = "নির্বাচিত ড্রাফটগুলো লক করা — আগে reopen করুন।"
+            return
+        }
+        let skippedLocked = reject ? 0 : selectedDrafts.count - ids.count
         bulkBusy = true
         defer { bulkBusy = false }
         struct Body: Encodable {
@@ -728,8 +745,8 @@ final class TradingTelegramVM {
         do {
             let res: BulkResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/trading/telegram/drafts/bulk",
-                body: reject ? Body(draftIds: Array(selectedDrafts), action: "reject", reason: reason)
-                             : Body(draftIds: Array(selectedDrafts)))
+                body: reject ? Body(draftIds: ids, action: "reject", reason: reason)
+                             : Body(draftIds: ids))
             if let err = res.error { toast = err; await load(); return }
             let headline = reject ? "Rejected \(res.rejected ?? 0) draft(s). Failed: \(res.failed ?? 0)"
                                   : "Posted \(res.posted ?? 0) trade(s). Failed: \(res.failed ?? 0)"
@@ -742,6 +759,9 @@ final class TradingTelegramVM {
             // the reviewer walks away thinking the queue is empty.
             if let skipped = res.skipped, skipped > 0 {
                 message += " · \(skipped)টি বাকি — আবার চাপুন"
+            }
+            if skippedLocked > 0 {
+                message += " · \(skippedLocked)টি লক করা, বাদ গেছে"
             }
             toast = message
             selectedDrafts = []
