@@ -2,7 +2,13 @@ import type { TradingTradeType, TradingTelegramDraftStatus } from '@prisma/clien
 import { prisma } from '@/lib/prisma'
 import { TRADING_BUSINESS_ID } from '@/lib/trading'
 import { logTelegramDraftAudit } from '@/lib/trading-telegram-draft-audit'
-import { assertDraftEditable, lockStalePendingTelegramDrafts } from '@/lib/trading-telegram-lock'
+import {
+  assertDraftEditable,
+  claimableCutoffWhere,
+  lockStalePendingTelegramDrafts,
+  recoverStrandedApprovedDraft,
+  sweepTelegramDraftStates,
+} from '@/lib/trading-telegram-lock'
 import {
   draftListWhereForActor,
   filterDraftIdsForActor,
@@ -10,6 +16,7 @@ import {
 } from '@/lib/trading-telegram-permissions'
 import type { TradingContext } from '@/lib/trading'
 import { createTradingTradeRecord } from '@/lib/trading-trade-create'
+import { telegramDraftTradeDate } from '@/lib/trading-compliance'
 import { resolveProfileImageForUser } from '@/lib/user-display'
 
 export type UpdateTelegramDraftInput = {
@@ -39,8 +46,12 @@ export async function updateTelegramDraft(
   const draft = await loadDraftForActor(ctx, draftId)
   assertDraftEditable(draft.status)
 
-  const updated = await prisma.tradingTelegramDraft.update({
-    where: { id: draftId },
+  // Only an UNCLAIMED draft is editable. A claimed one (APPROVED) may already be
+  // inside the ledger transaction, which read the old numbers — editing it there
+  // would post one set of values and leave the draft showing another. A stranded
+  // claim is recovered to PENDING by the sweep first, so this is not a dead end.
+  const edited = await prisma.tradingTelegramDraft.updateMany({
+    where: { id: draftId, businessId: TRADING_BUSINESS_ID, status: 'PENDING' },
     data: {
       ...(input.tradingAccountId !== undefined ? { tradingAccountId: input.tradingAccountId } : {}),
       ...(input.accountAlias !== undefined ? { accountAlias: input.accountAlias } : {}),
@@ -51,7 +62,18 @@ export async function updateTelegramDraft(
       ...(input.feeUsdt !== undefined ? { feeUsdt: input.feeUsdt } : {}),
       lastEditedBy: ctx.userId,
       lastEditedAt: new Date(),
+      // The numbers just changed — whatever the last confirm complained about is
+      // no longer what staff are looking at.
+      confirmError: null,
+      confirmErrorAt: null,
     },
+  })
+  if (edited.count === 0) {
+    throw new Error('This draft is being confirmed right now — refresh before editing it')
+  }
+
+  const updated = await prisma.tradingTelegramDraft.findFirstOrThrow({
+    where: { id: draftId, businessId: TRADING_BUSINESS_ID },
     include: {
       user: { select: { id: true, name: true, email: true, profileImageUrl: true, updatedAt: true } },
       tradingAccount: { select: { id: true, accountTitle: true } },
@@ -74,12 +96,15 @@ export async function postDraftToLedger(draftId: string, reviewerUserId: string)
     where: { id: draftId, businessId: TRADING_BUSINESS_ID },
   })
   if (!draft) throw new Error('Draft not found')
+  // Idempotency FIRST: a second click on an already-posted draft must return the
+  // existing trade, not the "already posted to ledger" error assertDraftEditable
+  // would throw (which is what made this branch dead code before).
+  if (draft.status === 'POSTED' && draft.tradingTradeId) {
+    return { tradeId: draft.tradingTradeId, alreadyPosted: true }
+  }
   assertDraftEditable(draft.status)
   if (!draft.userId || !draft.tradingAccountId || !draft.tradeType) {
     throw new Error('Draft is incomplete — edit account and trade fields first')
-  }
-  if (draft.status === 'POSTED' && draft.tradingTradeId) {
-    return { tradeId: draft.tradingTradeId, alreadyPosted: true }
   }
 
   const notes = [
@@ -87,6 +112,9 @@ export async function postDraftToLedger(draftId: string, reviewerUserId: string)
     `Raw: ${draft.rawMessage}`,
   ].join('\n')
 
+  // The draft is linked to the trade INSIDE the trade's transaction. Two
+  // statements would leave a window where the ledger row exists but the draft
+  // still looks unposted — and every recovery path would then post it twice.
   const { trade } = await createTradingTradeRecord({
     tradingAccountId: draft.tradingAccountId,
     userId: draft.userId,
@@ -94,33 +122,112 @@ export async function postDraftToLedger(draftId: string, reviewerUserId: string)
     usdtAmount: Number(draft.usdtAmount),
     bdtRate: Number(draft.bdtRate),
     feeUsdt: Number(draft.feeUsdt ?? 0),
+    // The trade happened when the staffer typed it into Telegram, not when
+    // someone got around to confirming it. Staff confirm in batches "when free",
+    // so booking it on the confirm day puts it on the wrong day's P/L.
+    //
+    // Backdating is not free: a SELL's cost basis comes from the account's
+    // CURRENT weighted-average inventory, so a draft backdated past a later BUY
+    // would be priced against stock that did not exist yet and would quietly
+    // rewrite a past day's profit. `backdateToIfUntouched` therefore only takes
+    // effect while no trade on the account is dated after that day — checked
+    // inside the trade's own transaction, under the account lock, because that
+    // is a read-then-write. Otherwise it falls back to the confirm day, which is
+    // the old behaviour. Confirming oldest-first, which bulk confirm now does,
+    // walks a multi-day backlog forward correctly.
+    backdateToIfUntouched: telegramDraftTradeDate(draft.createdAt),
     notes,
     actorUserId: reviewerUserId,
-  })
-
-  await prisma.tradingTelegramDraft.update({
-    where: { id: draft.id },
-    data: {
-      status: 'POSTED',
-      tradingTradeId: trade.id,
-      postedAt: new Date(),
-      reviewedBy: reviewerUserId,
-      reviewedAt: new Date(),
-    },
+    linkTelegramDraftId: draft.id,
   })
 
   return { tradeId: trade.id, alreadyPosted: false }
 }
 
+/**
+ * Confirm a draft into the ledger.
+ *
+ * The draft is CLAIMED (PENDING → APPROVED) before the trade is written so two
+ * taps can't post twice — but a claim that never reaches the ledger is rolled
+ * straight back to PENDING with the reason attached. The old code claimed and
+ * never rolled back, which stranded eight production drafts in APPROVED: gone
+ * from the pending list, never in the account, no button left to retry.
+ */
 export async function approveTelegramDraftToLedger(ctx: TradingContext, draftId: string) {
   const draft = await loadDraftForActor(ctx, draftId)
+  if (draft.status === 'POSTED' && draft.tradingTradeId) {
+    return { tradeId: draft.tradingTradeId, alreadyPosted: true }
+  }
   assertDraftEditable(draft.status)
 
-  await prisma.tradingTelegramDraft.updateMany({
-    where: { id: draftId, businessId: TRADING_BUSINESS_ID, status: 'PENDING' },
+  // A draft stranded by an earlier crash is recovered FIRST, and only once it is
+  // old enough to be certain no confirm is still running. Claiming straight out
+  // of APPROVED would let two concurrent reviewers both believe they won.
+  //
+  // Then re-apply the day cutoff, in the same order sweepTelegramDraftStates
+  // uses. Without it a prior-day draft recovered here would post immediately,
+  // walking straight past the admin-reopen control it would have hit had the
+  // list sweep reached it first — which is exactly the control the owner chose
+  // to keep.
+  if (draft.status === 'APPROVED') {
+    if (await recoverStrandedApprovedDraft(draftId)) {
+      await lockStalePendingTelegramDrafts()
+    }
+  }
+
+  // The claim is exclusive: exactly one request can move a draft out of PENDING.
+  // It also carries the day cutoff itself, so no interleaving of recover / sweep /
+  // claim between two retries can slip a prior-day draft past the admin-reopen
+  // control — past the cutoff hour, only today's drafts match at all.
+  const claim = await prisma.tradingTelegramDraft.updateMany({
+    where: {
+      id: draftId,
+      businessId: TRADING_BUSINESS_ID,
+      status: 'PENDING',
+      tradingTradeId: null,
+      ...(claimableCutoffWhere() ?? {}),
+    },
     data: { status: 'APPROVED', reviewedBy: ctx.userId, reviewedAt: new Date() },
   })
-  const result = await postDraftToLedger(draftId, ctx.userId)
+  if (claim.count === 0) {
+    const now = await prisma.tradingTelegramDraft.findFirst({
+      where: { id: draftId, businessId: TRADING_BUSINESS_ID },
+      select: { status: true, tradingTradeId: true },
+    })
+    if (now?.status === 'POSTED' && now.tradingTradeId) {
+      return { tradeId: now.tradingTradeId, alreadyPosted: true }
+    }
+    if (now?.status === 'APPROVED') {
+      throw new Error('This draft is being confirmed right now — refresh in a moment')
+    }
+    if (now?.status === 'LOCKED') {
+      throw new Error('Draft is locked past the daily cutoff — ask an admin to reopen it first')
+    }
+    throw new Error('Draft is no longer confirmable — refresh and check its status')
+  }
+
+  let result: { tradeId: string; alreadyPosted: boolean }
+  try {
+    result = await postDraftToLedger(draftId, ctx.userId)
+  } catch (e) {
+    const reason = (e as Error).message
+    // Release the claim so the draft stays in the staff's list with the reason
+    // on it. Guarded on tradingTradeId so a trade that DID land is never undone.
+    await prisma.tradingTelegramDraft.updateMany({
+      where: { id: draftId, businessId: TRADING_BUSINESS_ID, status: 'APPROVED', tradingTradeId: null },
+      data: { status: 'PENDING', confirmError: reason, confirmErrorAt: new Date() },
+    })
+    await logTelegramDraftAudit({
+      eventType: 'DRAFT_CONFIRM_FAILED',
+      draftId,
+      actorUserId: ctx.userId,
+      telegramUserId: draft.telegramUserId,
+      telegramChatId: draft.telegramChatId,
+      detail: reason,
+    }).catch(() => {})
+    throw e
+  }
+
   await logTelegramDraftAudit({
     eventType: 'DRAFT_CONFIRMED',
     draftId,
@@ -133,20 +240,47 @@ export async function approveTelegramDraftToLedger(ctx: TradingContext, draftId:
 }
 
 export async function rejectTelegramDraftRecord(ctx: TradingContext, draftId: string, reason: string) {
-  const draft = await loadDraftForActor(ctx, draftId)
+  let draft = await loadDraftForActor(ctx, draftId)
   if (draft.status === 'POSTED') throw new Error('Cannot reject a posted draft')
+
+  // A draft stranded in APPROVED is rejectable — it is exactly the row someone
+  // wants to get rid of. Recover it the same way the confirm path does (the
+  // staleness guard means a confirm genuinely in flight is left alone), then
+  // re-apply the cutoff so a prior-day row still needs an admin. Without this,
+  // Reject was offered on those rows and always answered "being confirmed right
+  // now".
+  if (draft.status === 'APPROVED' && await recoverStrandedApprovedDraft(draftId)) {
+    await lockStalePendingTelegramDrafts()
+    draft = await loadDraftForActor(ctx, draftId)
+  }
+
   if (draft.status === 'LOCKED' && !ctx.isAdmin) {
     throw new Error('Locked drafts can only be rejected by an admin — ask admin to reopen first')
   }
 
-  const updated = await prisma.tradingTelegramDraft.update({
-    where: { id: draftId },
+  // Same claim rule as the edit path: rejecting a draft whose ledger transaction
+  // is mid-flight would race the POSTED write.
+  const rejected = await prisma.tradingTelegramDraft.updateMany({
+    where: {
+      id: draftId,
+      businessId: TRADING_BUSINESS_ID,
+      status: { in: ['PENDING', 'LOCKED'] },
+    },
     data: {
       status: 'REJECTED',
       rejectReason: reason,
       reviewedBy: ctx.userId,
       reviewedAt: new Date(),
+      confirmError: null,
+      confirmErrorAt: null,
     },
+  })
+  if (rejected.count === 0) {
+    throw new Error('This draft is being confirmed right now — refresh before rejecting it')
+  }
+
+  const updated = await prisma.tradingTelegramDraft.findFirstOrThrow({
+    where: { id: draftId, businessId: TRADING_BUSINESS_ID },
   })
 
   await logTelegramDraftAudit({
@@ -161,10 +295,44 @@ export async function rejectTelegramDraftRecord(ctx: TradingContext, draftId: st
   return updated
 }
 
+/** Largest batch one request will attempt; the rest come back as `skipped`. */
+export const MAX_BULK_CONFIRM = 40
+/** Stop starting new posts past this, so the caller always gets a report. */
+const BULK_TIME_BUDGET_MS = 90_000
+
+/**
+ * Order a batch the way the day actually happened.
+ *
+ * The client sends whatever order the list was in — which is `createdAt: 'desc'`,
+ * so "select all pending" replayed the day BACKWARDS. A SELL then reached the
+ * ledger before the BUY that funded it and died on the balance guard. Confirming
+ * a day's trades in one go only works oldest-first.
+ */
+async function orderDraftIdsChronologically(ids: string[]): Promise<string[]> {
+  if (ids.length < 2) return ids
+  const rows = await prisma.tradingTelegramDraft.findMany({
+    where: { id: { in: ids }, businessId: TRADING_BUSINESS_ID },
+    select: { id: true },
+    orderBy: [{ createdAt: 'asc' }, { tradeNumber: 'asc' }],
+  })
+  return rows.map(r => r.id)
+}
+
 export async function bulkApproveTelegramDrafts(ctx: TradingContext, draftIds: string[]) {
-  const allowed = await filterDraftIdsForActor(ctx, draftIds)
+  const allowed = await orderDraftIdsChronologically(await filterDraftIdsForActor(ctx, draftIds))
+  const batch = allowed.slice(0, MAX_BULK_CONFIRM)
   const results: Array<{ id: string; ok: boolean; tradeId?: string; error?: string }> = []
-  for (const id of allowed) {
+  let skipped = allowed.length - batch.length
+  const deadline = Date.now() + BULK_TIME_BUDGET_MS
+
+  for (const [index, id] of batch.entries()) {
+    // Each post is a transaction plus an account recalc; a long batch can outrun
+    // the function. Stop early WITH a report rather than dying mid-loop, which
+    // would leave some drafts posted and the reviewer with a network error.
+    if (index > 0 && Date.now() > deadline) {
+      skipped += batch.length - index
+      break
+    }
     try {
       const r = await approveTelegramDraftToLedger(ctx, id)
       results.push({ id, ok: true, tradeId: r.tradeId })
@@ -172,7 +340,8 @@ export async function bulkApproveTelegramDrafts(ctx: TradingContext, draftIds: s
       results.push({ id, ok: false, error: (e as Error).message })
     }
   }
-  return results
+
+  return { results, skipped }
 }
 
 export async function bulkRejectTelegramDrafts(ctx: TradingContext, draftIds: string[], reason: string) {
@@ -190,7 +359,7 @@ export async function bulkRejectTelegramDrafts(ctx: TradingContext, draftIds: st
 }
 
 export async function listTelegramDrafts(opts: ListTelegramDraftsOptions) {
-  await lockStalePendingTelegramDrafts()
+  await sweepTelegramDraftStates()
 
   const drafts = await prisma.tradingTelegramDraft.findMany({
     where: draftListWhereForActor(opts.ctx, {

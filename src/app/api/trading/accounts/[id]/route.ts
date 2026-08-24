@@ -131,6 +131,7 @@ export async function PATCH(req: NextRequest, props: RouteContext) {
     }
 
     const account = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${params.id} FOR UPDATE`
       await tx.tradingAccount.update({ where: { id: params.id }, data })
       await recalculateTradingAccount(tx, params.id)
       return tx.tradingAccount.findUniqueOrThrow({ where: { id: params.id } })

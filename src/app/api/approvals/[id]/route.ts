@@ -593,6 +593,11 @@ async function processTradingDelete(
   }
 
   const result = await runApprovalTransaction('approval.trading_delete', async tx => {
+    // Same account-row lock every writer of this account's totals takes (see
+    // createTradingTradeRecord) — the approval centre is a second, independent
+    // deletion path and has to join the same protocol.
+    await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${trade.tradingAccountId} FOR UPDATE`
+
     const now = new Date()
     const updatedTrade = await tx.tradingTrade.update({
       where: { id: trade.id },

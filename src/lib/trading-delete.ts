@@ -61,6 +61,12 @@ export async function commitTradeDeletion(input: {
   if (trade.deletedAt) throw new Error('Trade is already deleted')
 
   return prisma.$transaction(async tx => {
+    // Same account-row lock every other trade mutation takes: this soft-delete
+    // recalculates the account afterwards, and without serialising it can undo a
+    // Telegram confirm's balance with an aggregate taken before that trade
+    // committed.
+    await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${trade.tradingAccountId} FOR UPDATE`
+
     const now = new Date()
     const updated = await tx.tradingTrade.update({
       where: { id: trade.id },

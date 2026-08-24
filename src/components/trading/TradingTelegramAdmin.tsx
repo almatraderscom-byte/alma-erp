@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import toast from 'react-hot-toast'
 import { Button, Card, Empty, Skeleton } from '@/components/ui'
@@ -32,6 +32,14 @@ import type {
 } from '@/types/trading-telegram'
 
 type Tab = 'drafts' | 'monitor' | 'live' | 'users' | 'aliases' | 'chats' | 'setup'
+
+/** A draft added in Telegram should surface here without anyone pulling to refresh. */
+const DRAFT_POLL_MS = 15_000
+
+function bulkFailureMessage(reasons?: string[]): string {
+  if (!reasons?.length) return 'Some drafts could not be processed — open them individually for the reason.'
+  return reasons.join(' · ')
+}
 
 export function TradingTelegramAdmin({
   userId,
@@ -88,9 +96,25 @@ export function TradingTelegramAdmin({
 
   const pendingCount = useMemo(() => drafts.filter(d => d.status === 'PENDING').length, [drafts])
 
-  const load = useCallback(async () => {
+  // Clearing the interval does not cancel a request already in flight, so a slow
+  // poll could land after a filter change or a confirm and repaint the old rows.
+  // Every load takes a ticket; only the newest one is allowed to write state.
+  //
+  // The mapping half keeps its OWN ticket. Quiet polls skip mapping entirely, so
+  // sharing one counter meant a poll firing mid-fetch invalidated six responses
+  // nothing would ever re-request — leaving the mapping tabs and the filter
+  // options blank on a slow connection.
+  const loadGeneration = useRef(0)
+  const mappingGeneration = useRef(0)
+
+  /** `quiet` = background poll: refresh the data without flashing the skeleton. */
+  const load = useCallback(async (quiet = false) => {
     if (!canReviewDrafts) return
-    setLoading(true)
+    const generation = ++loadGeneration.current
+    const isCurrent = () => generation === loadGeneration.current
+    const mappingGen = quiet ? mappingGeneration.current : ++mappingGeneration.current
+    const mappingIsCurrent = () => mappingGen === mappingGeneration.current
+    if (!quiet) setLoading(true)
     setError(null)
     try {
       const draftQs = new URLSearchParams({
@@ -106,15 +130,17 @@ export function TradingTelegramAdmin({
       if (filterAccountId) draftQs.set('tradingAccountId', filterAccountId)
       if (duplicateOnly) draftQs.set('duplicateOnly', '1')
 
-      setMappingLoading(true)
+      if (!quiet) setMappingLoading(true)
       const draftRes = await fetch(`/api/trading/telegram/drafts?${draftQs}`).then(r => r.json())
-      if (draftRes.error) throw new Error(draftRes.error)
+      if (isCurrent()) {
+        if (draftRes.error) throw new Error(draftRes.error)
+        setDrafts(draftRes.drafts ?? [])
+        setDraftGroups(draftRes.groups ?? [])
+        setDraftDayGroups(draftRes.dayGroups ?? [])
+      }
 
-      setDrafts(draftRes.drafts ?? [])
-      setDraftGroups(draftRes.groups ?? [])
-      setDraftDayGroups(draftRes.dayGroups ?? [])
-
-      if (isAdmin) {
+      // Mapping/config data barely changes — the poll only needs the drafts.
+      if (isAdmin && !quiet) {
         const [u, a, c, s, staffRes, accountsRes] = await Promise.all([
           fetch('/api/trading/telegram/users').then(r => r.json()),
           fetch('/api/trading/telegram/aliases').then(r => r.json()),
@@ -123,6 +149,7 @@ export function TradingTelegramAdmin({
           fetch('/api/trading/staff').then(r => r.json()),
           fetch('/api/trading/accounts?status=ACTIVE').then(r => r.json()),
         ])
+        if (!mappingIsCurrent()) return
         setUsers(u.users ?? [])
         setAliases(a.aliases ?? [])
         setChats(c.chats ?? [])
@@ -137,16 +164,28 @@ export function TradingTelegramAdmin({
         )
       }
     } catch (e) {
-      setError((e as Error).message)
+      if (isCurrent()) setError((e as Error).message)
     } finally {
-      setLoading(false)
-      setMappingLoading(false)
+      if (isCurrent()) setLoading(false)
+      if (mappingIsCurrent()) setMappingLoading(false)
     }
   }, [canReviewDrafts, isStaffView, isAdmin, draftStatus, filterUserId, filterAccountId, duplicateOnly])
 
   useEffect(() => { void load() }, [load])
 
-  useRegisterMobileRefresh(load, canReviewDrafts)
+  // Telegram drafts arrive out of band (staff typing into the group chat), so the
+  // list has to come to the reviewer rather than wait for a manual refresh.
+  useEffect(() => {
+    if (!canReviewDrafts || tab !== 'drafts') return
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return
+      void load(true)
+    }, DRAFT_POLL_MS)
+    return () => window.clearInterval(id)
+  }, [canReviewDrafts, tab, load])
+
+  const reload = useCallback(() => { void load() }, [load])
+  useRegisterMobileRefresh(reload, canReviewDrafts)
 
   function toggleSelect(id: string) {
     setSelected(prev => {
@@ -158,7 +197,7 @@ export function TradingTelegramAdmin({
   }
 
   function selectAllPending() {
-    setSelected(new Set(drafts.filter(d => d.status === 'PENDING' || d.status === 'LOCKED').map(d => d.id)))
+    setSelected(new Set(drafts.filter(d => d.status === 'PENDING' || d.status === 'LOCKED' || (d.status === 'APPROVED' && !d.tradingTradeId)).map(d => d.id)))
   }
 
   async function approveDraft(id: string) {
@@ -172,9 +211,13 @@ export function TradingTelegramAdmin({
     const data = await res.json()
     if (!res.ok) {
       toast.error(data.error || 'Confirm failed')
+      // Reload anyway: the server may have moved the draft (rolled the claim
+      // back, locked it, someone else posted it). Leaving the stale row on
+      // screen is what made a failed confirm look like nothing happened.
+      void load()
       return
     }
-    toast.success('Trade confirmed to ledger')
+    toast.success(data.alreadyPosted ? 'Already in the ledger' : 'Trade confirmed to ledger')
     void load()
   }
 
@@ -197,14 +240,25 @@ export function TradingTelegramAdmin({
     void load()
   }
 
+  /** Selected rows still visible in this view — the selection survives filter
+   *  changes, so sending it whole would act on drafts the reviewer can no longer
+   *  see and never chose here. */
+  const visibleSelectedIds = useMemo(() => {
+    const visible = new Set(drafts.map(d => d.id))
+    return [...selected].filter(id => visible.has(id))
+  }, [drafts, selected])
+
   async function bulkReject() {
-    if (!selected.size) return
+    if (!visibleSelectedIds.length) {
+      toast.error('No selected drafts in this view.')
+      return
+    }
     const reason = (await promptDialog({ title: 'Bulk reject reason?', defaultValue: 'Rejected', confirmLabel: 'Reject' })) || 'Rejected'
     setBusy(true)
     const res = await fetch('/api/trading/telegram/drafts/bulk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ draftIds: [...selected], action: 'reject', reason }),
+      body: JSON.stringify({ draftIds: visibleSelectedIds, action: 'reject', reason }),
     })
     setBusy(false)
     const data = await res.json()
@@ -213,6 +267,7 @@ export function TradingTelegramAdmin({
       return
     }
     toast.success(`Rejected ${data.rejected} draft(s). Failed: ${data.failed}`)
+    if (data.failed) toast.error(bulkFailureMessage(data.failureReasons), { duration: 8000 })
     setSelected(new Set())
     void load()
   }
@@ -228,24 +283,45 @@ export function TradingTelegramAdmin({
     if (!res.ok) {
       const data = await res.json()
       toast.error(data.error || 'Reopen failed')
+      void load()
       return
     }
     void load()
   }
 
+  /** Only these can reach the ledger — LOCKED needs a reopen first. */
+  const confirmableIds = useMemo(() => {
+    const byId = new Map(drafts.map(d => [d.id, d]))
+    return [...selected].filter(id => {
+      const d = byId.get(id)
+      return d ? d.status === 'PENDING' || (d.status === 'APPROVED' && !d.tradingTradeId) : false
+    })
+  }, [drafts, selected])
+
   async function bulkConfirm() {
     if (!selected.size) return
+    // "Select all pending" also picks LOCKED rows so they can be bulk-rejected.
+    // Sending those to confirm just manufactures failures — assertDraftEditable
+    // rejects every one — so the confirm half uses the confirmable subset.
+    const lockedCount = selected.size - confirmableIds.length
+    if (!confirmableIds.length) {
+      toast.error('Selected drafts are locked — reopen them before confirming.')
+      return
+    }
     if (!(await confirmDialog({
       title: 'Post to ledger',
-      message: `Post ${selected.size} draft(s) to the ledger? This updates balances and P/L.`,
+      message: `Post ${confirmableIds.length} draft(s) to the ledger? This updates balances and P/L.`,
       confirmLabel: 'Post to ledger',
       danger: true,
     }))) return
+    if (lockedCount > 0) {
+      toast(`${lockedCount} locked draft(s) skipped — reopen them first.`, { duration: 6000 })
+    }
     setBusy(true)
     const res = await fetch('/api/trading/telegram/drafts/bulk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ draftIds: [...selected] }),
+      body: JSON.stringify({ draftIds: confirmableIds }),
     })
     setBusy(false)
     const data = await res.json()
@@ -254,6 +330,12 @@ export function TradingTelegramAdmin({
       return
     }
     toast.success(`Posted ${data.posted} trade(s). Failed: ${data.failed}`)
+    if (data.failed) toast.error(bulkFailureMessage(data.failureReasons), { duration: 8000 })
+    // A batch bigger than the cap, or one that ran out of time, leaves the rest
+    // untouched — say so, or the reviewer thinks the queue is clear when it isn't.
+    if (data.skipped) {
+      toast(`${data.skipped} draft(s) not attempted — press Bulk confirm again to continue.`, { duration: 8000 })
+    }
     setSelected(new Set())
     void load()
   }
@@ -270,6 +352,7 @@ export function TradingTelegramAdmin({
     if (!res.ok) {
       const data = await res.json()
       toast.error(data.error || 'Reject failed')
+      void load()
       return
     }
     void load()
@@ -305,6 +388,7 @@ export function TradingTelegramAdmin({
     if (!res.ok) {
       const data = await res.json()
       toast.error(data.error || 'Save failed')
+      void load()
       return
     }
     setEditId(null)
@@ -505,7 +589,7 @@ export function TradingTelegramAdmin({
       saveAlias={saveAlias}
       newChat={newChat}
       setNewChat={setNewChat}
-      onReload={load}
+      onReload={reload}
       newUser={newUser}
       setNewUser={setNewUser}
       saveUser={saveUser}
@@ -513,6 +597,7 @@ export function TradingTelegramAdmin({
       removingUserId={removingUserId}
       staffOptions={staffOptions}
       accountOptions={accountOptions}
+      accountList={accountList}
       aliasByAccountId={aliasByAccountId}
       mappingLoading={mappingLoading}
       savingUser={savingUser}
@@ -574,6 +659,7 @@ function TelegramAdminInner(props: Record<string, unknown>) {
     removingUserId,
     staffOptions,
     accountOptions,
+    accountList,
     aliasByAccountId,
     mappingLoading,
     savingUser,
@@ -633,6 +719,7 @@ function TelegramAdminInner(props: Record<string, unknown>) {
     removingUserId: string | null
     staffOptions: ReturnType<typeof staffToSearchableOptions>
     accountOptions: ReturnType<typeof accountToSearchableOptions>
+    accountList: AccountOptionSource[]
     aliasByAccountId: Map<string, string>
     mappingLoading: boolean
     savingUser: boolean
@@ -684,6 +771,7 @@ function TelegramAdminInner(props: Record<string, unknown>) {
             isStaffView={isStaffView}
             users={users}
             aliases={aliases}
+            accountList={accountList}
             draftStatus={draftStatus}
             setDraftStatus={setDraftStatus}
             filterUserId={filterUserId}
@@ -867,6 +955,7 @@ function DraftFiltersBar({
   isStaffView,
   users,
   aliases,
+  accountList,
   draftStatus,
   setDraftStatus,
   filterUserId,
@@ -879,6 +968,7 @@ function DraftFiltersBar({
   isStaffView: boolean
   users: TradingTelegramUserRow[]
   aliases: TradingAccountAliasRow[]
+  accountList: AccountOptionSource[]
   draftStatus: TradingTelegramDraftStatus | 'ALL'
   setDraftStatus: (v: TradingTelegramDraftStatus | 'ALL') => void
   filterUserId: string
@@ -896,6 +986,24 @@ function DraftFiltersBar({
     return [...map.entries()]
   }, [users])
 
+  // Aliases alone are not the account list: a staffer can be pinned to an
+  // account by `defaultTradingAccountId` with NO alias, and that is exactly the
+  // busiest one here (MD KAYESH MIA IT) — it never appeared in this filter.
+  // Active accounts first, aliases as the fallback for a non-admin who does not
+  // get the accounts payload.
+  const accountFilterOptions = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const acc of accountList) {
+      if (acc.id) map.set(acc.id, acc.accountTitle || acc.id)
+    }
+    for (const a of aliases) {
+      if (a.tradingAccountId && !map.has(a.tradingAccountId)) {
+        map.set(a.tradingAccountId, a.tradingAccount?.accountTitle || a.alias)
+      }
+    }
+    return [...map.entries()]
+  }, [accountList, aliases])
+
   return (
     <Card className="flex flex-wrap gap-2 rounded-2xl p-3">
       <select
@@ -905,6 +1013,7 @@ function DraftFiltersBar({
       >
         <option value="PENDING">Pending</option>
         <option value="LOCKED">Locked</option>
+        <option value="APPROVED">Confirming</option>
         <option value="ALL">All statuses</option>
         <option value="REJECTED">Rejected</option>
         <option value="POSTED">Posted</option>
@@ -927,10 +1036,8 @@ function DraftFiltersBar({
         className="rounded-lg border border-white/[0.06] bg-card/85 px-2 py-1 text-xs text-cream"
       >
         <option value="">All accounts</option>
-        {aliases.map(a => (
-          <option key={a.tradingAccountId} value={a.tradingAccountId}>
-            {a.tradingAccount?.accountTitle || a.alias}
-          </option>
+        {accountFilterOptions.map(([id, label]) => (
+          <option key={id} value={id}>{label}</option>
         ))}
       </select>
       <label className="flex items-center gap-1 text-xs text-muted">
@@ -991,7 +1098,13 @@ function DraftRow({
   busy: boolean
 }) {
   const isLocked = d.status === 'LOCKED'
-  const canConfirm = d.status === 'PENDING'
+  // A draft sitting in APPROVED with no trade is a confirm that did not finish.
+  // It stays confirmable so the retry is one tap, not an admin ticket.
+  const isConfirming = d.status === 'APPROVED' && !d.tradingTradeId
+  const canConfirm = d.status === 'PENDING' || isConfirming
+  // Never edit a CLAIMED draft: its ledger transaction may already have read the
+  // old numbers. The server refuses it too — this just keeps the button honest.
+  const canEdit = d.status === 'PENDING'
   const isPosted = d.status === 'POSTED'
 
   return (
@@ -1019,16 +1132,28 @@ function DraftRow({
             Account: {d.accountTitle || d.accountAlias || '—'}
           </p>
           <p className="mt-2 rounded-lg border border-white/[0.06] bg-white/[0.04] p-2 font-mono text-[11px] text-muted-hi">{d.rawMessage}</p>
+          {d.confirmError && (
+            <p className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-[11px] text-red-400">
+              Last confirm failed: {d.confirmError}
+            </p>
+          )}
+          {isLocked && isStaffView && (
+            <p className="mt-2 rounded-lg border border-orange-500/30 bg-orange-500/10 p-2 text-[11px] text-orange-500">
+              Locked past the daily cutoff — ask an admin to reopen it before you can confirm.
+            </p>
+          )}
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
         {canConfirm && (
-          <Button variant="gold" size="sm" disabled={busy} onClick={onApprove}>Confirm → ledger</Button>
+          <Button variant="gold" size="sm" disabled={busy} onClick={onApprove}>
+            {isConfirming || d.confirmError ? 'Retry confirm → ledger' : 'Confirm → ledger'}
+          </Button>
         )}
         {isLocked && !isStaffView && (
           <Button variant="secondary" size="sm" disabled={busy} onClick={onReopen}>Reopen</Button>
         )}
-        {canConfirm && (
+        {canEdit && (
           <Button variant="secondary" size="sm" disabled={busy} onClick={onEdit}>Edit</Button>
         )}
         {isPosted && d.tradingTradeId && (

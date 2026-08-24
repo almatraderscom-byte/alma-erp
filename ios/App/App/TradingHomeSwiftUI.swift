@@ -13,9 +13,11 @@
 //  screenshot-compliance amber strip (only when due/overdue > 0) · My accounts list
 //  (MyTradingAccounts parity: title, UID, balance gold, daily P/L signed, compliance badge)
 //  · Action-required alerts · period snapshots (today/yesterday/last7) · latest trades +
-//  expenses. ALL mutations (trade entry, expense, bKash summary, screenshot upload) stay on
-//  the web escape hatch — this screen is read-only. Hero accent = the trading business
-//  switcher green (sage #81B29A). Carried lessons: lenient row decoding, ONE spinner
+//  expenses. Mutations run NATIVELY (trade entry, expense, capital, bKash summary,
+//  screenshot upload); the footer escape is only "open this page on the web".
+//  Half-typed trade and screenshot forms survive the sheet closing
+//  (TradingFormDrafts), the same promise the web makes. Hero accent = the trading
+//  business switcher green (sage #81B29A). Carried lessons: lenient row decoding, ONE spinner
 //  pattern (shimmer skeletons), no global overlays.
 //
 
@@ -529,7 +531,7 @@ final class TradingHomeVM {
             authExpired = true
         } catch {
             if Self.isCancellation(error) { return }
-            self.error = error.localizedDescription
+            self.error = almaServerMessage(error)
         }
     }
 
@@ -554,7 +556,7 @@ final class TradingHomeVM {
             authExpired = true
         } catch {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
-            self.error = error.localizedDescription
+            self.error = almaServerMessage(error)
         }
     }
 
@@ -610,7 +612,7 @@ final class TradingHomeVM {
             return false
         } catch {
             if Self.isCancellation(error) { return false }
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
             return false
         }
     }
@@ -644,7 +646,10 @@ final class TradingHomeVM {
     func uploadScreenshot(accountId: String, data: Data, shotDate: String, note: String) async -> Bool {
         struct ShotResponse: Decodable { let ok: Bool? }
         do {
-            var fields = ["shotDate": shotDate]
+            // Web sends a content fingerprint too; the route uses it as a second
+            // duplicate guard on top of its own content hash.
+            var fields = ["shotDate": shotDate,
+                          "fingerprint": TradingUploadFingerprint.make(data)]
             if !note.isEmpty { fields["note"] = note }
             let res: ShotResponse = try await AlmaAPI.shared.uploadMultipart(
                 "/api/trading/accounts/\(accountId)/performance",
@@ -661,7 +666,7 @@ final class TradingHomeVM {
             authExpired = true
             return false
         } catch {
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
             return false
         }
     }
@@ -1988,6 +1993,23 @@ struct TradingHomeTradeSheet: View {
     private var account: TradingHomeAccount? { vm.accounts.first(where: { $0.id == accountId }) }
     private func num(_ s: String) -> Double { Double(s.replacingOccurrences(of: ",", with: "")) ?? 0 }
 
+    /// What this sheet would show untouched — the baseline "empty" is measured
+    /// against, so a deliberate choice is never mistaken for a pristine form.
+    private var draftDefaults: TradingFormDrafts.Trade.Defaults {
+        .init(accountId: vm.accounts.first?.id ?? "",
+              mode: initialMode,
+              tradeType: "BUY",
+              bkashDate: TradingHomeDateHelper.today())
+    }
+
+    /// Everything worth surviving the sheet closing — see TradingFormDrafts.
+    private var draftSnapshot: TradingFormDrafts.Trade {
+        .init(accountId: accountId, mode: mode, tradeType: tradeType,
+              usdtAmount: usdtAmount, bdtRate: bdtRate, feeUsdt: feeUsdt, notes: notes,
+              bkashDate: bkashDate, bkashOrders: bkashOrders,
+              bkashProfit: bkashProfit, bkashLoss: bkashLoss)
+    }
+
     // Web calc block parity (TradingModals.tsx calc useMemo).
     private var totalBdt: Double { num(usdtAmount) * num(bdtRate) }
     private var feeBdt: Double { num(feeUsdt) * num(bdtRate) }
@@ -2095,6 +2117,37 @@ struct TradingHomeTradeSheet: View {
         .onAppear {
             if accountId.isEmpty { accountId = preselect ?? vm.accounts.first?.id ?? "" }
             mode = initialMode
+            // Web TradeEntryModal restores its draft on open. Only when the caller
+            // did not preselect an account: an alert CTA naming one account must
+            // not be hijacked by a draft for another.
+            if preselect == nil, let d = TradingFormDrafts.loadTrade(),
+               !d.isEmpty(defaults: draftDefaults) {
+                if !d.accountId.isEmpty, vm.accounts.contains(where: { $0.id == d.accountId }) {
+                    accountId = d.accountId
+                }
+                mode = d.mode
+                tradeType = d.tradeType
+                usdtAmount = d.usdtAmount
+                bdtRate = d.bdtRate
+                feeUsdt = d.feeUsdt
+                notes = d.notes
+                if !d.bkashDate.isEmpty { bkashDate = d.bkashDate }
+                bkashOrders = d.bkashOrders
+                bkashProfit = d.bkashProfit
+                bkashLoss = d.bkashLoss
+            }
+        }
+        .onChange(of: draftSnapshot) { _, snapshot in
+            // An account-scoped sheet never touches the shared draft. It skips
+            // restoring one, so seeding its accountId fires this observer with
+            // empty fields — merely opening and dismissing it would otherwise
+            // wipe amounts the user typed on the general sheet.
+            guard preselect == nil else { return }
+            if snapshot.isEmpty(defaults: draftDefaults) {
+                TradingFormDrafts.clear(TradingFormDrafts.tradeKey)
+            } else {
+                TradingFormDrafts.save(TradingFormDrafts.tradeKey, snapshot)
+            }
         }
         .confirmationDialog(
             mode == "BKASH"
@@ -2160,6 +2213,9 @@ struct TradingHomeTradeSheet: View {
                     notes: notes.trimmingCharacters(in: .whitespaces)))
             }
             if ok {
+                // Saved for real — the draft has done its job. Only the sheet
+                // that owns the shared draft may clear it.
+                if preselect == nil { TradingFormDrafts.clear(TradingFormDrafts.tradeKey) }
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 dismiss()
             } else {
@@ -2276,7 +2332,9 @@ struct TradingHomeExpenseSheet: View {
                 paidBy: account.partnershipEnabled ? paidBy : nil,
                 notes: notes, attachmentUrl: attachmentUrl))
             UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
-            if ok { dismiss() }
+            if ok {
+                dismiss()
+            }
         }
     }
 }
@@ -2408,7 +2466,29 @@ struct TradingHomeShotSheet: View {
             }
             TradingHomeField(placeholder: "Note (ঐচ্ছিক)", text: $note, keyboard: .default)
         }
-        .onAppear { if accountId.isEmpty { accountId = preselect ?? vm.accounts.first?.id ?? "" } }
+        .onAppear {
+            if accountId.isEmpty { accountId = preselect ?? vm.accounts.first?.id ?? "" }
+            // Web ScreenshotUploadModal restores account/date/note. The image is
+            // never part of the draft — only the fields typed around it.
+            if preselect == nil, let d = TradingFormDrafts.loadScreenshot(),
+               !d.isEmpty(today: TradingHomeDateHelper.today(),
+                          defaultAccountId: vm.accounts.first?.id ?? "") {
+                if !d.accountId.isEmpty, vm.accounts.contains(where: { $0.id == d.accountId }) {
+                    accountId = d.accountId
+                }
+                if !d.shotDate.isEmpty { shotDate = d.shotDate }
+                note = d.note
+            }
+        }
+        .onChange(of: TradingFormDrafts.Screenshot(accountId: accountId, shotDate: shotDate, note: note)) { _, snapshot in
+            guard preselect == nil else { return }      // scoped sheet: leave the shared draft alone
+            if snapshot.isEmpty(today: TradingHomeDateHelper.today(),
+                                defaultAccountId: vm.accounts.first?.id ?? "") {
+                TradingFormDrafts.clear(TradingFormDrafts.screenshotKey)
+            } else {
+                TradingFormDrafts.save(TradingFormDrafts.screenshotKey, snapshot)
+            }
+        }
     }
 
     private func submit() {
@@ -2419,7 +2499,12 @@ struct TradingHomeShotSheet: View {
             let ok = await vm.uploadScreenshot(
                 accountId: accountId, data: imageData, shotDate: shotDate, note: note)
             UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
-            if ok { dismiss() }
+            if ok {
+                // Only this sheet's own success clears this sheet's draft, and
+                // only when it is the one that owns it.
+                if preselect == nil { TradingFormDrafts.clear(TradingFormDrafts.screenshotKey) }
+                dismiss()
+            }
         }
     }
 }

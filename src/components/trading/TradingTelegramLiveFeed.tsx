@@ -52,9 +52,10 @@ export function TradingTelegramLiveFeed() {
     <div className="space-y-3">
       {error && <p className="text-sm text-red-500">{error}</p>}
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
         {[
           ['Pending', feed?.counts.pending ?? 0, 'text-amber-600'],
+          ['Confirming', feed?.counts.approved ?? 0, 'text-blue-500'],
           ['Locked', feed?.counts.locked ?? 0, 'text-orange-500'],
           ['Posted', feed?.counts.posted ?? 0, 'text-emerald-600'],
           ['Rejected', feed?.counts.rejected ?? 0, 'text-red-500'],

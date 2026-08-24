@@ -65,10 +65,17 @@ export async function GET(req: NextRequest, props: RouteContext) {
     if (!account) return NextResponse.json({ error: 'Trading account not found' }, { status: 404 })
     if (!canAccessTradingAccount(ctx, account)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-    const { summary, today } = await prisma.$transaction(async tx => ({
-      summary: await recalculateTradingAccount(tx, account.id),
-      today: await getTradingDailySummary(tx, account.id),
-    }))
+    // This "read" writes: recalculateTradingAccount updates the account row. Left
+    // unlocked, a detail-page load that reads its aggregate before a trade commits
+    // but writes after it would stamp a stale balance over the correct one. Same
+    // lock as every other writer, held only for this account.
+    const { summary, today } = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${account.id} FOR UPDATE`
+      return {
+        summary: await recalculateTradingAccount(tx, account.id),
+        today: await getTradingDailySummary(tx, account.id),
+      }
+    })
     const [recentTrades, recentExpenses, recentCapitalEntries, bkashSummaries, performanceRows, yesterday, last7, currentMonth, timelineTrades, timelineExpenses, timelineCapitalEntries, timelineBkash] = await Promise.all([
       prisma.tradingTrade.findMany({
         where: { tradingAccountId: account.id, businessId: TRADING_BUSINESS_ID },

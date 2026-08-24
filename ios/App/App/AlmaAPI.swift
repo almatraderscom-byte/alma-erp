@@ -811,6 +811,33 @@ enum AlmaAPIError: LocalizedError {
     }
 }
 
+extension AlmaAPIError {
+    /// The message a person should read.
+    ///
+    /// ERP routes answer a rejected write with `{"error":"…"}` and a 4xx, which
+    /// `errorDescription` renders as `Server error 400: {"error":"…"}` — raw JSON
+    /// in a toast. This unwraps that field so the screen shows the actual reason
+    /// (e.g. the sell-exceeds-balance guard) and falls back to the plain
+    /// description for transport/decoding failures.
+    var serverMessage: String {
+        guard case .http(_, let body) = self else {
+            return localizedDescription
+        }
+        if let data = body.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let message = (json["error"] ?? json["message"]) as? String,
+           !message.isEmpty {
+            return message
+        }
+        return localizedDescription
+    }
+}
+
+/// Any error, unwrapped to the server's own message when there is one.
+func almaServerMessage(_ error: Error) -> String {
+    (error as? AlmaAPIError)?.serverMessage ?? error.localizedDescription
+}
+
 // MARK: - AnyEncodable
 
 /// Type-erased Encodable so callers can pass heterogenous dictionaries as bodies,

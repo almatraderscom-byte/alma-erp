@@ -28,6 +28,9 @@ async function reconcile(req: NextRequest) {
 
   for (const account of accounts) {
     const result = await prisma.$transaction(async tx => {
+      // The nightly reconcile rewrites the account from its own aggregate, so it
+      // must not run beside a trade that has not committed yet.
+      await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${account.id} FOR UPDATE`
       const summary = await recalculateTradingAccount(tx, account.id)
       await refreshTradingDailySnapshot(tx, account.id, new Date(), summary)
       return summary

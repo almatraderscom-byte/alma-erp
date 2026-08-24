@@ -1591,6 +1591,10 @@ model TradingTelegramDraft {
   lastEditedBy      String?
   lastEditedAt      DateTime?
   rejectReason      String?                     @db.Text
+  /// Why the last confirm→ledger attempt failed (balance guard, missing account…).
+  /// Kept so staff see the reason on the card instead of a toast that vanished.
+  confirmError      String?                     @db.Text
+  confirmErrorAt    DateTime?
   /// Per-user daily sequence (resets each BD calendar day), not shared across staff.
   tradeNumber       Int?
   /// Hash for duplicate detection scoped to telegramUserId + account + day.
@@ -1598,6 +1602,10 @@ model TradingTelegramDraft {
   undoneAt          DateTime?
   lockedAt          DateTime?
   lockedReason      String?                     @db.Text
+  /// Set when an admin reopens an auto-locked draft. It exempts the row from the
+  /// day-cutoff rule — otherwise the sweep re-locks it on the next list load and
+  /// the confirm claim rejects it, which made "reopen" do nothing at all.
+  reopenedAt        DateTime?
   inputChannel      TradingTelegramInputChannel @default(TEXT_COMMAND)
   /// Reserved for future OCR/voice/screenshot parsers (raw payload, confidence, etc.)
   futurePayload     Json?

@@ -9,7 +9,7 @@
 //    GET /api/trading/accounts?status=ALL   → account picker options
 //    GET /api/trading/staff                 → staff picker options
 //  Web-parity blocks: filter card (date range → native preset chips · staff ·
-//  account · status · profitability pickers; min/max ROI stays on the web) ·
+//  account · status · profitability pickers · min/max ROI) ·
 //  11-KPI board re-set in the bento language (managed-capital hero with the
 //  today/weekly/monthly net split · USDT/fees/expenses/headcount tiles) ·
 //  Analytics Alerts (tone-red) · three mini trend line charts (Profit #4ade80 ·
@@ -17,8 +17,9 @@
 //  redrawn as native Paths) · four RankingBars cards (Top Profitable / Top Loss /
 //  Best Spread / Highest Expense — green/red signed bars) · Staff Performance
 //  ranked list · Merchant Account Intelligence rows (client-side search, same
-//  fields the web filters on) · Expense Intelligence bars. CSV/Excel/PDF exports
-//  and custom date/ROI inputs stay on the web escape hatch.
+//  fields the web filters on) · Expense Intelligence bars. CSV + PDF export via the
+//  share sheet (the web's XLSX carries the same columns as the CSV), and custom
+//  date range + min/max ROI are native too.
 //  Trading hero accent: sage green (owner spec) instead of the coral hero.
 //  Carried lessons: lenient decoding, cancellation-safe .refreshable, auth card,
 //  ONE spinner pattern, no global overlays.
@@ -414,7 +415,7 @@ private final class TradingAnalyticsVM {
             authExpired = true
         } catch {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
-            self.error = error.localizedDescription
+            self.error = almaServerMessage(error)
         }
     }
 

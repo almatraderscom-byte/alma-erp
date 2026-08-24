@@ -172,7 +172,7 @@ final class TradingStaffVM {
             authExpired = true
         } catch {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
-            self.error = error.localizedDescription
+            self.error = almaServerMessage(error)
         }
     }
 
@@ -217,7 +217,7 @@ final class TradingStaffVM {
             return false
         } catch {
             if Self.isCancellation(error) { return false }
-            toast = "সেভ ব্যর্থ: \(error.localizedDescription)"
+            toast = "সেভ ব্যর্থ: \(almaServerMessage(error))"
             return false
         }
     }

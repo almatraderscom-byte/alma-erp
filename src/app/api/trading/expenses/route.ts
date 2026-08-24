@@ -59,6 +59,12 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await prisma.$transaction(async tx => {
+      // Same account-row lock every writer of this account's totals takes
+      // (see createTradingTradeRecord): this transaction recalculates the
+      // account, so without it a concurrent trade's balance can be overwritten
+      // by an aggregate taken before that trade committed.
+      await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${tradingAccountId} FOR UPDATE`
+
       const expense = await tx.tradingExpense.create({
         data: {
           tradingAccountId,

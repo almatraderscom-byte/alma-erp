@@ -152,6 +152,10 @@
     {
       "path": "/api/assistant/internal/entrance-watch",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/telegram-confirm-nudge",
+      "schedule": "0 * * * *"
     }
   ],
   "headers": [

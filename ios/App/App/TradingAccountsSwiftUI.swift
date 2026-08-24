@@ -448,6 +448,10 @@ final class TradingAccountsVM {
     var loading = false
     var error: String? = nil
     var authExpired = false
+    /// Web `canManageTargets`: only a SUPER_ADMIN may set a merchant target. The
+    /// server enforces it (`requireTradingSuperAdmin`), so without this an ADMIN
+    /// sees an editable field, fills it in, and the WHOLE account save 403s.
+    var canManageTargets = false
 
     /// Web TRADING_STATUS_OPTIONS — All status / Active / Paused / Completed / Closed.
     static let statusOptions: [(label: String, value: String)] = [
@@ -477,7 +481,7 @@ final class TradingAccountsVM {
             authExpired = true
         } catch {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
-            self.error = error.localizedDescription
+            self.error = almaServerMessage(error)
         }
     }
 
@@ -551,7 +555,7 @@ final class TradingAccountsVM {
             return false
         } catch {
             if Self.isCancellation(error) { return false }
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
             return false
         }
     }
@@ -570,7 +574,7 @@ final class TradingAccountsVM {
             await load()
             return true
         } catch {
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
             return false
         }
     }
@@ -641,6 +645,7 @@ struct TradingAccountsScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task {
+            if let me = await OrdIdentity.load() { vm.canManageTargets = me.role == "SUPER_ADMIN" }
             await vm.load(); await vm.loadStaff()
             // Deep link: auto-open the focused account once the list is in.
             if let fid = focusAccountId, selected == nil {
@@ -1050,7 +1055,7 @@ private struct TradingAccountsDetailSheet: View {
                 if detail?.summary == nil { loadError = "অ্যাকাউন্ট ডেটা পাওয়া যায়নি" }
             } catch {
                 if !TradingAccountsVM.isCancellation(error) {
-                    loadError = error.localizedDescription
+                    loadError = almaServerMessage(error)
                 }
             }
             loading = false
@@ -1921,7 +1926,16 @@ private struct TradingAccountsFormSheet: View {
                         ("Staff operated", "STAFF_OPERATED"), ("Other", "OTHER"),
                     ])
                     field("Binance UID", text: $binanceUid, keyboard: .default)
-                    field("Merchant Goal / Monthly Target", text: $merchantTarget)
+                    // Web shows the input to a Super Admin and a read-only line to
+                    // everyone else — matching that keeps an ADMIN from filling in
+                    // a value the server will refuse.
+                    if vm.canManageTargets {
+                        field("Merchant Goal / Monthly Target", text: $merchantTarget)
+                    } else if !merchantTarget.isEmpty {
+                        LabeledContent("Monthly target",
+                                       value: "\(merchantTarget) BDT (Super Admin only)")
+                            .font(.footnote)
+                    }
                     labeledPicker("Status", selection: $status, options: [
                         ("Active", "ACTIVE"), ("Paused", "PAUSED"),
                         ("Completed", "COMPLETED"), ("Closed", "CLOSED"),
@@ -2048,7 +2062,10 @@ private struct TradingAccountsFormSheet: View {
             accountType: accountType,
             status: status,
             startingCapital: num(startingCapital),
-            merchantTarget: merchantTarget.isEmpty ? nil : num(merchantTarget),
+            // Web: `if (!canManageTargets) delete payload.merchantTarget`. Sending
+            // it as a non-super-admin 403s the ENTIRE save, and an edit would send
+            // it purely because the form was prefilled from the account.
+            merchantTarget: vm.canManageTargets && !merchantTarget.isEmpty ? num(merchantTarget) : nil,
             commissionType: commissionType,
             commissionRate: num(commissionRate),
             fixedCommission: num(fixedCommission),
