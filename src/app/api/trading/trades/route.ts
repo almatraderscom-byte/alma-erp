@@ -75,6 +75,14 @@ export async function POST(req: NextRequest) {
     const userId = ctx.isAdmin && body.userId ? String(body.userId).trim() : ctx.userId
 
     const result = await prisma.$transaction(async tx => {
+      // Same account-row lock createTradingTradeRecord takes. Both paths write
+      // this account's inventory after reading it, so they have to serialise on
+      // the same thing: without this a manual trade can commit while a Telegram
+      // confirm is deciding whether backdating is safe, and be invisible to that
+      // decision — besides letting two concurrent sells both clear a balance
+      // guard only one of them should have.
+      await tx.$queryRaw`SELECT id FROM "TradingAccount" WHERE id = ${tradingAccountId} FOR UPDATE`
+
       const currentAccount = await tx.tradingAccount.findUniqueOrThrow({
         where: { id: tradingAccountId },
         select: { usdtBalance: true, inventoryCostBdt: true },

@@ -2128,6 +2128,11 @@ struct TradingHomeTradeSheet: View {
             }
         }
         .onChange(of: draftSnapshot) { _, snapshot in
+            // An account-scoped sheet never touches the shared draft. It skips
+            // restoring one, so seeding its accountId fires this observer with
+            // empty fields — merely opening and dismissing it would otherwise
+            // wipe amounts the user typed on the general sheet.
+            guard preselect == nil else { return }
             if snapshot.isEmpty { TradingFormDrafts.clear(TradingFormDrafts.tradeKey) }
             else { TradingFormDrafts.save(TradingFormDrafts.tradeKey, snapshot) }
         }
@@ -2195,8 +2200,9 @@ struct TradingHomeTradeSheet: View {
                     notes: notes.trimmingCharacters(in: .whitespaces)))
             }
             if ok {
-                // Saved for real — the draft has done its job.
-                TradingFormDrafts.clear(TradingFormDrafts.tradeKey)
+                // Saved for real — the draft has done its job. Only the sheet
+                // that owns the shared draft may clear it.
+                if preselect == nil { TradingFormDrafts.clear(TradingFormDrafts.tradeKey) }
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 dismiss()
             } else {
@@ -2461,6 +2467,7 @@ struct TradingHomeShotSheet: View {
             }
         }
         .onChange(of: TradingFormDrafts.Screenshot(accountId: accountId, shotDate: shotDate, note: note)) { _, snapshot in
+            guard preselect == nil else { return }      // scoped sheet: leave the shared draft alone
             if snapshot.isEmpty(today: TradingHomeDateHelper.today()) {
                 TradingFormDrafts.clear(TradingFormDrafts.screenshotKey)
             } else {
@@ -2478,8 +2485,9 @@ struct TradingHomeShotSheet: View {
                 accountId: accountId, data: imageData, shotDate: shotDate, note: note)
             UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
             if ok {
-                // Only this sheet's own success clears this sheet's draft.
-                TradingFormDrafts.clear(TradingFormDrafts.screenshotKey)
+                // Only this sheet's own success clears this sheet's draft, and
+                // only when it is the one that owns it.
+                if preselect == nil { TradingFormDrafts.clear(TradingFormDrafts.screenshotKey) }
                 dismiss()
             }
         }
