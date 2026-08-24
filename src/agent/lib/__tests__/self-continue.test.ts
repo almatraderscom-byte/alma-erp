@@ -26,6 +26,11 @@ const sourceBinding = vi.hoisted(() => ({
 }))
 vi.mock('@/agent/lib/continuation-binding', () => sourceBinding)
 
+const turnStatus = vi.hoisted(() => ({
+  finalizeTurnIfRunning: vi.fn(async () => {}),
+}))
+vi.mock('@/agent/lib/turn-status', () => turnStatus)
+
 import { shouldAutoContinueTurn, mayContinueChain, MAX_SELF_CONTINUE_HOPS } from '@/agent/lib/continuation-policy'
 import {
   scheduleSelfContinue,
@@ -188,7 +193,7 @@ describe('the wake-up chain', () => {
     expect(call.inlineDeadlineAtMs).toBeLessThanOrEqual(Date.now())
   })
 
-  it('a worker-down deferral is reported honestly, never as a scheduled wake', async () => {
+  it('a worker-down deferral is reported honestly, never as a scheduled wake — and the stranded bound turn is settled', async () => {
     continuation.enqueueAgentContinuation.mockResolvedValue({
       outcome: 'deferred', turnId: 'next-turn', requestId: 'self-request', status: 'running',
     })
@@ -197,6 +202,9 @@ describe('the wake-up chain', () => {
 
     expect(res.scheduled).toBe(false)
     expect(res.reason).toBe('worker_unavailable_deferred_to_owner')
+    // The bind created a source-bound successor turn; left 'running' it would
+    // strand and shadow the client fallback (Codex P1 #850 r5).
+    expect(turnStatus.finalizeTurnIfRunning).toHaveBeenCalledWith('next-turn', 'canceled')
   })
 
   it('does not claim a wake was scheduled when bound enqueue is rejected', async () => {

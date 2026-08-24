@@ -304,8 +304,14 @@ export async function scheduleSelfContinue(input: {
     if (enqueued.outcome === 'deferred') {
       // The binding is durable and retryable, but nothing server-side is
       // actually going to fire — claiming "scheduled" here would tell Boss the
-      // agent resumes itself while the worker is down. Honest answer: not
-      // scheduled; the client hint / owner "continue" claims the bound turn.
+      // agent resumes itself while the worker is down. The bind above already
+      // created a source-bound successor turn; left 'running' it would strand
+      // (Codex P1 #850 r5) and shadow the client fallback, so it is settled
+      // before the client lane is invited to claim its own continuation.
+      if (enqueued.turnId) {
+        const { finalizeTurnIfRunning } = await import('@/agent/lib/turn-status')
+        await finalizeTurnIfRunning(enqueued.turnId, 'canceled')
+      }
       return { scheduled: false, hops: next, reason: 'worker_unavailable_deferred_to_owner' }
     }
     return { scheduled: false, hops: next, reason: enqueued.status || enqueued.outcome }
