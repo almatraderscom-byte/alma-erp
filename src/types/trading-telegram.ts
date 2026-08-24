@@ -68,6 +68,9 @@ export type TradingTelegramDraftRow = {
   parseError?: string | null
   tradingTradeId?: string | null
   rejectReason?: string | null
+  /** Why the last confirm→ledger attempt failed; cleared on edit/reject/post. */
+  confirmError?: string | null
+  confirmErrorAt?: string | null
   tradeNumber?: number | null
   draftFingerprint?: string | null
   undoneAt?: string | null
@@ -107,7 +110,7 @@ export type TradingTelegramLiveAudit = {
 export type TradingTelegramLiveFeed = {
   drafts: TradingTelegramLiveDraft[]
   audits: TradingTelegramLiveAudit[]
-  counts: { pending: number; locked: number; rejected: number; posted: number; undone: number }
+  counts: { pending: number; locked: number; rejected: number; posted: number; undone: number; approved: number }
   serverTime: string
 }
 

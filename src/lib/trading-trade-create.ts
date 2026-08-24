@@ -37,7 +37,12 @@ export async function createTradingTradeRecord(input: CreateTradingTradeInput) {
       select: { usdtBalance: true, inventoryCostBdt: true },
     })
     if (input.tradeType === 'SELL' && Number(currentAccount.usdtBalance) + 0.00000001 < Number(usdtAmount)) {
-      throw new Error('Sell USDT exceeds current account USDT balance.')
+      // Name both numbers: staff hitting this from a Telegram draft could not tell
+      // whether the entry was wrong or the account was short.
+      throw new Error(
+        `Sell ${Number(usdtAmount)} USDT exceeds the account balance of ${Number(currentAccount.usdtBalance)} USDT. ` +
+          'Post the matching BUY first, or edit the amount.',
+      )
     }
     const averageCostRateBdt = Number(currentAccount.usdtBalance) > 0
       ? moneyDecimal(Number(currentAccount.inventoryCostBdt) / Number(currentAccount.usdtBalance))

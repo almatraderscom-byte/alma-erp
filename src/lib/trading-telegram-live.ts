@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { TRADING_BUSINESS_ID } from '@/lib/trading'
 import { resolveProfileImageForUser } from '@/lib/user-display'
-import { lockStalePendingTelegramDrafts } from '@/lib/trading-telegram-lock'
+import { sweepTelegramDraftStates } from '@/lib/trading-telegram-lock'
 
 const LIVE_EVENT_TYPES = [
   'DUPLICATE_TRADE',
@@ -14,7 +14,7 @@ const LIVE_EVENT_TYPES = [
 
 export async function getTelegramLiveFeed(opts: { since?: Date; limit?: number }) {
   const limit = Math.min(opts.limit ?? 40, 60)
-  await lockStalePendingTelegramDrafts()
+  await sweepTelegramDraftStates()
 
   const since = opts.since
 
@@ -75,6 +75,10 @@ export async function getTelegramLiveFeed(opts: { since?: Date; limit?: number }
     rejected: 0,
     posted: 0,
     undone: 0,
+    // APPROVED was missing here, which is why eight stranded drafts showed up in
+    // no counter at all. A non-zero value means a confirm is mid-flight (or a
+    // sweep is due) — never silence it again.
+    approved: 0,
   }
   for (const row of statusCounts) {
     if (row.status === 'PENDING') counts.pending = row._count._all
@@ -82,6 +86,7 @@ export async function getTelegramLiveFeed(opts: { since?: Date; limit?: number }
     else if (row.status === 'REJECTED') counts.rejected = row._count._all
     else if (row.status === 'POSTED') counts.posted = row._count._all
     else if (row.status === 'UNDONE') counts.undone = row._count._all
+    else if (row.status === 'APPROVED') counts.approved = row._count._all
   }
 
   const draftsWithAvatars = drafts.map(d => ({

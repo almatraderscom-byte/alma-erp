@@ -1591,6 +1591,10 @@ model TradingTelegramDraft {
   lastEditedBy      String?
   lastEditedAt      DateTime?
   rejectReason      String?                     @db.Text
+  /// Why the last confirm→ledger attempt failed (balance guard, missing account…).
+  /// Kept so staff see the reason on the card instead of a toast that vanished.
+  confirmError      String?                     @db.Text
+  confirmErrorAt    DateTime?
   /// Per-user daily sequence (resets each BD calendar day), not shared across staff.
   tradeNumber       Int?
   /// Hash for duplicate detection scoped to telegramUserId + account + day.

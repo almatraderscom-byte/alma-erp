@@ -3,6 +3,17 @@ import { canUseTelegramDraftReview } from '@/lib/trading-telegram-permissions'
 import { getTradingContext, requireTradingWrite } from '@/lib/trading'
 import { bulkApproveTelegramDrafts, bulkRejectTelegramDrafts } from '@/lib/trading-telegram-drafts'
 
+/** Distinct failure messages, newest-first order preserved, capped for a toast. */
+function distinctReasons(results: Array<{ ok: boolean; error?: string }>): string[] {
+  const seen = new Set<string>()
+  for (const r of results) {
+    if (r.ok || !r.error) continue
+    seen.add(r.error)
+    if (seen.size >= 3) break
+  }
+  return [...seen]
+}
+
 export async function POST(req: NextRequest) {
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
@@ -28,12 +39,25 @@ export async function POST(req: NextRequest) {
     const results = await bulkRejectTelegramDrafts(ctx, draftIds, String(body.reason || 'Bulk rejected'))
     const ok = results.filter(r => r.ok).length
     const failed = results.filter(r => !r.ok).length
-    return NextResponse.json({ ok: true, rejected: ok, failed, results })
+    return NextResponse.json({
+      ok: true,
+      rejected: ok,
+      failed,
+      failureReasons: distinctReasons(results),
+      results,
+    })
   }
 
   const results = await bulkApproveTelegramDrafts(ctx, draftIds)
   const ok = results.filter(r => r.ok).length
   const failed = results.filter(r => !r.ok).length
 
-  return NextResponse.json({ ok: true, posted: ok, failed, results })
+  // "Failed: 2" with no reason left the owner guessing which draft and why.
+  return NextResponse.json({
+    ok: true,
+    posted: ok,
+    failed,
+    failureReasons: distinctReasons(results),
+    results,
+  })
 }

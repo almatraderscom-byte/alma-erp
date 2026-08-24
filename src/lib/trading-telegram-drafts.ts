@@ -2,7 +2,7 @@ import type { TradingTradeType, TradingTelegramDraftStatus } from '@prisma/clien
 import { prisma } from '@/lib/prisma'
 import { TRADING_BUSINESS_ID } from '@/lib/trading'
 import { logTelegramDraftAudit } from '@/lib/trading-telegram-draft-audit'
-import { assertDraftEditable, lockStalePendingTelegramDrafts } from '@/lib/trading-telegram-lock'
+import { assertDraftEditable, sweepTelegramDraftStates } from '@/lib/trading-telegram-lock'
 import {
   draftListWhereForActor,
   filterDraftIdsForActor,
@@ -51,6 +51,10 @@ export async function updateTelegramDraft(
       ...(input.feeUsdt !== undefined ? { feeUsdt: input.feeUsdt } : {}),
       lastEditedBy: ctx.userId,
       lastEditedAt: new Date(),
+      // The numbers just changed — whatever the last confirm complained about is
+      // no longer what staff are looking at.
+      confirmError: null,
+      confirmErrorAt: null,
     },
     include: {
       user: { select: { id: true, name: true, email: true, profileImageUrl: true, updatedAt: true } },
@@ -74,12 +78,15 @@ export async function postDraftToLedger(draftId: string, reviewerUserId: string)
     where: { id: draftId, businessId: TRADING_BUSINESS_ID },
   })
   if (!draft) throw new Error('Draft not found')
+  // Idempotency FIRST: a second click on an already-posted draft must return the
+  // existing trade, not the "already posted to ledger" error assertDraftEditable
+  // would throw (which is what made this branch dead code before).
+  if (draft.status === 'POSTED' && draft.tradingTradeId) {
+    return { tradeId: draft.tradingTradeId, alreadyPosted: true }
+  }
   assertDraftEditable(draft.status)
   if (!draft.userId || !draft.tradingAccountId || !draft.tradeType) {
     throw new Error('Draft is incomplete — edit account and trade fields first')
-  }
-  if (draft.status === 'POSTED' && draft.tradingTradeId) {
-    return { tradeId: draft.tradingTradeId, alreadyPosted: true }
   }
 
   const notes = [
@@ -106,21 +113,74 @@ export async function postDraftToLedger(draftId: string, reviewerUserId: string)
       postedAt: new Date(),
       reviewedBy: reviewerUserId,
       reviewedAt: new Date(),
+      confirmError: null,
+      confirmErrorAt: null,
     },
   })
 
   return { tradeId: trade.id, alreadyPosted: false }
 }
 
+/**
+ * Confirm a draft into the ledger.
+ *
+ * The draft is CLAIMED (PENDING → APPROVED) before the trade is written so two
+ * taps can't post twice — but a claim that never reaches the ledger is rolled
+ * straight back to PENDING with the reason attached. The old code claimed and
+ * never rolled back, which stranded eight production drafts in APPROVED: gone
+ * from the pending list, never in the account, no button left to retry.
+ */
 export async function approveTelegramDraftToLedger(ctx: TradingContext, draftId: string) {
   const draft = await loadDraftForActor(ctx, draftId)
+  if (draft.status === 'POSTED' && draft.tradingTradeId) {
+    return { tradeId: draft.tradingTradeId, alreadyPosted: true }
+  }
   assertDraftEditable(draft.status)
 
-  await prisma.tradingTelegramDraft.updateMany({
-    where: { id: draftId, businessId: TRADING_BUSINESS_ID, status: 'PENDING' },
+  // Claim it. A previously-stranded APPROVED draft (tradingTradeId still null) is
+  // a legitimate retry, so it is claimable too.
+  const claim = await prisma.tradingTelegramDraft.updateMany({
+    where: {
+      id: draftId,
+      businessId: TRADING_BUSINESS_ID,
+      status: { in: ['PENDING', 'APPROVED'] },
+      tradingTradeId: null,
+    },
     data: { status: 'APPROVED', reviewedBy: ctx.userId, reviewedAt: new Date() },
   })
-  const result = await postDraftToLedger(draftId, ctx.userId)
+  if (claim.count === 0) {
+    const now = await prisma.tradingTelegramDraft.findFirst({
+      where: { id: draftId, businessId: TRADING_BUSINESS_ID },
+      select: { status: true, tradingTradeId: true },
+    })
+    if (now?.status === 'POSTED' && now.tradingTradeId) {
+      return { tradeId: now.tradingTradeId, alreadyPosted: true }
+    }
+    throw new Error('Draft is no longer confirmable — refresh and check its status')
+  }
+
+  let result: { tradeId: string; alreadyPosted: boolean }
+  try {
+    result = await postDraftToLedger(draftId, ctx.userId)
+  } catch (e) {
+    const reason = (e as Error).message
+    // Release the claim so the draft stays in the staff's list with the reason
+    // on it. Guarded on tradingTradeId so a trade that DID land is never undone.
+    await prisma.tradingTelegramDraft.updateMany({
+      where: { id: draftId, businessId: TRADING_BUSINESS_ID, status: 'APPROVED', tradingTradeId: null },
+      data: { status: 'PENDING', confirmError: reason, confirmErrorAt: new Date() },
+    })
+    await logTelegramDraftAudit({
+      eventType: 'DRAFT_CONFIRM_FAILED',
+      draftId,
+      actorUserId: ctx.userId,
+      telegramUserId: draft.telegramUserId,
+      telegramChatId: draft.telegramChatId,
+      detail: reason,
+    }).catch(() => {})
+    throw e
+  }
+
   await logTelegramDraftAudit({
     eventType: 'DRAFT_CONFIRMED',
     draftId,
@@ -146,6 +206,8 @@ export async function rejectTelegramDraftRecord(ctx: TradingContext, draftId: st
       rejectReason: reason,
       reviewedBy: ctx.userId,
       reviewedAt: new Date(),
+      confirmError: null,
+      confirmErrorAt: null,
     },
   })
 
@@ -190,7 +252,7 @@ export async function bulkRejectTelegramDrafts(ctx: TradingContext, draftIds: st
 }
 
 export async function listTelegramDrafts(opts: ListTelegramDraftsOptions) {
-  await lockStalePendingTelegramDrafts()
+  await sweepTelegramDraftStates()
 
   const drafts = await prisma.tradingTelegramDraft.findMany({
     where: draftListWhereForActor(opts.ctx, {

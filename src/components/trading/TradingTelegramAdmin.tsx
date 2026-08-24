@@ -33,6 +33,14 @@ import type {
 
 type Tab = 'drafts' | 'monitor' | 'live' | 'users' | 'aliases' | 'chats' | 'setup'
 
+/** A draft added in Telegram should surface here without anyone pulling to refresh. */
+const DRAFT_POLL_MS = 15_000
+
+function bulkFailureMessage(reasons?: string[]): string {
+  if (!reasons?.length) return 'Some drafts could not be processed — open them individually for the reason.'
+  return reasons.join(' · ')
+}
+
 export function TradingTelegramAdmin({
   userId,
   isAdmin,
@@ -88,9 +96,10 @@ export function TradingTelegramAdmin({
 
   const pendingCount = useMemo(() => drafts.filter(d => d.status === 'PENDING').length, [drafts])
 
-  const load = useCallback(async () => {
+  /** `quiet` = background poll: refresh the data without flashing the skeleton. */
+  const load = useCallback(async (quiet = false) => {
     if (!canReviewDrafts) return
-    setLoading(true)
+    if (!quiet) setLoading(true)
     setError(null)
     try {
       const draftQs = new URLSearchParams({
@@ -106,7 +115,7 @@ export function TradingTelegramAdmin({
       if (filterAccountId) draftQs.set('tradingAccountId', filterAccountId)
       if (duplicateOnly) draftQs.set('duplicateOnly', '1')
 
-      setMappingLoading(true)
+      if (!quiet) setMappingLoading(true)
       const draftRes = await fetch(`/api/trading/telegram/drafts?${draftQs}`).then(r => r.json())
       if (draftRes.error) throw new Error(draftRes.error)
 
@@ -114,7 +123,8 @@ export function TradingTelegramAdmin({
       setDraftGroups(draftRes.groups ?? [])
       setDraftDayGroups(draftRes.dayGroups ?? [])
 
-      if (isAdmin) {
+      // Mapping/config data barely changes — the poll only needs the drafts.
+      if (isAdmin && !quiet) {
         const [u, a, c, s, staffRes, accountsRes] = await Promise.all([
           fetch('/api/trading/telegram/users').then(r => r.json()),
           fetch('/api/trading/telegram/aliases').then(r => r.json()),
@@ -146,7 +156,19 @@ export function TradingTelegramAdmin({
 
   useEffect(() => { void load() }, [load])
 
-  useRegisterMobileRefresh(load, canReviewDrafts)
+  // Telegram drafts arrive out of band (staff typing into the group chat), so the
+  // list has to come to the reviewer rather than wait for a manual refresh.
+  useEffect(() => {
+    if (!canReviewDrafts || tab !== 'drafts') return
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return
+      void load(true)
+    }, DRAFT_POLL_MS)
+    return () => window.clearInterval(id)
+  }, [canReviewDrafts, tab, load])
+
+  const reload = useCallback(() => { void load() }, [load])
+  useRegisterMobileRefresh(reload, canReviewDrafts)
 
   function toggleSelect(id: string) {
     setSelected(prev => {
@@ -158,7 +180,7 @@ export function TradingTelegramAdmin({
   }
 
   function selectAllPending() {
-    setSelected(new Set(drafts.filter(d => d.status === 'PENDING' || d.status === 'LOCKED').map(d => d.id)))
+    setSelected(new Set(drafts.filter(d => d.status === 'PENDING' || d.status === 'LOCKED' || (d.status === 'APPROVED' && !d.tradingTradeId)).map(d => d.id)))
   }
 
   async function approveDraft(id: string) {
@@ -172,9 +194,13 @@ export function TradingTelegramAdmin({
     const data = await res.json()
     if (!res.ok) {
       toast.error(data.error || 'Confirm failed')
+      // Reload anyway: the server may have moved the draft (rolled the claim
+      // back, locked it, someone else posted it). Leaving the stale row on
+      // screen is what made a failed confirm look like nothing happened.
+      void load()
       return
     }
-    toast.success('Trade confirmed to ledger')
+    toast.success(data.alreadyPosted ? 'Already in the ledger' : 'Trade confirmed to ledger')
     void load()
   }
 
@@ -213,6 +239,7 @@ export function TradingTelegramAdmin({
       return
     }
     toast.success(`Rejected ${data.rejected} draft(s). Failed: ${data.failed}`)
+    if (data.failed) toast.error(bulkFailureMessage(data.failureReasons), { duration: 8000 })
     setSelected(new Set())
     void load()
   }
@@ -228,6 +255,7 @@ export function TradingTelegramAdmin({
     if (!res.ok) {
       const data = await res.json()
       toast.error(data.error || 'Reopen failed')
+      void load()
       return
     }
     void load()
@@ -254,6 +282,7 @@ export function TradingTelegramAdmin({
       return
     }
     toast.success(`Posted ${data.posted} trade(s). Failed: ${data.failed}`)
+    if (data.failed) toast.error(bulkFailureMessage(data.failureReasons), { duration: 8000 })
     setSelected(new Set())
     void load()
   }
@@ -270,6 +299,7 @@ export function TradingTelegramAdmin({
     if (!res.ok) {
       const data = await res.json()
       toast.error(data.error || 'Reject failed')
+      void load()
       return
     }
     void load()
@@ -305,6 +335,7 @@ export function TradingTelegramAdmin({
     if (!res.ok) {
       const data = await res.json()
       toast.error(data.error || 'Save failed')
+      void load()
       return
     }
     setEditId(null)
@@ -505,7 +536,7 @@ export function TradingTelegramAdmin({
       saveAlias={saveAlias}
       newChat={newChat}
       setNewChat={setNewChat}
-      onReload={load}
+      onReload={reload}
       newUser={newUser}
       setNewUser={setNewUser}
       saveUser={saveUser}
@@ -905,6 +936,7 @@ function DraftFiltersBar({
       >
         <option value="PENDING">Pending</option>
         <option value="LOCKED">Locked</option>
+        <option value="APPROVED">Confirming</option>
         <option value="ALL">All statuses</option>
         <option value="REJECTED">Rejected</option>
         <option value="POSTED">Posted</option>
@@ -991,7 +1023,10 @@ function DraftRow({
   busy: boolean
 }) {
   const isLocked = d.status === 'LOCKED'
-  const canConfirm = d.status === 'PENDING'
+  // A draft sitting in APPROVED with no trade is a confirm that did not finish.
+  // It stays confirmable so the retry is one tap, not an admin ticket.
+  const isConfirming = d.status === 'APPROVED' && !d.tradingTradeId
+  const canConfirm = d.status === 'PENDING' || isConfirming
   const isPosted = d.status === 'POSTED'
 
   return (
@@ -1019,11 +1054,23 @@ function DraftRow({
             Account: {d.accountTitle || d.accountAlias || '—'}
           </p>
           <p className="mt-2 rounded-lg border border-white/[0.06] bg-white/[0.04] p-2 font-mono text-[11px] text-muted-hi">{d.rawMessage}</p>
+          {d.confirmError && (
+            <p className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-[11px] text-red-400">
+              Last confirm failed: {d.confirmError}
+            </p>
+          )}
+          {isLocked && isStaffView && (
+            <p className="mt-2 rounded-lg border border-orange-500/30 bg-orange-500/10 p-2 text-[11px] text-orange-500">
+              Locked past the daily cutoff — ask an admin to reopen it before you can confirm.
+            </p>
+          )}
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
         {canConfirm && (
-          <Button variant="gold" size="sm" disabled={busy} onClick={onApprove}>Confirm → ledger</Button>
+          <Button variant="gold" size="sm" disabled={busy} onClick={onApprove}>
+            {isConfirming || d.confirmError ? 'Retry confirm → ledger' : 'Confirm → ledger'}
+          </Button>
         )}
         {isLocked && !isStaffView && (
           <Button variant="secondary" size="sm" disabled={busy} onClick={onReopen}>Reopen</Button>

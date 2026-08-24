@@ -1,7 +1,7 @@
 //
 //  TradingTelegramSwiftUI.swift
-//  ALMA ERP — the Telegram Quick Entry monitor (/trading/telegram) as a native
-//  SwiftUI screen (READ-ONLY).
+//  ALMA ERP — the Telegram Quick Entry review desk (/trading/telegram) as a
+//  native SwiftUI screen. Read AND write: staff confirm their own drafts here.
 //
 //  Mirrors the web page — same endpoints, same colours, same blocks:
 //    GET /api/trading/telegram/drafts?status=…&grouped=1&limit=100 → { drafts, groups }
@@ -15,8 +15,13 @@
 //  account, raw-message mono block, status pill) · owner-monitoring KPIs · staff
 //  pending-by-user · suspicious bot activity · live counts strip + latest trades +
 //  events · registered groups · user/alias mapping overview.
-//  ALL mutations (confirm→ledger, reject, edit, webhook, mapping writes) are
-//  money-sensitive and stay on the web — footer escape opens /trading/telegram.
+//  Mutations run natively (NP-6/TR-03·TR-04): confirm→ledger, reject, edit,
+//  reopen, request-delete, bulk, webhook + mapping writes. Footer escape still
+//  opens /trading/telegram for anything not modelled here.
+//  2026-08-24: a confirm that the ledger rejects rolls the draft back to PENDING
+//  server-side and returns the reason — the card shows `confirmError`, keeps the
+//  Confirm button (labelled "আবার পোস্ট করুন"), and the list reloads even on
+//  failure so a rejected confirm never looks like a frozen row.
 //  Carried lessons: lenient decoding, cancellation-safe .refreshable, auth card,
 //  ONE spinner pattern, no global overlays.
 //
@@ -82,12 +87,18 @@ struct TradingTelegramDraft: Decodable, Identifiable, Equatable {
     let lockedReason: String?
     let rejectReason: String?
     let parseError: String?
+    /// Why the last confirm→ledger attempt failed (server-persisted, survives the
+    /// toast). Paired with tradingTradeId so the card can tell "still trying" from
+    /// "landed in the ledger".
+    let confirmError: String?
+    let tradingTradeId: String?
     let createdAt: String?
 
     private enum Keys: String, CodingKey {
         case id, status, tradeNumber, tradeType, usdtAmount, bdtRate, feeUsdt
         case accountTitle, accountAlias, telegramUsername, telegramUserId
         case rawMessage, user, lockedReason, rejectReason, parseError, createdAt
+        case confirmError, tradingTradeId
     }
     private enum UserKeys: String, CodingKey { case name }
 
@@ -112,12 +123,20 @@ struct TradingTelegramDraft: Decodable, Identifiable, Equatable {
         lockedReason = try? c.decodeIfPresent(String.self, forKey: .lockedReason)
         rejectReason = try? c.decodeIfPresent(String.self, forKey: .rejectReason)
         parseError = try? c.decodeIfPresent(String.self, forKey: .parseError)
+        confirmError = try? c.decodeIfPresent(String.self, forKey: .confirmError)
+        tradingTradeId = try? c.decodeIfPresent(String.self, forKey: .tradingTradeId)
         createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
     }
 
     static func == (a: TradingTelegramDraft, b: TradingTelegramDraft) -> Bool {
-        a.id == b.id && a.status == b.status
+        a.id == b.id && a.status == b.status && a.confirmError == b.confirmError
     }
+
+    /// A draft parked in APPROVED with no ledger trade is a confirm that never
+    /// finished — it stays retryable rather than becoming an untouchable row.
+    var isStalledConfirm: Bool { status == "APPROVED" && (tradingTradeId ?? "").isEmpty }
+    /// Every state where Confirm / Reject / Edit still apply.
+    var isActionable: Bool { status == "PENDING" || status == "LOCKED" || isStalledConfirm }
 
     /// Web DraftRow headline: "#12 · BUY · 500 USDT @ 122.5 · fee 0.5".
     var headline: String {
@@ -312,9 +331,12 @@ struct TradingTelegramLive: Decodable {
     let rejected: Int
     let posted: Int
     let undone: Int
+    /// Confirms that claimed a draft but have not written the trade yet. A
+    /// non-zero value that stays put means a confirm died mid-flight.
+    let approved: Int
 
     private enum Keys: String, CodingKey { case ok, data, drafts, audits, counts }
-    private enum CountKeys: String, CodingKey { case pending, locked, rejected, posted, undone }
+    private enum CountKeys: String, CodingKey { case pending, locked, rejected, posted, undone, approved }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
@@ -326,6 +348,7 @@ struct TradingTelegramLive: Decodable {
         rejected = counts.flatMap { try? $0.decodeIfPresent(Int.self, forKey: .rejected) } ?? 0
         posted = counts.flatMap { try? $0.decodeIfPresent(Int.self, forKey: .posted) } ?? 0
         undone = counts.flatMap { try? $0.decodeIfPresent(Int.self, forKey: .undone) } ?? 0
+        approved = counts.flatMap { try? $0.decodeIfPresent(Int.self, forKey: .approved) } ?? 0
     }
 }
 
@@ -368,13 +391,15 @@ struct TradingTelegramUser: Decodable, Identifiable, Equatable {
     let telegramUsername: String?
     let approved: Bool
     let defaultAccountAlias: String?
+    let userId: String?
     let userName: String?
     let lastSeenAt: String?
 
     private enum Keys: String, CodingKey {
         case id, telegramUserId, telegramUsername, approved, defaultAccountAlias, user, lastSeenAt
+        case userId
     }
-    private enum UserKeys: String, CodingKey { case name }
+    private enum UserKeys: String, CodingKey { case id, name }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
@@ -386,6 +411,8 @@ struct TradingTelegramUser: Decodable, Identifiable, Equatable {
         defaultAccountAlias = try? c.decodeIfPresent(String.self, forKey: .defaultAccountAlias)
         let u = try? c.nestedContainer(keyedBy: UserKeys.self, forKey: .user)
         userName = u.flatMap { try? $0.decodeIfPresent(String.self, forKey: .name) }
+        userId = (try? c.decodeIfPresent(String.self, forKey: .userId))
+            ?? u.flatMap { try? $0.decodeIfPresent(String.self, forKey: .id) }
         lastSeenAt = try? c.decodeIfPresent(String.self, forKey: .lastSeenAt)
     }
     static func == (a: TradingTelegramUser, b: TradingTelegramUser) -> Bool { a.id == b.id }
@@ -407,9 +434,10 @@ struct TradingTelegramAlias: Decodable, Identifiable, Equatable {
     let alias: String
     let active: Bool
     let accountTitle: String?
+    let tradingAccountId: String?
 
-    private enum Keys: String, CodingKey { case id, alias, active, tradingAccount }
-    private enum AccountKeys: String, CodingKey { case accountTitle }
+    private enum Keys: String, CodingKey { case id, alias, active, tradingAccount, tradingAccountId }
+    private enum AccountKeys: String, CodingKey { case id, accountTitle }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
@@ -417,6 +445,8 @@ struct TradingTelegramAlias: Decodable, Identifiable, Equatable {
         active = (try? c.decodeIfPresent(Bool.self, forKey: .active)) ?? false
         let a = try? c.nestedContainer(keyedBy: AccountKeys.self, forKey: .tradingAccount)
         accountTitle = a.flatMap { try? $0.decodeIfPresent(String.self, forKey: .accountTitle) }
+        tradingAccountId = (try? c.decodeIfPresent(String.self, forKey: .tradingAccountId))
+            ?? a.flatMap { try? $0.decodeIfPresent(String.self, forKey: .id) }
     }
     static func == (a: TradingTelegramAlias, b: TradingTelegramAlias) -> Bool { a.id == b.id }
 }
@@ -458,8 +488,21 @@ final class TradingTelegramVM {
     var drafts: [TradingTelegramDraft] = []
     var draftGroups: [TradingTelegramDraftGroup] = []
     var draftDayGroups: [TradingTelegramDraftDayGroup] = []
-    var draftStatus = "PENDING"           // PENDING | LOCKED | ALL | REJECTED | POSTED
-    static let statuses = ["PENDING", "LOCKED", "ALL", "REJECTED", "POSTED"]
+    var draftStatus = "PENDING"           // PENDING | APPROVED | LOCKED | ALL | REJECTED | POSTED
+    /// APPROVED is listed on purpose: it is where a half-finished confirm parks,
+    /// and a status nobody can filter for is a status nobody can fix.
+    static let statuses = ["PENDING", "APPROVED", "LOCKED", "ALL", "REJECTED", "POSTED"]
+    /// Web DraftFiltersBar parity — admin-only ERP-user and account narrowing.
+    var filterUserId = ""
+    var filterAccountId = ""
+    /// Human label for a status chip ("Confirming" reads better than "Approved").
+    static func statusLabel(_ s: String) -> String {
+        switch s {
+        case "ALL": return "All"
+        case "APPROVED": return "Confirming"
+        default: return s.capitalized
+        }
+    }
     /// Web duplicateOnly filter — surfaces the drafts the bot flagged as repeats.
     var duplicatesOnly = false
     /// Web isStaffView: a non-admin sees their own drafts grouped by DAY, an admin
@@ -480,17 +523,44 @@ final class TradingTelegramVM {
 
     var pendingCount: Int { drafts.filter { $0.status == "PENDING" }.count }
 
+    /// Distinct linked ERP staff, in first-seen order — web `erpUsers`.
+    var erpUserOptions: [(String, String)] {
+        var seen = Set<String>()
+        var out: [(String, String)] = []
+        for u in users {
+            guard let id = u.userId, let name = u.userName, !id.isEmpty, !seen.contains(id) else { continue }
+            seen.insert(id)
+            out.append((id, name))
+        }
+        return out
+    }
+
+    /// Accounts reachable from the alias table — web account <select>.
+    var accountOptions: [(String, String)] {
+        var seen = Set<String>()
+        var out: [(String, String)] = []
+        for a in aliases {
+            guard let id = a.tradingAccountId, !id.isEmpty, !seen.contains(id) else { continue }
+            seen.insert(id)
+            out.append((id, a.accountTitle ?? a.alias))
+        }
+        return out
+    }
+
     /// First paint + pull-to-refresh: drafts list + owner monitor together.
-    func load() async {
-        loading = true
+    /// `quiet` is the background poll — refresh the rows without the skeleton.
+    func load(quiet: Bool = false) async {
+        if !quiet { loading = true }
         error = nil
-        defer { loading = false }
+        defer { if !quiet { loading = false } }
         do {
             let resp: TradingTelegramDraftsResponse = try await AlmaAPI.shared.get(
                 "/api/trading/telegram/drafts",
                 query: ["status": draftStatus, "limit": "100",
                         "grouped": isAdmin ? "1" : nil,
                         "byDay": isAdmin ? nil : "1",
+                        "userId": isAdmin && !filterUserId.isEmpty ? filterUserId : nil,
+                        "tradingAccountId": filterAccountId.isEmpty ? nil : filterAccountId,
                         "duplicateOnly": duplicatesOnly ? "1" : nil])
             drafts = resp.drafts
             draftGroups = resp.groups
@@ -502,7 +572,8 @@ final class TradingTelegramVM {
             authExpired = true
         } catch {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
-            self.error = error.localizedDescription
+            if quiet { return }                        // a blip mid-poll is not a screen error
+            self.error = almaServerMessage(error)
         }
     }
 
@@ -532,6 +603,7 @@ final class TradingTelegramVM {
                 body: DraftActionBody(action: action, reason: reason, deleteReason: deleteReason))
             if let err = res.error {
                 toast = err
+                await load()
                 return false
             }
             toast = switch action {
@@ -547,7 +619,12 @@ final class TradingTelegramVM {
             return false
         } catch {
             if Self.isCancellation(error) { return false }
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
+            // The server may have moved the draft even though the call failed
+            // (claim rolled back, day-cutoff lock, someone else posted it).
+            // Leaving the stale row on screen is what made a failed confirm look
+            // like nothing happened at all.
+            await load()
             return false
         }
     }
@@ -572,13 +649,14 @@ final class TradingTelegramVM {
         do {
             let res: DraftActionResponse = try await AlmaAPI.shared.send(
                 "PATCH", "/api/trading/telegram/drafts/\(id)", body: body)
-            if let err = res.error { toast = err; return false }
+            if let err = res.error { toast = err; await load(); return false }
             toast = "Draft updated"
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             await load()
             return true
         } catch {
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
+            await load()
             return false
         }
     }
@@ -594,19 +672,33 @@ final class TradingTelegramVM {
             var action: String? = nil
             var reason: String? = nil
         }
+        struct BulkResponse: Decodable {
+            let error: String?
+            let posted: Int?
+            let rejected: Int?
+            let failed: Int?
+            let failureReasons: [String]?
+        }
         do {
-            let res: DraftActionResponse = try await AlmaAPI.shared.send(
+            let res: BulkResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/trading/telegram/drafts/bulk",
                 body: reject ? Body(draftIds: Array(selectedDrafts), action: "reject", reason: reason)
                              : Body(draftIds: Array(selectedDrafts)))
-            if let err = res.error { toast = err; return }
-            toast = reject ? "Rejected \(res.rejected ?? 0) draft(s). Failed: \(res.failed ?? 0)"
-                           : "Posted \(res.posted ?? 0) trade(s). Failed: \(res.failed ?? 0)"
+            if let err = res.error { toast = err; await load(); return }
+            let headline = reject ? "Rejected \(res.rejected ?? 0) draft(s). Failed: \(res.failed ?? 0)"
+                                  : "Posted \(res.posted ?? 0) trade(s). Failed: \(res.failed ?? 0)"
+            // "Failed: 2" with no reason left the owner guessing which and why.
+            if (res.failed ?? 0) > 0, let reasons = res.failureReasons, !reasons.isEmpty {
+                toast = headline + " — " + reasons.joined(separator: " · ")
+            } else {
+                toast = headline
+            }
             selectedDrafts = []
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             await load()
         } catch {
-            toast = error.localizedDescription
+            toast = almaServerMessage(error)
+            await load()
         }
     }
 
@@ -958,8 +1050,9 @@ struct TradingTelegramScreen: View {
             HStack(spacing: 8) {
                 Button {
                     UISelectionFeedbackGenerator().selectionChanged()
-                    let pending = (vm.drafts + vm.draftGroups.flatMap(\.drafts))
-                        .filter { $0.status == "PENDING" || $0.status == "LOCKED" }
+                    let pending = (vm.drafts + vm.draftGroups.flatMap(\.drafts)
+                                   + vm.draftDayGroups.flatMap(\.drafts))
+                        .filter(\.isActionable)
                     vm.selectedDrafts = Set(pending.map(\.id))
                 } label: {
                     Text("সব pending").font(.system(size: 10, weight: .bold))
@@ -1006,6 +1099,7 @@ struct TradingTelegramScreen: View {
     @ViewBuilder private var draftsSection: some View {
         bulkBar
         statusChips
+        draftFilterChips
         infoBanner
         if vm.drafts.isEmpty && vm.draftGroups.isEmpty && vm.draftDayGroups.isEmpty {
             emptyState("কোনো Telegram ড্রাফট নেই", icon: "paperplane")
@@ -1022,6 +1116,84 @@ struct TradingTelegramScreen: View {
                 TradingTelegramDraftCard(draft: d, vm: vm)
             }
         }
+        // A draft typed into the Telegram group has to reach this list on its
+        // own — the reviewer should never have to guess when to pull-to-refresh.
+        Color.clear.frame(height: 0)
+            .task {
+                if vm.isAdmin { await vm.loadMapping() }
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 15_000_000_000)
+                    if Task.isCancelled { return }
+                    await vm.load(quiet: true)
+                }
+            }
+    }
+
+    /// Web DraftFiltersBar parity: narrow by ERP staff member and by account.
+    @ViewBuilder private var draftFilterChips: some View {
+        if vm.isAdmin {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    filterMenu(
+                        title: staffFilterLabel,
+                        active: !vm.filterUserId.isEmpty,
+                        options: [("", "All ERP users")] + vm.erpUserOptions,
+                        selected: vm.filterUserId,
+                    ) { id in
+                        vm.filterUserId = id
+                        Task { await vm.load() }
+                    }
+                    filterMenu(
+                        title: accountFilterLabel,
+                        active: !vm.filterAccountId.isEmpty,
+                        options: [("", "All accounts")] + vm.accountOptions,
+                        selected: vm.filterAccountId,
+                    ) { id in
+                        vm.filterAccountId = id
+                        Task { await vm.load() }
+                    }
+                }
+                .padding(.horizontal, 2)
+            }
+        }
+    }
+
+    private var staffFilterLabel: String {
+        vm.erpUserOptions.first { $0.0 == vm.filterUserId }?.1 ?? "All ERP users"
+    }
+
+    private var accountFilterLabel: String {
+        vm.accountOptions.first { $0.0 == vm.filterAccountId }?.1 ?? "All accounts"
+    }
+
+    private func filterMenu(title: String, active: Bool,
+                            options: [(String, String)], selected: String,
+                            pick: @escaping (String) -> Void) -> some View {
+        let tint = TradingTelegramPalette.coral
+        return Menu {
+            ForEach(options, id: \.0) { option in
+                Button {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    pick(option.0)
+                } label: {
+                    if option.0 == selected { Label(option.1, systemImage: "checkmark") }
+                    else { Text(option.1) }
+                }
+            }
+        } label: {
+            Label(title, systemImage: "line.3.horizontal.decrease.circle")
+                .font(.caption.weight(active ? .semibold : .regular))
+                .foregroundStyle(active ? tint : .secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 11).padding(.vertical, 6)
+                .background(active ? tint.opacity(colorScheme == .dark ? 0.24 : 0.14)
+                                   : Color.white.opacity(colorScheme == .dark ? 0.08 : 0.45),
+                            in: Capsule())
+                .overlay(Capsule().strokeBorder(
+                    active ? tint.opacity(0.5)
+                           : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
+                    lineWidth: 1))
+        }
     }
 
     private var statusChips: some View {
@@ -1036,7 +1208,7 @@ struct TradingTelegramScreen: View {
                         vm.draftStatus = s
                         Task { await vm.load() }
                     } label: {
-                        Text(s == "ALL" ? "All" : s.capitalized)
+                        Text(TradingTelegramVM.statusLabel(s))
                             .font(.caption.weight(active ? .semibold : .regular))
                             .foregroundStyle(active ? tint : .secondary)
                             .padding(.horizontal, 11).padding(.vertical, 6)
@@ -1248,7 +1420,7 @@ private struct TradingTelegramDraftBody: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
                 // NP-6 (TR-03): bulk selection — PENDING/LOCKED rows only (web rule).
-                if let vm, draft.status == "PENDING" || draft.status == "LOCKED" {
+                if let vm, draft.isActionable {
                     Button {
                         UISelectionFeedbackGenerator().selectionChanged()
                         if vm.selectedDrafts.contains(draft.id) { vm.selectedDrafts.remove(draft.id) }
@@ -1266,7 +1438,7 @@ private struct TradingTelegramDraftBody: View {
                     .font(.footnote.weight(.bold).monospacedDigit())
                     .lineLimit(2)
                 Spacer(minLength: 4)
-                if let vm, draft.status == "PENDING" || draft.status == "LOCKED" {
+                if let vm, draft.isActionable {
                     Button {
                         UISelectionFeedbackGenerator().selectionChanged()
                         showEdit = true
@@ -1299,6 +1471,22 @@ private struct TradingTelegramDraftBody: View {
                 Text(err).font(.caption2)
                     .foregroundStyle(TradingTelegramPalette.amber500)
             }
+            if let err = draft.confirmError, !err.isEmpty {
+                Label("শেষ কনফার্ম ব্যর্থ: \(err)", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(TradingTelegramPalette.red400)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(TradingTelegramPalette.red500.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            // Staff can't reopen, so a bare locked row with no buttons reads as a
+            // broken screen. Say what happened and who can undo it.
+            if draft.status == "LOCKED", vm?.isAdmin == false {
+                Text("দিনের কাট-অফের পরে লক হয়েছে — অ্যাডমিন রিওপেন করলে তবেই কনফার্ম করা যাবে।")
+                    .font(.caption2)
+                    .foregroundStyle(TradingTelegramPalette.orange500)
+            }
             if let raw = draft.rawMessage, !raw.isEmpty {
                 Text(raw)
                     .font(.system(size: 11, design: .monospaced))
@@ -1324,8 +1512,10 @@ private struct TradingTelegramDraftBody: View {
         if let vm {
             let acting = vm.actingDraftId == draft.id
             HStack(spacing: 8) {
-                if draft.status == "PENDING" || draft.status == "LOCKED" {
-                    actionButton("লেজারে পোস্ট", tint: TradingTelegramPalette.tradeGreen, busy: acting) {
+                if draft.isActionable {
+                    let retry = draft.isStalledConfirm || !(draft.confirmError ?? "").isEmpty
+                    actionButton(retry ? "আবার পোস্ট করুন" : "লেজারে পোস্ট",
+                                 tint: TradingTelegramPalette.tradeGreen, busy: acting) {
                         confirmingApprove = true
                     }
                     actionButton("Reject", tint: TradingTelegramPalette.red400, busy: acting) {
@@ -1550,6 +1740,7 @@ private struct TradingTelegramLiveSection: View {
         let cells: [(String, Int, Color)] = [
             ("Pending", live.pending, colorScheme == .dark ? TradingTelegramPalette.amber500
                                                            : TradingTelegramPalette.amber600),
+            ("Confirming", live.approved, TradingTelegramPalette.blue400),
             ("Locked", live.locked, TradingTelegramPalette.orange500),
             ("Posted", live.posted, colorScheme == .dark ? TradingTelegramPalette.green400
                                                          : TradingTelegramPalette.emerald600),
