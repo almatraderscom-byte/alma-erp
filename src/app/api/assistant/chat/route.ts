@@ -403,16 +403,23 @@ export async function POST(req: NextRequest) {
 
   // Demo instance: a visitor can send as many messages as they like and each one
   // spends the owner's model budget, so the day has a hard ceiling. Inert unless
-  // DEMO_MODE is set.
-  const demoCap = await reserveDemoAssistantTurn()
-  if (demoCap.blocked) {
-    return Response.json(
-      {
-        error: 'demo_daily_limit',
-        message: `এই ডেমোতে দিনে ${demoCap.limit}টি প্রশ্ন করা যায়, আজকের সীমা শেষ। আগামীকাল আবার চেষ্টা করুন।`,
-      },
-      { status: 429 },
-    )
+  // DEMO_MODE is set. An internal callback that RE-RUNS an existing turn (the
+  // VPS worker's chat call for a handed-off long turn, or a bound continuation
+  // hop) is the same owner request the outer request already reserved — a
+  // second reservation double-billed the daily cap and could refuse the very
+  // callback that produces the answer (Codex P1 #850).
+  const internalExistingTurnRerun = isInternalCall && typeof body.turnId === 'string' && Boolean(body.turnId)
+  if (!internalExistingTurnRerun) {
+    const demoCap = await reserveDemoAssistantTurn()
+    if (demoCap.blocked) {
+      return Response.json(
+        {
+          error: 'demo_daily_limit',
+          message: `এই ডেমোতে দিনে ${demoCap.limit}টি প্রশ্ন করা যায়, আজকের সীমা শেষ। আগামীকাল আবার চেষ্টা করুন।`,
+        },
+        { status: 429 },
+      )
+    }
   }
 
   // Roadmap Phase 3 — client idempotency key. A retry (timeout / reconnect /
@@ -967,6 +974,14 @@ export async function POST(req: NextRequest) {
             // delivery of a non-running turn, so exactly zero or one
             // execution can happen. The client retries with a fresh turn.
             clearTimeout(turnCapTimer)
+            // Revoke BEFORE finalizing (Codex P1 #850 round 3): a ghost
+            // delivery that already passed the worker's running pre-check is
+            // mid-execution and cannot be stopped by a status flip alone.
+            // cancelRequested is the cross-instance execution revocation the
+            // Stop button uses — the ghost's turn loop observes it at its next
+            // poll and stands down, so the advertised inline retry cannot run
+            // concurrently with a live ghost for more than one poll interval.
+            await requestTurnCancel(turnId).catch(() => {})
             await finalizeTurnIfRunning(turnId, 'error')
             // The advertised retry must actually run: keep this conversation
             // off the worker lane briefly so the re-send takes the inline path
