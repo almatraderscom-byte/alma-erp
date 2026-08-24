@@ -181,12 +181,17 @@ async function nudgedRecently(
 
 /**
  * Deterministic primary key for one warning: one per staffer, per chat, per
- * urgency, per BD hour. Two runs in the same hour compute the same id, so the
- * database decides the winner.
+ * urgency, per BD DAY.
+ *
+ * Per-day rather than per-hour on purpose. The final warning fires across a
+ * short window (see confirmNudgeUrgencyForNow), so an hour-keyed reservation
+ * would let the same warning go out twice. Per-day, the first success owns the
+ * day and later hours skip — while a FAILED send deletes its reservation, so the
+ * next hour inside the window retries instead of losing the warning entirely.
  */
 function reservationId(urgency: ConfirmNudgeUrgency, group: PendingGroup): string {
-  const hourStamp = tradingBdNow().toISOString().slice(0, 13)   // YYYY-MM-DDTHH, Dhaka
-  return `nudge:${urgency}:${group.telegramChatId}:${group.telegramUserId}:${hourStamp}`
+  const dayStamp = tradingBdNow().toISOString().slice(0, 10)   // YYYY-MM-DD, Dhaka
+  return `nudge:${urgency}:${group.telegramChatId}:${group.telegramUserId}:${dayStamp}`
 }
 
 export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
@@ -246,15 +251,24 @@ export async function sendPendingConfirmNudges(urgency: ConfirmNudgeUrgency) {
  * say 05:00 while the cutoff had moved. Twenty-two of the twenty-four runs return
  * immediately without touching the database.
  */
+/** How many hours before the cutoff the final warning may be attempted. */
+const FINAL_WINDOW_HOURS = 2
+
 export function confirmNudgeUrgencyForNow(now = tradingBdNow()): ConfirmNudgeUrgency | null {
   const hour = now.getUTCHours()          // tradingBdNow is UTC-shifted: this IS the Dhaka hour
   const lockHour = telegramDraftLockHourBd()
   // Wrap, don't clamp: a cutoff of 0 means the last chance is 23:00 the evening
   // before. Clamping to 0 would have fired the "one hour left" warning when the
   // cutoff was already active and the sweep may already have locked the rows.
-  const finalHour = (lockHour + 23) % 24
-  // When the two collide (cutoff 0), the urgent one wins.
-  if (hour === finalHour) return 'FINAL'
+  //
+  // A WINDOW, not a single hour: one transient Telegram failure at the only
+  // eligible hour would otherwise lose that day's warning outright, because the
+  // next hourly run returns null and never looks again. The day-keyed
+  // reservation stops the window from sending twice.
+  for (let back = 1; back <= FINAL_WINDOW_HOURS; back += 1) {
+    if (hour === (lockHour + 24 - back) % 24) return 'FINAL'
+  }
+  // When the two collide (cutoff 0 or 1), the urgent one has already won above.
   if (hour === 23) return 'EVENING'
   return null
 }

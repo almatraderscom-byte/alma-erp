@@ -152,11 +152,13 @@ describe('sendPendingConfirmNudges', () => {
     expect(result).toMatchObject({ sent: 0, skipped: 1 })
   })
 
-  it('keys the reservation by urgency, chat, staffer and hour', async () => {
+  it('keys the reservation by urgency, chat, staffer and DAY', async () => {
     await sendPendingConfirmNudges('FINAL')
 
     const id = (auditCreate.mock.calls[0][0] as { data: { id: string } }).data.id
-    expect(id).toMatch(/^nudge:FINAL:-5157095212:7921737198:\d{4}-\d{2}-\d{2}T\d{2}$/)
+    // Per-day, not per-hour: the final warning spans a short window, and an
+    // hour key would let the same warning go out twice inside it.
+    expect(id).toMatch(/^nudge:FINAL:-5157095212:7921737198:\d{4}-\d{2}-\d{2}$/)
   })
 
   it('pages through every pending draft, not just the first batch', async () => {
@@ -220,9 +222,12 @@ describe('confirmNudgeUrgencyForNow', () => {
   /** tradingBdNow() returns a UTC-shifted Date whose UTC hour IS the Dhaka hour. */
   const atDhakaHour = (h: number) => new Date(Date.UTC(2026, 7, 24, h, 0, 0))
 
-  it('warns in the evening and again an hour before the cutoff', () => {
+  it('warns in the evening, and across a window before the cutoff', () => {
     expect(confirmNudgeUrgencyForNow(atDhakaHour(23))).toBe('EVENING')
     expect(confirmNudgeUrgencyForNow(atDhakaHour(5))).toBe('FINAL')
+    // A second eligible hour, so one transient Telegram failure at 05:00 does
+    // not lose the day's warning — the day-keyed reservation stops a double send.
+    expect(confirmNudgeUrgencyForNow(atDhakaHour(4))).toBe('FINAL')
   })
 
   it('stays silent at every other hour', () => {
@@ -236,6 +241,7 @@ describe('confirmNudgeUrgencyForNow', () => {
     // pinned UTC schedules would still fire at 05:00 and miss the new one.
     process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD = '12'
     expect(confirmNudgeUrgencyForNow(atDhakaHour(11))).toBe('FINAL')
+    expect(confirmNudgeUrgencyForNow(atDhakaHour(10))).toBe('FINAL')
     expect(confirmNudgeUrgencyForNow(atDhakaHour(5))).toBeNull()
   })
 
@@ -259,6 +265,7 @@ describe('confirmNudgeUrgencyForNow', () => {
     // when the cutoff was already active and the sweep may have locked the rows.
     process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD = '0'
     expect(confirmNudgeUrgencyForNow(atDhakaHour(23))).toBe('FINAL')
+    expect(confirmNudgeUrgencyForNow(atDhakaHour(22))).toBe('FINAL')
     expect(confirmNudgeUrgencyForNow(atDhakaHour(0))).toBeNull()
   })
 })

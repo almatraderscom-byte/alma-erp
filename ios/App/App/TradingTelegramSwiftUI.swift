@@ -1587,28 +1587,42 @@ private struct TradingTelegramDraftBody: View {
         }
     }
 
-    // ── Native draft actions (owner 2026-07-11): confirm-to-ledger / reject /
-    //    request-delete on PENDING·LOCKED, reopen on REJECTED — web parity. ──
-
+    // ── Native draft actions — the web DraftRow's gating, verbatim.
+    //
+    //  Every button here maps to a server rule, so offering one the server will
+    //  refuse is worse than offering nothing: the card already explains why a
+    //  locked draft is stuck, and a Confirm underneath that text just produces a
+    //  failure. Confirm needs a claimable row; reopen and force-reject are the
+    //  admin's locked-row tools; request-delete only applies once a trade exists.
     @ViewBuilder private var actionsRow: some View {
         if let vm {
             let acting = vm.actingDraftId == draft.id
+            let isLocked = draft.status == "LOCKED"
+            let adminOnLocked = isLocked && vm.isAdmin
             HStack(spacing: 8) {
-                if draft.isActionable {
+                if draft.isConfirmable {
                     let retry = draft.isStalledConfirm || !(draft.confirmError ?? "").isEmpty
                     actionButton(retry ? "আবার পোস্ট করুন" : "লেজারে পোস্ট",
                                  tint: TradingTelegramPalette.tradeGreen, busy: acting) {
                         confirmingApprove = true
                     }
-                    actionButton("Reject", tint: TradingTelegramPalette.red400, busy: acting) {
-                        rejectReason = ""; askingReject = true
-                    }
-                    actionButton("Delete?", tint: TradingTelegramPalette.amber500, busy: acting) {
-                        deleteReason = ""; askingDelete = true
-                    }
-                } else if draft.status == "REJECTED" {
+                }
+                if adminOnLocked {
                     actionButton("Reopen", tint: TradingTelegramPalette.orange500, busy: acting) {
                         Task { _ = await vm.draftAction(draft.id, action: "reopen") }
+                    }
+                }
+                // rejectTelegramDraftRecord refuses a locked reject from a staffer.
+                if draft.isConfirmable || adminOnLocked {
+                    actionButton(adminOnLocked ? "Force reject" : "Reject",
+                                 tint: TradingTelegramPalette.red400, busy: acting) {
+                        rejectReason = ""; askingReject = true
+                    }
+                }
+                // "Only posted drafts can request ledger delete" — the route's words.
+                if draft.status == "POSTED", !(draft.tradingTradeId ?? "").isEmpty {
+                    actionButton("Delete?", tint: TradingTelegramPalette.amber500, busy: acting) {
+                        deleteReason = ""; askingDelete = true
                     }
                 }
             }
