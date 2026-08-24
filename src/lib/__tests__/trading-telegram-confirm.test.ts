@@ -87,9 +87,10 @@ function pendingDraft(overrides: Record<string, unknown> = {}) {
 
 describe('approveTelegramDraftToLedger', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     draftUpdateMany.mockResolvedValue({ count: 1 })
     draftUpdate.mockResolvedValue({})
+    draftFindFirstOrThrow.mockResolvedValue(pendingDraft())
     tradeFindFirst.mockResolvedValue(null)
     auditCreate.mockResolvedValue({})
   })
@@ -171,6 +172,10 @@ describe('approveTelegramDraftToLedger', () => {
   })
 
   it('re-applies the day cutoff after recovering, so a retry cannot skip the lock', async () => {
+    // Pin the cutoff: lockStalePendingTelegramDrafts returns without touching the
+    // database before the cutoff hour, so the call sequence below would otherwise
+    // depend on what time the suite happens to run.
+    process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD = '0'
     draftFindFirst
       .mockResolvedValueOnce(pendingDraft({ status: 'APPROVED' }))   // loadDraftForActor
       .mockResolvedValueOnce(pendingDraft({ status: 'LOCKED' }))     // re-read after the claim fails
@@ -183,6 +188,7 @@ describe('approveTelegramDraftToLedger', () => {
     await expect(approveTelegramDraftToLedger(ctx, 'draft-1'))
       .rejects.toThrow(/locked past the daily cutoff/)
     expect(createTradingTradeRecord).not.toHaveBeenCalled()
+    delete process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD
   })
 
   it('recovers a stranded APPROVED draft before claiming it, then posts once', async () => {
@@ -229,9 +235,10 @@ describe('approveTelegramDraftToLedger', () => {
 
 describe('editing and rejecting a claimed draft', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     auditCreate.mockResolvedValue({})
     tradeFindFirst.mockResolvedValue(null)
+    draftUpdateMany.mockResolvedValue({ count: 1 })
     draftFindFirstOrThrow.mockResolvedValue(pendingDraft())
   })
 
@@ -254,6 +261,7 @@ describe('editing and rejecting a claimed draft', () => {
   })
 
   it('rejects a stranded APPROVED draft by recovering it first', async () => {
+    process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD = '0'   // make the sweep call deterministic
     draftFindFirst
       .mockResolvedValueOnce(pendingDraft({ status: 'APPROVED' }))  // loadDraftForActor
       .mockResolvedValueOnce(pendingDraft())                        // re-read after recovery
@@ -266,6 +274,7 @@ describe('editing and rejecting a claimed draft', () => {
     const updated = await rejectTelegramDraftRecord(ctx, 'draft-1', 'wrong numbers')
 
     expect(updated.status).toBe('REJECTED')
+    delete process.env.TELEGRAM_DRAFT_LOCK_HOUR_BD
   })
 
   it('refuses the reject when the draft is already claimed', async () => {
@@ -286,8 +295,9 @@ describe('editing and rejecting a claimed draft', () => {
 
 describe('healStuckApprovedTelegramDrafts', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     auditCreate.mockResolvedValue({})
+    draftUpdateMany.mockResolvedValue({ count: 1 })
   })
 
   it('returns APPROVED-but-unposted drafts to PENDING', async () => {
