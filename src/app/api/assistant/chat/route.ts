@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { timingSafeEqual } from 'crypto'
-import { requireAgentEnabled, requireAnthropicApiKey, requireModelProviderKey } from '@/agent/lib/guards'
+import { requireAgentEnabled, requireAnyHeadProviderKey, requireModelProviderKey } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
@@ -279,7 +279,10 @@ export async function POST(req: NextRequest) {
     if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
     if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
   } else {
-    const keyMissing = requireAnthropicApiKey()
+    // Any configured head provider suffices — the Anthropic-specific demand
+    // was a Claude-head-era relic that 503'd the self-hosted engine, whose
+    // head runs on Luna/OpenRouter/Gemini (owner ruling 2026-08-25).
+    const keyMissing = requireAnyHeadProviderKey()
     if (keyMissing) return keyMissing
   }
 
