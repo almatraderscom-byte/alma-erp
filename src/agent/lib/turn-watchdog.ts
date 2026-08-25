@@ -125,27 +125,48 @@ export async function sweepStrandedTurns(
   scanLimit = 500,
 ): Promise<StrandedSweepResult> {
   const cutoff = new Date(now.getTime() - staleMs)
-  const candidates: Array<{ id: string; startedAt: Date }> = await db.agentTurn.findMany({
-    where: { status: 'running', startedAt: { lt: cutoff } },
-    orderBy: { startedAt: 'asc' },
-    take: scanLimit,
-    select: { id: true, startedAt: true },
-  })
-
-  const result: StrandedSweepResult = { scanned: candidates.length, reaped: [], stillAlive: 0 }
-  for (const turn of candidates) {
-    if (result.reaped.length >= batchLimit) break
-    const newest = await latestEvent(turn.id)
-    const lastActivity = newest && newest.createdAt > turn.startedAt ? newest.createdAt : new Date(turn.startedAt)
-    if (now.getTime() - lastActivity.getTime() < staleMs) {
-      // Old turn, fresh events: a long slice that is genuinely alive.
-      result.stillAlive += 1
-      continue
+  const result: StrandedSweepResult = { scanned: 0, reaped: [], stillAlive: 0 }
+  // Keyset pagination (Codex P2 #857 r3): a fixed head window could in theory
+  // be fully occupied by alive long-runners; pages walk the whole backlog
+  // within one pass, bounded only by the reap cap and a hard scan ceiling.
+  let cursor: { startedAt: Date; id: string } | null = null
+  const hardScanCeiling = scanLimit * 4
+  while (result.scanned < hardScanCeiling && result.reaped.length < batchLimit) {
+    const page: Array<{ id: string; startedAt: Date }> = await db.agentTurn.findMany({
+      where: {
+        status: 'running',
+        ...(cursor
+          ? {
+              OR: [
+                { startedAt: { gt: cursor.startedAt, lt: cutoff } },
+                { startedAt: cursor.startedAt, id: { gt: cursor.id } },
+              ],
+            }
+          : { startedAt: { lt: cutoff } }),
+      },
+      orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
+      take: Math.min(scanLimit, hardScanCeiling - result.scanned),
+      select: { id: true, startedAt: true },
+    })
+    if (page.length === 0) break
+    for (const turn of page) {
+      result.scanned += 1
+      if (result.reaped.length >= batchLimit) break
+      const newest = await latestEvent(turn.id)
+      const lastActivity = newest && newest.createdAt > turn.startedAt ? newest.createdAt : new Date(turn.startedAt)
+      if (now.getTime() - lastActivity.getTime() < staleMs) {
+        // Old turn, fresh events: a long slice that is genuinely alive.
+        result.stillAlive += 1
+        continue
+      }
+      if (await reapTurn(turn.id, newest?.seq ?? -1)) {
+        result.reaped.push(turn.id)
+        console.warn(`[turn-watchdog] reaped stranded turn ${turn.id} (started ${turn.startedAt.toISOString()}, last activity ${lastActivity.toISOString()})`)
+      }
     }
-    if (await reapTurn(turn.id, newest?.seq ?? -1)) {
-      result.reaped.push(turn.id)
-      console.warn(`[turn-watchdog] reaped stranded turn ${turn.id} (started ${turn.startedAt.toISOString()}, last activity ${lastActivity.toISOString()})`)
-    }
+    const last = page[page.length - 1]
+    cursor = { startedAt: new Date(last.startedAt), id: last.id }
+    if (page.length < scanLimit) break
   }
   return result
 }

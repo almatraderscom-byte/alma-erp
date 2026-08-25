@@ -3861,8 +3861,14 @@ final class AssistantVM {
         // settles (finishRecovery keeps it for identity checks), so an IDLE
         // chat would start a loader nothing ever resolves (Codex P1 #857).
         // The three states below are all cleared on settle.
+        // A persisted descriptor only counts for the conversation it belongs
+        // to: cold bootstrap can restore a DIFFERENT active chat, and recovery
+        // deliberately parks a mismatched descriptor — the displayed idle chat
+        // must not wear its loader (Codex P2 #857 r3).
+        let descriptorMatchesHere = recoverableTurn?.conversationId != nil
+            && recoverableTurn?.conversationId == conversationId
         guard conversationId != nil,
-              isStreaming || reconnecting || recoverableTurn != nil
+              isStreaming || reconnecting || descriptorMatchesHere
         else { return }
         reopenSyncPending = true
         reopenSyncBeginTick += 1
@@ -6662,6 +6668,7 @@ final class AssistantVM {
             // Cold bootstrap can restore a different active pointer first. Do
             // not attach its conversation-latest turn while an exact persisted
             // owner turn is waiting to take over the recovery surface.
+            resolveReopenSync()
             return
         }
         let matchingDescriptor = recoverableTurn.flatMap {

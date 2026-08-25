@@ -141,3 +141,25 @@ describe('backlog starvation (Codex P2 #857)', () => {
     expect(res.reaped).toEqual(['dead-1'])
   })
 })
+
+describe('keyset pagination (Codex P2 #857 r3)', () => {
+  it('a full first page of alive turns pages forward to reap the stranded tail', async () => {
+    const fresh = { seq: 10, createdAt: new Date(NOW.getTime() - 60_000) }
+    const dead = { seq: 3, createdAt: OLD }
+    const page1 = Array.from({ length: 5 }, (_, i) => ({ id: `alive-${i}`, startedAt: OLD }))
+    const page2 = [{ id: 'dead-tail', startedAt: new Date(OLD.getTime() + 1000) }]
+    prismaMock.agentTurn.findMany
+      .mockResolvedValueOnce(page1)
+      .mockResolvedValueOnce(page2)
+      .mockResolvedValue([])
+    prismaMock.agentTurnEvent.findFirst.mockImplementation(async (args: { where: { turnId: string } }) =>
+      args.where.turnId.startsWith('alive') ? fresh : dead)
+
+    // scanLimit 5 makes page1 exactly full, forcing a second page.
+    const res = await sweepStrandedTurns(NOW, TURN_STALE_MS, 50, 5)
+
+    expect(res.stillAlive).toBe(5)
+    expect(res.reaped).toEqual(['dead-tail'])
+    expect(prismaMock.agentTurn.findMany.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+})
