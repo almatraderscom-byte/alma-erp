@@ -25,6 +25,11 @@ function readCommitSha(): string | null {
   const raw =
     process.env.VERCEL_GIT_COMMIT_SHA
     || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT
+    // Self-hosted VPS engine (docs/VPS_MODEL_LOOP.md): no Vercel env exists,
+    // so the deploy script stamps the BUILT commit into .next and the start
+    // script exports it — /api/build-info then reports the real built sha,
+    // which the worker's drift guard and the deploy health check both verify.
+    || process.env.ALMA_ENGINE_BUILD_SHA
     || ''
   const trimmed = raw.trim()
   return trimmed || null

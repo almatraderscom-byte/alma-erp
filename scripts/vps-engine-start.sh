@@ -10,6 +10,11 @@ source /opt/alma-erp/.env.engine
 set +a
 export ALMA_SELF_HOSTED_ENGINE=1
 export PORT="${ENGINE_PORT:-3100}"
+# The commit this .next was BUILT from (stamped by vps-engine-deploy.sh) —
+# served via /api/build-info so drift from an advanced checkout is visible.
+if [ -f .next/ALMA_ENGINE_BUILD_SHA ]; then
+  export ALMA_ENGINE_BUILD_SHA="$(cat .next/ALMA_ENGINE_BUILD_SHA)"
+fi
 # Loopback only: the engine carries the full secret set and must never be
 # reachable from outside the box. The worker talks to it over 127.0.0.1.
 exec npx next start --hostname 127.0.0.1 --port "$PORT"
