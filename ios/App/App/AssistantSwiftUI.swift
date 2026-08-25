@@ -6653,10 +6653,15 @@ final class AssistantVM {
            recoverableTurn.sessionIdentity == selectedSessionIdentity,
            !isStreaming {
             guard (recoverableTurn.preTurnEOFRetryCount ?? 0) < Self.maxPreTurnEOFRetries else {
+                // Deferred/capped pre-turn retry: nothing will happen this
+                // foreground — the loader has nothing to wait for (Codex P2
+                // #857 r4).
+                resolveReopenSync()
                 return
             }
             if let notBefore = recoverableTurn.preTurnRetryNotBefore,
                notBefore > Date() {
+                resolveReopenSync()
                 return
             }
             resumePreTurnDescriptor(recoverableTurn)

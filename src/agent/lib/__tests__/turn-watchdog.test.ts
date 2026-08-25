@@ -11,6 +11,11 @@ const prismaMock = vi.hoisted(() => ({
     findMany: vi.fn(async () => [] as unknown[]),
     updateMany: vi.fn(async () => ({ count: 1 })),
   },
+  agentKvSetting: {
+    findUnique: vi.fn(async () => null as unknown),
+    upsert: vi.fn(async () => ({} as unknown)),
+    deleteMany: vi.fn(async () => ({ count: 0 })),
+  },
   agentTurnEvent: {
     findFirst: vi.fn(async (_args: { where: { turnId: string } }) => null as unknown),
     create: vi.fn(async () => ({} as unknown)),
@@ -25,7 +30,7 @@ vi.mock('@/agent/lib/turn-status', () => turnStatus)
 // Claim-first semantics (Codex P1 #857 r2): updateMany on {id, status:'running'}
 // IS the claim — default mock reports 1 row claimed.
 
-import { sweepStrandedTurns, TURN_STALE_MS, WATCHDOG_TERMINAL_MESSAGE } from '@/agent/lib/turn-watchdog'
+import { sweepStrandedTurns, effectiveStaleMs, TURN_STALE_MS, WATCHDOG_TERMINAL_MESSAGE } from '@/agent/lib/turn-watchdog'
 
 const NOW = new Date('2026-08-26T12:00:00Z')
 const OLD = new Date(NOW.getTime() - 2 * TURN_STALE_MS)
@@ -43,7 +48,7 @@ describe('sweepStrandedTurns', () => {
     prismaMock.agentTurn.findMany.mockResolvedValue([{ id: 'turn-dead', startedAt: OLD }])
     prismaMock.agentTurnEvent.findFirst.mockResolvedValue({ seq: 8, createdAt: OLD })
 
-    const res = await sweepStrandedTurns(NOW)
+    const res = await sweepStrandedTurns(NOW, TURN_STALE_MS)
 
     expect(res.reaped).toEqual(['turn-dead'])
     expect(prismaMock.agentTurnEvent.create).toHaveBeenCalledWith({
@@ -66,7 +71,7 @@ describe('sweepStrandedTurns', () => {
     prismaMock.agentTurnEvent.findFirst.mockResolvedValue({ seq: 8, createdAt: OLD })
     prismaMock.agentTurn.updateMany.mockResolvedValue({ count: 0 })
 
-    const res = await sweepStrandedTurns(NOW)
+    const res = await sweepStrandedTurns(NOW, TURN_STALE_MS)
 
     expect(res.reaped).toEqual([])
     expect(prismaMock.agentTurnEvent.create).not.toHaveBeenCalled()
@@ -79,7 +84,7 @@ describe('sweepStrandedTurns', () => {
       createdAt: new Date(NOW.getTime() - 60_000),
     })
 
-    const res = await sweepStrandedTurns(NOW)
+    const res = await sweepStrandedTurns(NOW, TURN_STALE_MS)
 
     expect(res.reaped).toEqual([])
     expect(res.stillAlive).toBe(1)
@@ -91,7 +96,7 @@ describe('sweepStrandedTurns', () => {
     prismaMock.agentTurn.findMany.mockResolvedValue([{ id: 'turn-noevents', startedAt: OLD }])
     prismaMock.agentTurnEvent.findFirst.mockResolvedValue(null)
 
-    const res = await sweepStrandedTurns(NOW)
+    const res = await sweepStrandedTurns(NOW, TURN_STALE_MS)
 
     expect(res.reaped).toEqual(['turn-noevents'])
     expect(prismaMock.agentTurnEvent.create).toHaveBeenCalledWith(
@@ -104,7 +109,7 @@ describe('sweepStrandedTurns', () => {
     prismaMock.agentTurnEvent.findFirst.mockResolvedValue({ seq: 3, createdAt: OLD })
     prismaMock.agentTurnEvent.create.mockRejectedValue(Object.assign(new Error('unique'), { code: 'P2002' }))
 
-    const res = await sweepStrandedTurns(NOW)
+    const res = await sweepStrandedTurns(NOW, TURN_STALE_MS)
 
     // The claim already finalized the row; the tailer settles from status.
     expect(res.reaped).toEqual(['turn-racy'])
@@ -112,7 +117,7 @@ describe('sweepStrandedTurns', () => {
 
   it('young running turns are not even candidates', async () => {
     prismaMock.agentTurn.findMany.mockResolvedValue([])
-    const res = await sweepStrandedTurns(NOW)
+    const res = await sweepStrandedTurns(NOW, TURN_STALE_MS)
     expect(res.scanned).toBe(0)
     const call = prismaMock.agentTurn.findMany.mock.calls[0] as unknown as [
       { where: { status: string; startedAt: { lt: Date } } },
@@ -135,7 +140,7 @@ describe('backlog starvation (Codex P2 #857)', () => {
     prismaMock.agentTurnEvent.findFirst.mockImplementation(async (args: { where: { turnId: string } }) =>
       args.where.turnId.startsWith('alive') ? fresh : dead)
 
-    const res = await sweepStrandedTurns(NOW)
+    const res = await sweepStrandedTurns(NOW, TURN_STALE_MS)
 
     expect(res.stillAlive).toBe(2)
     expect(res.reaped).toEqual(['dead-1'])
@@ -161,5 +166,18 @@ describe('keyset pagination (Codex P2 #857 r3)', () => {
     expect(res.stillAlive).toBe(5)
     expect(res.reaped).toEqual(['dead-tail'])
     expect(prismaMock.agentTurn.findMany.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('effective staleness vs the engine slice budget (Codex P1 #857 r4)', () => {
+  it('never reaps inside the largest slice budget: default window >= 1h + margin', () => {
+    delete process.env.AGENT_WORKER_RERUN_CAP_MS
+    expect(effectiveStaleMs()).toBeGreaterThanOrEqual(75 * 60 * 1000)
+  })
+
+  it('a raised engine slice cap raises the window with it', () => {
+    process.env.AGENT_WORKER_RERUN_CAP_MS = String(2 * 60 * 60 * 1000)
+    expect(effectiveStaleMs()).toBeGreaterThanOrEqual(2 * 60 * 60 * 1000 + 15 * 60 * 1000)
+    delete process.env.AGENT_WORKER_RERUN_CAP_MS
   })
 })

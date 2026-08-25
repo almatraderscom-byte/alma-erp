@@ -61,7 +61,11 @@ BullMQ long-agent-task ──▶ worker ──POST /api/assistant/chat──▶ 
      configured"), plus any other tool keys visible on Vercel
    - Optional: `ENGINE_PORT` (default 3200 — **never 3100**: the voice relay
      binds 0.0.0.0:3100 and the engine would EADDRINUSE against the locked
-     voice stack), `AGENT_WORKER_RERUN_CAP_MS`
+     voice stack), `AGENT_WORKER_RERUN_CAP_MS` — if you RAISE the per-slice
+     cap above 1h, set the same value on **Vercel Production** too: the
+     stranded-turn watchdog's staleness window follows it
+     (`effectiveStaleMs`, turn-watchdog.ts) so a quiet-but-alive long slice
+     is never falsely reaped
 2. **Deploy**: on the VPS, `bash scripts/vps-engine-deploy.sh`
    (build is the heavy step — the box also runs Asterisk + the worker; the
    script bounds Node's heap at 4 GB; run it off-peak the first time).

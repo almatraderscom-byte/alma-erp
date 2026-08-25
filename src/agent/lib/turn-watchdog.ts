@@ -27,10 +27,27 @@ import { prisma } from '@/lib/prisma'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-/** No event for this long ⇒ the executing process is dead. Comfortably above
- * every legitimate quiet stretch (provider thinking gaps, long tool calls)
- * and aligned with the plan-driver's DISPATCH_GHOST_MS precedent. */
+/** Base staleness: no event for this long is suspicious. The EFFECTIVE
+ * window (effectiveStaleMs) is never below the largest per-slice execution
+ * budget + margin: the self-hosted engine legitimately allows a 1-hour slice
+ * (AGENT_WORKER_RERUN_CAP_MS, turn-cap.ts) whose provider stream can be
+ * quiet, and the watchdog changes only DB state — it cannot abort the
+ * executor, so reaping a slice that may still be running would feed clients
+ * a false error while side effects continue (Codex P1 #857 r4). Past the
+ * slice cap the in-process salvage has fired, so a silent turn beyond the
+ * window is genuinely dead. Raising the engine cap requires raising
+ * AGENT_WORKER_RERUN_CAP_MS on Vercel too (docs/VPS_MODEL_LOOP.md).  */
 export const TURN_STALE_MS = 30 * 60 * 1000
+const SLICE_MARGIN_MS = 15 * 60 * 1000
+const DEFAULT_MAX_SLICE_MS = 60 * 60 * 1000
+
+export function effectiveStaleMs(baseStaleMs: number = TURN_STALE_MS): number {
+  const configuredSlice = Number(process.env.AGENT_WORKER_RERUN_CAP_MS)
+  const maxSlice = Number.isFinite(configuredSlice) && configuredSlice > 0
+    ? Math.max(configuredSlice, DEFAULT_MAX_SLICE_MS)
+    : DEFAULT_MAX_SLICE_MS
+  return Math.max(baseStaleMs, maxSlice + SLICE_MARGIN_MS)
+}
 
 export const WATCHDOG_TERMINAL_MESSAGE = 'turn_watchdog_stranded'
 
@@ -115,9 +132,39 @@ async function reapTurn(turnId: string, lastSeq: number): Promise<boolean> {
  * Sweep every stranded 'running' turn. Bounded batch per pass — the cron
  * comes back; a pathological backlog must not blow the function budget.
  */
+const WATCHDOG_CURSOR_KEY = 'turn_watchdog_cursor'
+
+async function readSweepCursor(): Promise<{ startedAt: Date; id: string } | null> {
+  try {
+    const row = await db.agentKvSetting.findUnique({ where: { key: WATCHDOG_CURSOR_KEY } })
+    if (!row?.value) return null
+    const parsed = JSON.parse(row.value) as { startedAt?: string; id?: string }
+    if (!parsed?.startedAt || !parsed?.id) return null
+    const at = new Date(parsed.startedAt)
+    return Number.isFinite(at.getTime()) ? { startedAt: at, id: parsed.id } : null
+  } catch {
+    return null
+  }
+}
+
+async function writeSweepCursor(cursor: { startedAt: Date; id: string } | null): Promise<void> {
+  try {
+    if (!cursor) {
+      await db.agentKvSetting.deleteMany({ where: { key: WATCHDOG_CURSOR_KEY } })
+      return
+    }
+    const value = JSON.stringify({ startedAt: cursor.startedAt.toISOString(), id: cursor.id })
+    await db.agentKvSetting.upsert({
+      where: { key: WATCHDOG_CURSOR_KEY },
+      update: { value },
+      create: { key: WATCHDOG_CURSOR_KEY, value },
+    })
+  } catch { /* a lost cursor restarts from the head — safe, just slower */ }
+}
+
 export async function sweepStrandedTurns(
   now: Date = new Date(),
-  staleMs: number = TURN_STALE_MS,
+  staleMs: number = effectiveStaleMs(),
   /** Caps REAPS per pass, not scans: a backlog of long-running-but-alive old
    * turns at the head of the startedAt ordering must not starve stranded
    * turns behind them forever (Codex P2 #857). */
@@ -129,7 +176,10 @@ export async function sweepStrandedTurns(
   // Keyset pagination (Codex P2 #857 r3): a fixed head window could in theory
   // be fully occupied by alive long-runners; pages walk the whole backlog
   // within one pass, bounded only by the reap cap and a hard scan ceiling.
-  let cursor: { startedAt: Date; id: string } | null = null
+  // The cursor PERSISTS across sweeps (Codex P2 #857 r4): even a backlog
+  // larger than one pass's ceiling is eventually fully walked, then the
+  // cursor resets and the scan starts from the head again.
+  let cursor: { startedAt: Date; id: string } | null = await readSweepCursor()
   const hardScanCeiling = scanLimit * 4
   while (result.scanned < hardScanCeiling && result.reaped.length < batchLimit) {
     const page: Array<{ id: string; startedAt: Date }> = await db.agentTurn.findMany({
@@ -166,7 +216,11 @@ export async function sweepStrandedTurns(
     }
     const last = page[page.length - 1]
     cursor = { startedAt: new Date(last.startedAt), id: last.id }
-    if (page.length < scanLimit) break
+    if (page.length < scanLimit) {
+      cursor = null // backlog fully walked — next sweep restarts at the head
+      break
+    }
   }
+  await writeSweepCursor(cursor && result.scanned >= hardScanCeiling ? cursor : null)
   return result
 }
