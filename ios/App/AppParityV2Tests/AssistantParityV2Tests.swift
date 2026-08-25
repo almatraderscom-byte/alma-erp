@@ -7027,8 +7027,11 @@ extension AssistantParityV2Tests {
     /// exactly like the initial request — source assertion, since the relaunch
     /// path is a private async member driven by app lifecycle.
     func testRelaunchRecoveryClearsUnrecoverableOpenTaskDescriptors() throws {
+        // #filePath ends in .../AppParityV2Tests/AssistantParityV2Tests.swift, so
+        // exactly two ".." reach ios/App; three pointed at a non-existent
+        // ios/App/AssistantSwiftUI.swift and failed every full-suite run.
         let source = try String(contentsOf: URL(
-            fileURLWithPath: #filePath + "/../../../App/AssistantSwiftUI.swift").standardizedFileURL, encoding: .utf8)
+            fileURLWithPath: #filePath + "/../../App/AssistantSwiftUI.swift").standardizedFileURL, encoding: .utf8)
         let start = try XCTUnwrap(source.range(of: "private func resumePersistedOpenTaskDescriptor"))
         let body = String(source[start.lowerBound...].prefix(1800))
         XCTAssertTrue(body.contains("openTaskContinuationIsUnrecoverable(error)"),
