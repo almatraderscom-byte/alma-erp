@@ -826,6 +826,13 @@ final class AgentLiveDockStore {
         // rearm capture after the finish-time resource release found nothing.
         liveVideoArmed = false
         liveConsentGeneration &+= 1
+        // Codex P1 #853 r4: a broadcaster that survived an app remount is not
+        // in ownedMacStream, so the owned-resource release misses it. Terminal
+        // reconciliation revokes the scoped stream directly, like ✕ does.
+        if streamOn || ownedMacStream != nil {
+            manualStreamOverride = true
+            Task { [weak self] in await self?.stopOwnedMacStreamNow() }
+        }
         lifecycleRevision &+= 1
     }
 
@@ -858,6 +865,15 @@ final class AgentLiveDockStore {
 
     private func expireStaleFeed(force: Bool = false) {
         guard Self.shouldExpireFeed(lastSuccessfulAt: lastSuccessfulRefreshAt, force: force) else { return }
+        // Codex P2 #853 r4: the finished card persists until the owner closes
+        // it — a poll outage must not swap its frozen last frame for the
+        // "first frame arriving" placeholder. Only the live metadata expires;
+        // the forced (owner-auth-failure) path still clears sensitive frames.
+        if !force, trackedActivityKey != nil, !trackedActive, trackedFinishedAt != nil {
+            feed = nil
+            setStreamOptimistic(nil)
+            return
+        }
         clearFeedAndFrameCaches()
         lastActiveAt = .distantPast
         expanded = false
