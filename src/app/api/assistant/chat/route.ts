@@ -286,8 +286,17 @@ export async function POST(req: NextRequest) {
     // exempt: it executes the conversation-pinned model, which gets its own
     // exact provider check below — demanding the unused default's key here
     // would 503 a perfectly executable queued turn (Codex P1 #854 r4).
+    // internalControl callbacks (bound continuations — including
+    // continuationSource specialist briefs, which OMIT turnId until the bound
+    // turn is created below) resolve their execution model in-turn from the
+    // durable pin, where the missing-key visible-note fallback applies —
+    // gating them on the unused default's key produced false 503s (Codex P1
+    // #854 r7/r8). The default-head gate applies only to fresh internal
+    // message calls (Telegram), which genuinely run the default head.
     const internalRerun = typeof body.turnId === 'string' && Boolean(body.turnId)
-    const keyMissing = internalRerun ? null : await requireDefaultHeadProviderKey(defaultHeadModelId)
+    const keyMissing = (internalRerun || body.internalControl === true)
+      ? null
+      : await requireDefaultHeadProviderKey(defaultHeadModelId)
     if (keyMissing) return keyMissing
   }
 
