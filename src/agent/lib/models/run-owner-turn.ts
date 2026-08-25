@@ -6801,9 +6801,13 @@ export async function* runOwnerTurn(
       // Preference order: default head, heavy head, then ANY head-pickable
       // registry model — a Gemini-only box with OpenAI defaults must still
       // find its runnable native head instead of dying in a keyless adapter.
-      const { getModelEnabledMap, isModelEnabledSync } = await import('@/agent/lib/models/model-enabled')
+      const { getModelEnabledMap, isModelEnabledSync, isAnthropicAllowed } = await import('@/agent/lib/models/model-enabled')
       const { protocolConformanceFor } = await import('@/agent/lib/models/provider-protocol')
       const enabledMap = await getModelEnabledMap()
+      // ANTHROPIC_HEAD_DOWN (default ON) defines Claude as unavailable even
+      // with a key present — the sweep must not route onto the drained
+      // account ahead of a runnable non-Anthropic head (Codex P1 #854 r6).
+      const anthropicAllowed = await isAnthropicAllowed()
       const candidates = [
         await getDefaultHeadModelId(),
         heavyHeadModelId(),
@@ -6814,6 +6818,10 @@ export async function* runOwnerTurn(
           const candidate = getModel(id)
           return id !== resolved.id
             && candidate.headPickable !== false
+            // A head fallback must be able to DRIVE tools — a vision-only
+            // model would silently turn an ERP action turn chat-only (r6 P2).
+            && candidate.supportsTools !== false
+            && (candidate.provider !== 'anthropic' || anthropicAllowed)
             && isModelEnabledSync(id, enabledMap)
             && isProviderKeyConfigured(candidate.provider)
             && protocolConformanceFor(candidate).state !== 'quarantined'
