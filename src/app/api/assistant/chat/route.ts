@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { timingSafeEqual } from 'crypto'
-import { requireAgentEnabled, requireAnyHeadProviderKey, requireModelProviderKey } from '@/agent/lib/guards'
+import { requireAgentEnabled, requireDefaultHeadProviderKey, requireModelProviderKey } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
@@ -279,10 +279,11 @@ export async function POST(req: NextRequest) {
     if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
     if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
   } else {
-    // Any configured head provider suffices — the Anthropic-specific demand
-    // was a Claude-head-era relic that 503'd the self-hosted engine, whose
-    // head runs on Luna/OpenRouter/Gemini (owner ruling 2026-08-25).
-    const keyMissing = requireAnyHeadProviderKey()
+    // The provider the DEFAULT head actually runs on must be configured —
+    // the Anthropic-specific demand was a Claude-head-era relic that 503'd
+    // the self-hosted engine (owner ruling 2026-08-25; Codex P1 #854 made it
+    // exact rather than any-key).
+    const keyMissing = await requireDefaultHeadProviderKey()
     if (keyMissing) return keyMissing
   }
 

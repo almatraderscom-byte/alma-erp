@@ -92,25 +92,35 @@ function isOpenRouterConfigured(): boolean {
  * Internal (worker/Telegram) chat calls used to hard-require the ANTHROPIC
  * key — a relic of the Claude-head era. The head is env-tunable (Luna today,
  * with DeepSeek/Qwen workers on OpenRouter and Gemini as the native
- * fallback), so the honest precondition is "at least one head-capable
- * provider is configured", not one specific vendor (owner ruling 2026-08-25:
- * the self-hosted engine must not demand an Anthropic key it never uses).
- * A concrete model choice still gets its exact provider checked downstream
- * by requireModelProviderKey / the head router.
+ * fallback), so the honest precondition is "the provider the DEFAULT head
+ * will actually run on is configured" (owner ruling 2026-08-25: the
+ * self-hosted engine must not demand an Anthropic key it never uses; Codex
+ * P1 #854: an any-key check would admit a box whose only key belongs to a
+ * provider the default head never touches, and the turn would then die in
+ * the adapter instead of 503ing honestly here). A conversation-pinned model
+ * still gets its exact provider checked downstream by
+ * requireModelProviderKey / the head router's fallbacks.
  */
-export function requireAnyHeadProviderKey(): Response | null {
-  if (
-    isOpenAiConfigured()
-    || isOpenRouterConfigured()
-    || isGeminiConfigured()
-    || isAnthropicConfigured()
-    || isXaiConfigured()
-  ) return null
-  return new Response(
-    JSON.stringify({
-      error: 'no_head_provider_key',
-      message: 'No model-provider API key is configured (OPENAI/OPENROUTER/GEMINI/ANTHROPIC/XAI). Add at least one to the server env.',
-    }),
-    { status: 503, headers: { 'Content-Type': 'application/json' } },
-  )
+export async function requireDefaultHeadProviderKey(): Promise<Response | null> {
+  try {
+    const { getDefaultHeadModelId } = await import('@/agent/lib/models/routing-config')
+    return requireModelProviderKey(await getDefaultHeadModelId())
+  } catch {
+    // KV/registry glitch must not take the whole internal lane down: fall
+    // back to "at least one head-capable provider exists".
+    if (
+      isOpenAiConfigured()
+      || isOpenRouterConfigured()
+      || isGeminiConfigured()
+      || isAnthropicConfigured()
+      || isXaiConfigured()
+    ) return null
+    return new Response(
+      JSON.stringify({
+        error: 'no_head_provider_key',
+        message: 'No model-provider API key is configured (OPENAI/OPENROUTER/GEMINI/ANTHROPIC/XAI). Add at least one to the server env.',
+      }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } },
+    )
+  }
 }
