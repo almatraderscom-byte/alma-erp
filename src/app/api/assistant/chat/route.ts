@@ -763,7 +763,11 @@ export async function POST(req: NextRequest) {
   // default head, so its provider key is validated here too (Codex P1 #854 —
   // an OpenAI-keyed engine passing preflight would otherwise die in a pinned
   // Gemini adapter mid-turn instead of 503ing at the gate).
-  if ((!isInternalCall || internalExistingTurnRerun) && conversationModelId !== AUTO_MODEL_ID) {
+  // Bound internalControl continuations are exempt: turn construction
+  // deliberately ignores the conversation pin for them and restores the job's
+  // durable head pin in-turn, where the missing-key fallback applies
+  // (Codex P1 #854 r7).
+  if ((!isInternalCall || (internalExistingTurnRerun && !internalControl)) && conversationModelId !== AUTO_MODEL_ID) {
     // 'auto' resolves to a concrete model only inside the turn (head-router), so its
     // provider key is checked there; for a pinned model we can validate up-front.
     const providerKeyMissing = requireModelProviderKey(conversationModelId)

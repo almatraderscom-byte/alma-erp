@@ -6804,31 +6804,34 @@ export async function* runOwnerTurn(
       const { getModelEnabledMap, isModelEnabledSync, isAnthropicAllowed } = await import('@/agent/lib/models/model-enabled')
       const { protocolConformanceFor } = await import('@/agent/lib/models/provider-protocol')
       const enabledMap = await getModelEnabledMap()
-      // ANTHROPIC_HEAD_DOWN (default ON) defines Claude as unavailable even
-      // with a key present — the sweep must not route onto the drained
-      // account ahead of a runnable non-Anthropic head (Codex P1 #854 r6).
-      const anthropicAllowed = await isAnthropicAllowed()
       const candidates = [
         await getDefaultHeadModelId(),
         heavyHeadModelId(),
         ...MODEL_REGISTRY.filter((entry) => entry.headPickable !== false).map((entry) => entry.id),
       ]
-      const fallbackId = candidates.find((id) => {
+      let fallbackId: string | undefined
+      for (const id of candidates) {
         try {
           const candidate = getModel(id)
-          return id !== resolved.id
-            && candidate.headPickable !== false
-            // A head fallback must be able to DRIVE tools — a vision-only
-            // model would silently turn an ERP action turn chat-only (r6 P2).
-            && candidate.supportsTools !== false
-            && (candidate.provider !== 'anthropic' || anthropicAllowed)
-            && isModelEnabledSync(id, enabledMap)
-            && isProviderKeyConfigured(candidate.provider)
-            && protocolConformanceFor(candidate).state !== 'quarantined'
+          if (id === resolved.id) continue
+          if (candidate.headPickable === false) continue
+          // A head fallback must be able to DRIVE tools — a vision-only
+          // model would silently turn an ERP action turn chat-only (r6 P2).
+          if (candidate.supportsTools === false) continue
+          if (!isModelEnabledSync(id, enabledMap)) continue
+          if (!isProviderKeyConfigured(candidate.provider)) continue
+          if (protocolConformanceFor(candidate).state === 'quarantined') continue
+          // ANTHROPIC_HEAD_DOWN (default ON) defines Claude as unavailable
+          // even with a key present — and the check is PER MODEL (r6 P1 +
+          // r7 P2: a blanket Sonnet-default answer wrongly rejected an
+          // enabled Opus while Sonnet alone was off in Monitor).
+          if (candidate.provider === 'anthropic' && !(await isAnthropicAllowed(candidate.id))) continue
+          fallbackId = id
+          break
         } catch {
-          return false
+          continue
         }
-      })
+      }
       if (fallbackId) {
         const onModel = getModel(fallbackId)
         disabledSwitchNote = `${disabledSwitchNote ?? ''}⚙️ Boss, **${resolved.label}**-এর provider key এই server-এ নেই — এই মেসেজটা **${onModel.label}** দিয়ে চালাচ্ছি।\n\n`
