@@ -37,6 +37,11 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   exit 1
 fi
 
+# Engine env loads FIRST: npm ci's postinstall runs `prisma generate`, and
+# prisma/schema.prisma resolves env("DATABASE_URL") — with no ambient value a
+# documented first deploy died before the build began (Codex P1 #852).
+set -a; source "$ENV_FILE"; set +a
+
 echo "==> npm ci"
 npm ci --no-audit --no-fund
 
@@ -47,7 +52,6 @@ echo "==> next build (this is the heavy step)"
 # The box also runs Asterisk + the worker; keep Node's heap bounded but real.
 # Same cache cleanup as the canonical `npm run build`: a poisoned Turbopack
 # cache can fail otherwise-valid builds (next.config.js note; Codex P2 #852).
-set -a; source "$ENV_FILE"; set +a
 rm -rf .next/cache/.tsbuildinfo .next/cache/eslint .next/cache/turbopack
 NODE_OPTIONS="--max-old-space-size=4096" npx next build
 

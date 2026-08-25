@@ -39,7 +39,12 @@ jobs:
   deploy:
     if: ${{ inputs.mode != 'preview_e2e' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    # 30: the plain worker deploy fits in 12, but when alma-agent-engine is
+    # registered this job also runs a root npm ci + prisma generate + full
+    # Next build over SSH (normally 4–6 min, a cold VPS more) — a GitHub kill
+    # mid-build would leave the engine stopped (the worker drift guard would
+    # still route slices to Vercel, but the deploy must not truncate itself).
+    timeout-minutes: 30
     steps:
       - name: Reachability probe (fails loudly if the box is firewalled)
         run: |
