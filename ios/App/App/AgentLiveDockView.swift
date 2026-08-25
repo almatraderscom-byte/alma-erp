@@ -591,6 +591,7 @@ final class AgentLiveDockStore {
             dismissedActivityKey = nil
             manualStreamOverride = false
             liveVideoArmed = false
+            liveConsentGeneration &+= 1
             setStreamOptimistic(nil)
             lifecycleRevision &+= 1
         }
@@ -621,6 +622,7 @@ final class AgentLiveDockStore {
                 frameMotionByPreview.removeAll()
                 manualStreamOverride = false
                 liveVideoArmed = false
+                liveConsentGeneration &+= 1
                 trackedActivityKey = "computer:\(eventConversationId ?? "pending"):\(eventTurnId ?? "pending"):\(computerUseToolStartGeneration)"
                 dismissedActivityKey = nil
             }
@@ -875,10 +877,17 @@ final class AgentLiveDockStore {
         expanded = false
         let hadLiveConsent = liveVideoArmed
         liveVideoArmed = false
+        // Codex P1 #853 r2: any in-flight start/switch completion after this
+        // point is stale — it must not rearm the hidden dock or restore the
+        // renewal loop's ownership.
+        liveConsentGeneration &+= 1
         // Codex P1 #853: closing a consent-gated live view REVOKES capture now,
         // not at the server's 120s cap. The explicit-stop override also keeps
         // the renewal loop from re-claiming for the remainder of this task.
-        if hadLiveConsent {
+        // r2: a broadcaster that survived an app remount streams while this
+        // fresh store never armed — revoke on the server bit too, not only on
+        // process-local consent.
+        if hadLiveConsent || streamOn {
             manualStreamOverride = true
             Task { [weak self] in await self?.stopOwnedMacStreamNow() }
         }
@@ -984,6 +993,10 @@ final class AgentLiveDockStore {
     /// An explicit task-scoped Stop wins for the remainder of this task. Starts
     /// and display switches keep renewal enabled so long-running video survives.
     private var manualStreamOverride = false
+    /// Bumped whenever live-video consent is revoked (✕, scope change). An
+    /// async start/switch that resumes with a stale generation must not apply
+    /// its result — and must kill the stream it just started (Codex P1 #853 r2).
+    private var liveConsentGeneration = 0
 
     static let browserLeaseRenewSeconds: TimeInterval = 10
     static let macStreamRenewSeconds: TimeInterval = 60
@@ -1265,6 +1278,7 @@ final class AgentLiveDockStore {
         guard !streamBusy, !autoMacBusy else { return }
         streamBusy = true
         defer { streamBusy = false }
+        let generation = liveConsentGeneration
         if trackedActivityKey != nil {
             guard let scope = currentMacStreamScope(),
                   let response: StreamResponse = try? await AlmaAPI.shared.send(
@@ -1275,6 +1289,16 @@ final class AgentLiveDockStore {
                         conversationId: scope.conversationId, turnId: scope.turnId)),
                   Self.responseOwnsScopedStream(
                     response, scope: scope, requireDeviceEcho: true) else { return }
+            guard generation == liveConsentGeneration else {
+                // Revoked mid-flight: stop what this switch just (re)started.
+                let _: StreamResponse? = try? await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/mac-agent/stream",
+                    body: ComputerUseStreamBody(
+                        on: false, deviceId: scope.deviceId, maxSeconds: nil,
+                        displayIndex: nil, reason: "computer_use",
+                        conversationId: scope.conversationId, turnId: scope.turnId))
+                return
+            }
             ownedMacStream = scope
             manualStreamOverride = Self.scopedManualControlBlocksRenewal(streamOn: true)
             liveVideoArmed = true
@@ -1282,6 +1306,11 @@ final class AgentLiveDockStore {
         } else if let _: StreamResponse = try? await AlmaAPI.shared.send(
             "POST", "/api/assistant/mac-agent/stream",
             body: DisplayBody(on: true, displayIndex: index)) {
+            guard generation == liveConsentGeneration else {
+                let _: StreamResponse? = try? await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/mac-agent/stream", body: StreamBody(on: false))
+                return
+            }
             // The owner-global monitor remains backward compatible; only an
             // in-task player is required to retain exact activity scope.
             manualStreamOverride = true
@@ -1293,6 +1322,7 @@ final class AgentLiveDockStore {
         guard !streamBusy, !autoMacBusy else { return }
         streamBusy = true
         defer { streamBusy = false }
+        let generation = liveConsentGeneration
         do {
             let next = !streamOn
             if trackedActivityKey != nil {
@@ -1306,11 +1336,32 @@ final class AgentLiveDockStore {
                         turnId: scope.turnId))
                 guard Self.responseOwnsScopedStream(
                     response, scope: scope, requireDeviceEcho: next) else { return }
+                guard generation == liveConsentGeneration else {
+                    // Consent was revoked while this request was in flight
+                    // (Codex P1 #853 r2): a stale START must not rearm the
+                    // hidden dock — kill the stream it just started instead.
+                    if next {
+                        let _: StreamResponse? = try? await AlmaAPI.shared.send(
+                            "POST", "/api/assistant/mac-agent/stream",
+                            body: ComputerUseStreamBody(
+                                on: false, deviceId: scope.deviceId, maxSeconds: nil,
+                                displayIndex: nil, reason: "computer_use",
+                                conversationId: scope.conversationId, turnId: scope.turnId))
+                    }
+                    return
+                }
                 ownedMacStream = next ? scope : nil
                 manualStreamOverride = Self.scopedManualControlBlocksRenewal(streamOn: next)
             } else {
                 let _: StreamResponse = try await AlmaAPI.shared.send(
                     "POST", "/api/assistant/mac-agent/stream", body: StreamBody(on: next))
+                guard generation == liveConsentGeneration else {
+                    if next {
+                        let _: StreamResponse? = try? await AlmaAPI.shared.send(
+                            "POST", "/api/assistant/mac-agent/stream", body: StreamBody(on: false))
+                    }
+                    return
+                }
                 manualStreamOverride = true
             }
             // The sheet's stream button IS the owner's consent switch: starting
