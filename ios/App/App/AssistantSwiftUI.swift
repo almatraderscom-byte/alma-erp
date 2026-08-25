@@ -3459,15 +3459,12 @@ final class AssistantVM {
         guard isStreaming, let cid = conversationId, let liveTurnId = currentTurnId else {
             return nil
         }
-        let live = workTrackers.values
+        let thisTurn = workTrackers.values
             .filter { snapshot in
-                guard !snapshot.isTerminal,
-                      snapshot.status != "paused",
-                      snapshot.conversationId.isEmpty || snapshot.conversationId == cid,
-                      snapshot.currentTurnId == liveTurnId || snapshot.turnIds.contains(liveTurnId)
-                else { return false }
-                return true
+                (snapshot.conversationId.isEmpty || snapshot.conversationId == cid)
+                    && (snapshot.currentTurnId == liveTurnId || snapshot.turnIds.contains(liveTurnId))
             }
+        let live = thisTurn.filter { !$0.isTerminal && $0.status != "paused" }
         // PR #765 intent: the dock PREFERS the plan tracker whenever one is
         // live for this turn (the runtime projection re-emits every round and
         // must never impersonate the real step list). But an unplanned turn —
@@ -3481,6 +3478,11 @@ final class AssistantVM {
             .max(by: { $0.updatedAt < $1.updatedAt }) {
             return plan
         }
+        // Codex P2 #851: a plan created after early runtime rounds OWNS this
+        // turn's dock for good. When that plan settles (paused/terminal) while
+        // prose is still streaming, the dock must end with it — never resurrect
+        // the stale still-"running" runtime projection from the earlier rounds.
+        guard !thisTurn.contains(where: { $0.source == "agent_plan" }) else { return nil }
         return live
             .filter { $0.source == "turn_runtime" }
             .max { $0.updatedAt < $1.updatedAt }

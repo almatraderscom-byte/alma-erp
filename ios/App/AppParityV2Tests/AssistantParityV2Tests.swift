@@ -5824,6 +5824,21 @@ final class AssistantParityV2Tests: XCTestCase {
         runtimeForeign.debugMergeWorkSteps(try snapshotFixture(
             revision: 2, source: "turn_runtime", turnId: "turn-1"))
         XCTAssertNil(runtimeForeign.activeWorkTracker)
+
+        // Codex P2 #851: once a plan exists for this turn it owns the dock for
+        // good — when it settles (completed here) while prose is still
+        // streaming, the stale still-"running" runtime projection from earlier
+        // rounds must NOT resurrect the chip with a different step list.
+        let planSettled = AssistantVM()
+        planSettled.conversationId = "conversation-1"
+        planSettled.isStreaming = true
+        planSettled.currentTurnId = "turn-1"
+        planSettled.debugMergeWorkSteps(try snapshotFixture(
+            revision: 2, source: "turn_runtime"))
+        planSettled.debugMergeWorkSteps(try snapshotFixture(revision: 3))
+        XCTAssertEqual(planSettled.activeWorkTracker?.source, "agent_plan")
+        planSettled.debugMergeWorkSteps(try snapshotFixture(revision: 4, status: "completed"))
+        XCTAssertNil(planSettled.activeWorkTracker)
     }
 
     func testDockShowsOnlyLiveWorkNeverPausedOrStalledChips() throws {
