@@ -28,12 +28,22 @@ if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
   echo "FATAL: /opt/alma-erp is not at origin/main — let the sync timer catch up (or git pull) first." >&2
   exit 1
 fi
-# Tracked files only: the threat is MODIFIED reviewed code being served as
-# main. Untracked files (notably the required /opt/alma-erp/.env.engine, now
-# also gitignored) must not fail every documented first deploy (Codex P1 #852).
+# Tracked files: the primary threat is MODIFIED reviewed code being served as
+# main. Untracked files at large (notably the required, gitignored
+# /opt/alma-erp/.env.engine) must not fail every documented first deploy
+# (Codex P1 #852)…
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "FATAL: /opt/alma-erp has local modifications to tracked files — the engine must build pristine origin/main:" >&2
   git status --porcelain --untracked-files=no >&2
+  exit 1
+fi
+# …but untracked files inside BUILD INPUTS are code: Next's file-system
+# routing would compile a hand-created src/app/**/route.ts straight into the
+# engine even with HEAD == origin/main (Codex P2 #852). Refuse those paths.
+UNTRACKED_BUILD_INPUTS="$(git status --porcelain --untracked-files=all -- src prisma public scripts next.config.js middleware.ts package.json | grep '^??' || true)"
+if [ -n "$UNTRACKED_BUILD_INPUTS" ]; then
+  echo "FATAL: untracked files inside build inputs — the engine may only compile reviewed code:" >&2
+  printf '%s\n' "$UNTRACKED_BUILD_INPUTS" >&2
   exit 1
 fi
 
