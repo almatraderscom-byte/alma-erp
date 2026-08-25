@@ -3852,7 +3852,11 @@ final class AssistantVM {
     private(set) var reopenSyncBeginTick = 0
     private(set) var reopenSyncResolveTick = 0
     /// True between begin and resolve — the first applied event batch resolves.
-    private var reopenSyncPending = false
+    /// Readable so the surface observer can DEFER its history-ready loader
+    /// dismissal while a reopen sync is still waiting on server truth
+    /// (Codex P2 #857 r7: cold launch begins the sync while the history
+    /// loader is active, so the begin tick alone cannot keep it alive).
+    private(set) var reopenSyncPending = false
 
     /// Foreground/relaunch over an ACTIVE turn → start the reopen-sync loader.
     /// An idle chat reopens instantly and never sees it.
@@ -5679,17 +5683,20 @@ final class AssistantVM {
                     showSpinner: messages.isEmpty, surfaceToken: historyToken)
                 guard surfaceTokenIsCurrent(historyToken) else { return }
                 if committed {
+                    // Cold launch over a still-running turn is a reopen too
+                    // (Codex P2 #857 r6: bootstrap recovery starts following
+                    // the exact turn first, so the relaunch-path begin was
+                    // never reached). Begin BEFORE the surface flips ready —
+                    // the surface observer defers its loader dismissal while
+                    // reopenSyncPending, so the ONE loader survives into the
+                    // sync instead of dismissing under it (Codex P2 r7).
+                    beginReopenSyncIfActive()
                     sessionSurface = .readyConversation(conversationId: cid)
                     await loadArtifacts()
                     // Cold launch restores the active chat through THIS path, not
                     // openConversation — without this, a reply that arrived while
                     // the app was closed stays counted even as he reads it.
                     await markConversationRead(cid)
-                    // Cold launch over a still-running turn is a reopen too
-                    // (Codex P2 #857 r6: bootstrap recovery starts following
-                    // the exact turn first, so the relaunch-path begin was
-                    // never reached).
-                    beginReopenSyncIfActive()
                     await recoverTurnState(trigger: "bootstrap")
                 } else {
                     // The pointer resolved but the history request failed —
@@ -27011,7 +27018,13 @@ struct AssistantScreen: View {
             // robot must not blink between the two phases.
             if !awakening.isActive { awakening.restart(sessionNeedsRestore: true) }
         case .readyConversation:
-            awakening.markReady(hasContent: !vm.messages.isEmpty)
+            // Cold launch over a RUNNING turn: history committed but the
+            // reopen sync is still waiting on server truth — keep the ONE
+            // loader up; the resolve tick (or the loader's own 12s hard
+            // ceiling) dismisses it (Codex P2 #857 r7).
+            if !vm.reopenSyncPending {
+                awakening.markReady(hasContent: !vm.messages.isEmpty)
+            }
         case .readyNew, .failedHistory:
             awakening.markReady(hasContent: false)
         }
