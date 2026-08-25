@@ -44,9 +44,61 @@ const REPAIR_ENQUEUE_DELAYS_MS = [1000, 3000]
 const TERMINAL_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 16000]
 
 import Redis from 'ioredis'
-import { getAppUrl, getInternalToken } from '../env.mjs'
+import { execSync } from 'node:child_process'
+import { getAppUrl, getTurnEngineUrl, getTurnFetchTimeoutMs, getInternalToken } from '../env.mjs'
 
 const SLOW_TURN_MS = 30_000
+
+/** Engine drift-guard cache: one build-info probe per interval, not per turn. */
+const ENGINE_CHECK_TTL_MS = 5 * 60 * 1000
+let engineCheckCache = { at: 0, url: null }
+
+function readRepoHeadSha() {
+  try {
+    return execSync('git rev-parse HEAD', { timeout: 5_000, encoding: 'utf8' }).trim()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Where THIS slice executes. With no engine configured: the app URL, exactly
+ * as before. With an engine configured, verify the engine serves the SAME
+ * commit as this checkout before trusting it: ordinary VPS deploys (sync
+ * timer, deploy-worker.yml) advance /opt/alma-erp and restart only the
+ * worker, so a forgotten engine rebuild would keep routing turns into an old
+ * chat implementation (Codex P1 #852). A drifted/unverifiable engine falls
+ * back to the Vercel app loudly — correctness over locality. Result cached
+ * for 5 minutes. Deps injectable for tests.
+ */
+export async function resolveTurnExecutionUrl({ fetchImpl = fetch, readHead = readRepoHeadSha, now = Date.now } = {}) {
+  const engine = getTurnEngineUrl()
+  const app = getAppUrl()
+  if (!engine || engine === app) return app
+  const at = now()
+  if (engineCheckCache.url && at - engineCheckCache.at < ENGINE_CHECK_TTL_MS) return engineCheckCache.url
+  let resolved = app
+  try {
+    const res = await fetchImpl(`${engine}/api/build-info`, { signal: AbortSignal.timeout(5_000) })
+    const info = res.ok ? await res.json() : null
+    const engineSha = typeof info?.commit === 'string' ? info.commit.trim() : ''
+    const headSha = readHead()
+    if (engineSha && headSha && engineSha === headSha) {
+      resolved = engine
+    } else {
+      console.warn(`[worker] engine drift guard: engine=${engineSha || 'unknown'} checkout=${headSha || 'unknown'} — slices fall back to ${app} until the engine is redeployed (scripts/vps-engine-deploy.sh)`)
+    }
+  } catch (err) {
+    console.warn(`[worker] engine unreachable (${err?.message ?? err}) — slices fall back to ${app}`)
+  }
+  engineCheckCache = { at, url: resolved }
+  return resolved
+}
+
+/** Test seam: forget the cached engine verdict. */
+export function resetEngineCheckCache() {
+  engineCheckCache = { at: 0, url: null }
+}
 
 function turnEventChannel(turnId) {
   return `turn:${turnId}:events`
@@ -292,15 +344,21 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
     const requestBody = boundContinuation
       ? { conversationId, turnId, internalControl: true, continuationRequestId }
       : { conversationId, message, files, projectId, personalMode, turnId, clientRequestId, askCardId, internalControl, agentProseProtocol }
-    const res = await fetchImpl(`${getAppUrl()}/api/assistant/chat?stream=true`, {
+    // VPS model-loop V1: with WORKER_TURN_ENGINE_URL set, the slice executes
+    // on the self-hosted engine beside this worker (no Vercel ceiling) —
+    // AFTER the drift guard confirms the engine serves this checkout's
+    // commit; otherwise the Vercel app URL exactly as before. The timeout
+    // must outlive the executing side's slice cap or the worker becomes the
+    // ceiling (the old fixed 25 min killed a 30-min Vercel slice mid-stream).
+    const executionUrl = await resolveTurnExecutionUrl({ fetchImpl })
+    const res = await fetchImpl(`${executionUrl}/api/assistant/chat?stream=true`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify(requestBody),
-      // Generous cap for genuinely long turns — this is the whole point of A2.
-      signal: AbortSignal.timeout(25 * 60 * 1000),
+      signal: AbortSignal.timeout(getTurnFetchTimeoutMs()),
     })
     if (
       boundContinuation

@@ -39,7 +39,12 @@ jobs:
   deploy:
     if: ${{ inputs.mode != 'preview_e2e' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    # 30: the plain worker deploy fits in 12, but when alma-agent-engine is
+    # registered this job also runs a root npm ci + prisma generate + full
+    # Next build over SSH (normally 4–6 min, a cold VPS more) — a GitHub kill
+    # mid-build would leave the engine stopped (the worker drift guard would
+    # still route slices to Vercel, but the deploy must not truncate itself).
+    timeout-minutes: 30
     steps:
       - name: Reachability probe (fails loudly if the box is firewalled)
         run: |
@@ -91,6 +96,16 @@ jobs:
             # then silently did not run - the deploy looked green while the fix was not live.
             # It drops calls in progress, which is why deploys are dispatched by hand.
             pm2 restart alma-sip-gateway --update-env || true
+            # VPS model-loop engine (docs/VPS_MODEL_LOOP.md): if the self-hosted
+            # engine is running, it serves the SAME repo this deploy just advanced,
+            # so it must be rebuilt or its .next keeps executing the old chat
+            # implementation. The worker-side drift guard already falls back to
+            # Vercel on mismatch, so a failed rebuild degrades, never corrupts.
+            if pm2 describe alma-agent-engine >/dev/null 2>&1; then
+              cd /opt/alma-erp
+              bash scripts/vps-engine-deploy.sh || echo "WARN: engine redeploy failed - worker drift guard will route slices to Vercel"
+              cd worker
+            fi
             pm2 save
             pm2 list --no-color | head -12
           EOF

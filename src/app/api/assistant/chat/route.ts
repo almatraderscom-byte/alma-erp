@@ -43,6 +43,7 @@ import {
 } from '@/agent/lib/turn-events'
 import { runTurnTail } from '@/agent/lib/turn-stream-tailer'
 import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
+import { resolveWorkerRerunCapMs } from '@/agent/lib/turn-cap'
 import {
   ProseLifecycleTracker,
   negotiateProseProtocol,
@@ -87,11 +88,15 @@ import {
 } from '@/agent/lib/permission-mode'
 
 export const runtime = 'nodejs'
-// 800s (Pro plan + Fluid compute; Vercel allows up to 1800s). Raised from 300s
-// on 2026-07-14 (owner confirmed Pro) so long browser/content turns stop dying
-// at the old ceiling. The effective turn deadline is still AGENT_TURN_HARD_CAP_MS
-// (default 280s) clamped ≥20s under this — set the env to 780000 to use the room.
-export const maxDuration = 800
+// 1800s — the Vercel Pro + Fluid ceiling (VPS model-loop program V0,
+// 2026-08-25): a worker-driven rerun's slice budget follows this
+// (maxDuration - 20), so raising it more than doubles what one slice of a
+// report-class job can finish before the salvage-hop chain has to take over.
+// History: 300s → 800s on 2026-07-14 (owner confirmed Pro). The effective
+// deadline for CLIENT-facing inline turns is still AGENT_TURN_HARD_CAP_MS
+// clamped ≥20s under this. V1 removes the ceiling entirely by running worker
+// slices on the self-hosted VPS engine (docs/VPS_MODEL_LOOP.md).
+export const maxDuration = 1800
 
 /**
  * Skill-engine diagnostic — measured HERE because this is where the turn runs.
@@ -784,10 +789,13 @@ export async function POST(req: NextRequest) {
   // FULL function budget: the env cap exists to end client-facing inline turns
   // early enough to salvage, but the worker lane's whole point (2026-08-24) is
   // that a report-class job should not die at a tuned-down inline ceiling. The
-  // 20s persist headroom still applies.
+  // 20s persist headroom still applies on Vercel; on the self-hosted VPS
+  // engine (ALMA_SELF_HOSTED_ENGINE=1) the slice budget is
+  // AGENT_WORKER_RERUN_CAP_MS instead — there is no platform kill to duck
+  // under (docs/VPS_MODEL_LOOP.md).
   const workerDrivenRerun = isInternalCall && typeof body.turnId === 'string' && Boolean(body.turnId)
   const TURN_HARD_CAP_MS = workerDrivenRerun
-    ? (maxDuration - 20) * 1000
+    ? resolveWorkerRerunCapMs(maxDuration)
     : Math.min(
         Number(process.env.AGENT_TURN_HARD_CAP_MS) || 760_000,
         (maxDuration - 20) * 1000,

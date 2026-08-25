@@ -15,6 +15,7 @@ alma-lifestyle-erp@1.0.0
 .env.vercel.*
 # Demo-instance database credentials — `.env` above matches only the exact name.
 .env.demo
+.env.engine
 .next.stale*/
 mobile/dist/*.apk
 mobile/alma-erp-release.keystore
