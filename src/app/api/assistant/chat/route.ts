@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { timingSafeEqual } from 'crypto'
-import { requireAgentEnabled, requireAnthropicApiKey, requireModelProviderKey } from '@/agent/lib/guards'
+import { requireAgentEnabled, requireDefaultHeadProviderKey, requireModelProviderKey } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
@@ -279,7 +279,24 @@ export async function POST(req: NextRequest) {
     if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
     if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
   } else {
-    const keyMissing = requireAnthropicApiKey()
+    // The provider the DEFAULT head actually runs on must be configured —
+    // the Anthropic-specific demand was a Claude-head-era relic that 503'd
+    // the self-hosted engine (owner ruling 2026-08-25; Codex P1 #854 made it
+    // exact rather than any-key). A worker RERUN of an existing turn is
+    // exempt: it executes the conversation-pinned model, which gets its own
+    // exact provider check below — demanding the unused default's key here
+    // would 503 a perfectly executable queued turn (Codex P1 #854 r4).
+    // internalControl callbacks (bound continuations — including
+    // continuationSource specialist briefs, which OMIT turnId until the bound
+    // turn is created below) resolve their execution model in-turn from the
+    // durable pin, where the missing-key visible-note fallback applies —
+    // gating them on the unused default's key produced false 503s (Codex P1
+    // #854 r7/r8). The default-head gate applies only to fresh internal
+    // message calls (Telegram), which genuinely run the default head.
+    const internalRerun = typeof body.turnId === 'string' && Boolean(body.turnId)
+    const keyMissing = (internalRerun || body.internalControl === true)
+      ? null
+      : await requireDefaultHeadProviderKey(defaultHeadModelId)
     if (keyMissing) return keyMissing
   }
 
@@ -751,7 +768,15 @@ export async function POST(req: NextRequest) {
     }, { status: 500 })
   }
 
-  if (!isInternalCall && conversationModelId !== AUTO_MODEL_ID) {
+  // An internal worker RERUN executes the conversation-pinned model, not the
+  // default head, so its provider key is validated here too (Codex P1 #854 —
+  // an OpenAI-keyed engine passing preflight would otherwise die in a pinned
+  // Gemini adapter mid-turn instead of 503ing at the gate).
+  // Bound internalControl continuations are exempt: turn construction
+  // deliberately ignores the conversation pin for them and restores the job's
+  // durable head pin in-turn, where the missing-key fallback applies
+  // (Codex P1 #854 r7).
+  if ((!isInternalCall || (internalExistingTurnRerun && !internalControl)) && conversationModelId !== AUTO_MODEL_ID) {
     // 'auto' resolves to a concrete model only inside the turn (head-router), so its
     // provider key is checked there; for a pinned model we can validate up-front.
     const providerKeyMissing = requireModelProviderKey(conversationModelId)

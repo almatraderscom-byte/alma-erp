@@ -227,7 +227,7 @@ import {
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
-import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName } from '@/agent/lib/models/registry'
+import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName, MODEL_REGISTRY } from '@/agent/lib/models/registry'
 import { clampEffort, parseEffortSetting } from '@/agent/lib/models/effort'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { rememberHeadPin } from '@/agent/lib/models/head-pin'
@@ -6778,6 +6778,34 @@ export async function* runOwnerTurn(
     decision.modelId = protocolFallback.to.id
     decision.via = `${decision.via}+protocol_conformance_fallback`
   }
+
+  // MISSING-KEY fallback (Codex P1 #854): routing (a durable task pin, a
+  // remembered continuation head) can resolve a model whose provider has no
+  // API key on THIS deployment — e.g. an Anthropic-pinned job resuming on the
+  // self-hosted VPS engine that legitimately carries no Anthropic key. The
+  // route-level guards can only see the default/pinned conversation model, so
+  // this is the last gate before the adapter would throw mid-turn. Same
+  // visible-note contract as the disabled/protocol fallbacks — never a silent
+  // switch, and if no configured candidate exists the turn proceeds to the
+  // adapter's own honest error exactly as before.
+  try {
+    const { isProviderKeyConfigured } = await import('@/agent/lib/guards')
+    const resolved = getModel(decision.modelId)
+    if (!isProviderKeyConfigured(resolved.provider)) {
+      // ONE shared definition of a runnable head (enabled + keyed +
+      // tool-capable + not quarantined + Anthropic-allowed per model) —
+      // the route's internal preflight uses the same selection, so gate and
+      // runner can never disagree (Codex #854 r4–r9).
+      const { findRunnableHeadFallback } = await import('@/agent/lib/models/head-fallback')
+      const fallbackId = await findRunnableHeadFallback(resolved.id)
+      if (fallbackId) {
+        const onModel = getModel(fallbackId)
+        disabledSwitchNote = `${disabledSwitchNote ?? ''}⚙️ Boss, **${resolved.label}**-এর provider key এই server-এ নেই — এই মেসেজটা **${onModel.label}** দিয়ে চালাচ্ছি।\n\n`
+        decision.modelId = fallbackId
+        decision.via = `${decision.via}+missing_key_fallback`
+      }
+    }
+  } catch { /* fail-open: a guard glitch must never block the turn */ }
 
 
   // P0-4: capture a correction the moment it arrives, so it governs THIS turn
