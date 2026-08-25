@@ -49,6 +49,9 @@ BullMQ long-agent-task ──▶ worker ──POST /api/assistant/chat──▶ 
    - `NEXTAUTH_SECRET`
    - `AGENT_INTERNAL_TOKEN` (same value the worker already has)
    - `AGENT_ENABLED=true`
+   - `APP_URL=https://alma-erp-six.vercel.app` — tools running inside a slice
+     (diagnostic tools, `open_live_browser` owner links) build public URLs
+     from it; without it they fail with "APP_URL … not configured"
    - Model provider keys the head/tools use: `OPENAI_API_KEY`,
      `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` / `GEMINI_API_KEY`,
      `OPENROUTER_API_KEY`, `XAI_API_KEY` (copy whichever exist on Vercel)

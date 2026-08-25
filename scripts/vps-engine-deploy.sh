@@ -20,10 +20,17 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-# Refuse a stale checkout: the engine must serve exactly what main serves.
+# Refuse a stale OR dirty checkout: the engine must serve exactly what main
+# serves. Commit-id equality alone would still compile locally modified
+# tracked files (Codex P2 #852).
 git fetch origin main
 if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
   echo "FATAL: /opt/alma-erp is not at origin/main — let the sync timer catch up (or git pull) first." >&2
+  exit 1
+fi
+if [ -n "$(git status --porcelain)" ]; then
+  echo "FATAL: /opt/alma-erp has local modifications — the engine must build pristine origin/main:" >&2
+  git status --porcelain >&2
   exit 1
 fi
 
@@ -35,7 +42,10 @@ npx prisma generate
 
 echo "==> next build (this is the heavy step)"
 # The box also runs Asterisk + the worker; keep Node's heap bounded but real.
+# Same cache cleanup as the canonical `npm run build`: a poisoned Turbopack
+# cache can fail otherwise-valid builds (next.config.js note; Codex P2 #852).
 set -a; source "$ENV_FILE"; set +a
+rm -rf .next/cache/.tsbuildinfo .next/cache/eslint .next/cache/turbopack
 NODE_OPTIONS="--max-old-space-size=4096" npx next build
 
 echo "==> (re)start alma-agent-engine on port ${ENGINE_PORT:-3100}"
