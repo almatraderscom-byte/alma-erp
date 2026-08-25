@@ -227,7 +227,7 @@ import {
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
-import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName } from '@/agent/lib/models/registry'
+import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName, MODEL_REGISTRY } from '@/agent/lib/models/registry'
 import { clampEffort, parseEffortSetting } from '@/agent/lib/models/effort'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { rememberHeadPin } from '@/agent/lib/models/head-pin'
@@ -6794,17 +6794,29 @@ export async function* runOwnerTurn(
     if (!isProviderKeyConfigured(resolved.provider)) {
       const { heavyHeadModelId } = await import('@/agent/lib/models/head-router')
       const { getDefaultHeadModelId } = await import('@/agent/lib/models/routing-config')
-      // A candidate must ALSO pass the owner's Monitor kill switch — a
-      // keyless pin must never resurrect a model the owner turned OFF
-      // (Codex P1 #854 r4).
+      // A candidate must ALSO pass the owner's Monitor kill switch (a keyless
+      // pin must never resurrect a model the owner turned OFF — r4) AND must
+      // not itself be protocol-quarantined (the protocol-safety pass already
+      // ran against the ORIGINAL model, so this pick is the last gate — r5).
+      // Preference order: default head, heavy head, then ANY head-pickable
+      // registry model — a Gemini-only box with OpenAI defaults must still
+      // find its runnable native head instead of dying in a keyless adapter.
       const { getModelEnabledMap, isModelEnabledSync } = await import('@/agent/lib/models/model-enabled')
+      const { protocolConformanceFor } = await import('@/agent/lib/models/provider-protocol')
       const enabledMap = await getModelEnabledMap()
-      const candidates = [await getDefaultHeadModelId(), heavyHeadModelId()]
+      const candidates = [
+        await getDefaultHeadModelId(),
+        heavyHeadModelId(),
+        ...MODEL_REGISTRY.filter((entry) => entry.headPickable !== false).map((entry) => entry.id),
+      ]
       const fallbackId = candidates.find((id) => {
         try {
+          const candidate = getModel(id)
           return id !== resolved.id
+            && candidate.headPickable !== false
             && isModelEnabledSync(id, enabledMap)
-            && isProviderKeyConfigured(getModel(id).provider)
+            && isProviderKeyConfigured(candidate.provider)
+            && protocolConformanceFor(candidate).state !== 'quarantined'
         } catch {
           return false
         }
