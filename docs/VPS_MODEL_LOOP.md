@@ -15,11 +15,11 @@ to 800 — everything else keeps working.
 ## V1 — the self-hosted engine (no ceiling at all)
 
 A second copy of the SAME Next app runs on the VPS under pm2
-(`alma-agent-engine`, loopback-only port 3100). The worker executes turn
+(`alma-agent-engine`, loopback-only port 3200). The worker executes turn
 slices against it instead of Vercel:
 
 ```
-BullMQ long-agent-task ──▶ worker ──POST /api/assistant/chat──▶ engine (127.0.0.1:3100)
+BullMQ long-agent-task ──▶ worker ──POST /api/assistant/chat──▶ engine (127.0.0.1:3200)
                                                     │ (unset WORKER_TURN_ENGINE_URL)
                                                     └────────▶ Vercel app (fallback)
 ```
@@ -56,16 +56,21 @@ BullMQ long-agent-task ──▶ worker ──POST /api/assistant/chat──▶ 
      `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` / `GEMINI_API_KEY`,
      `OPENROUTER_API_KEY`, `XAI_API_KEY` (copy whichever exist on Vercel)
    - `REDIS_URL` / `LONG_TASK_REDIS_URL` (same as the worker)
-   - Optional: `ENGINE_PORT` (default 3100), `AGENT_WORKER_RERUN_CAP_MS`
+   - Tool credentials report-class turns use: `OXYLABS_API_KEY` (web research /
+     SEO crawls — without it a site-audit slice degrades to "Oxylabs not
+     configured"), plus any other tool keys visible on Vercel
+   - Optional: `ENGINE_PORT` (default 3200 — **never 3100**: the voice relay
+     binds 0.0.0.0:3100 and the engine would EADDRINUSE against the locked
+     voice stack), `AGENT_WORKER_RERUN_CAP_MS`
 2. **Deploy**: on the VPS, `bash scripts/vps-engine-deploy.sh`
    (build is the heavy step — the box also runs Asterisk + the worker; the
    script bounds Node's heap at 4 GB; run it off-peak the first time).
-3. **Flip the worker**: add `WORKER_TURN_ENGINE_URL=http://127.0.0.1:3100` to
+3. **Flip the worker**: add `WORKER_TURN_ENGINE_URL=http://127.0.0.1:3200` to
    `/opt/alma-erp/worker/.env`, then `pm2 restart alma-agent-worker` (only the
    worker — the voice apps stay up, per the locked-audio rule).
 4. **Verify**: send a report-class message; Vercel logs show the handoff, pm2
    logs (`pm2 logs alma-agent-engine`) show the slice executing locally;
-   `/api/build-info` on 127.0.0.1:3100 must match origin/main.
+   `/api/build-info` on 127.0.0.1:3200 must match origin/main.
 
 ## Rollback
 

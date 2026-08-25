@@ -9,7 +9,7 @@ set -a
 source /opt/alma-erp/.env.engine
 set +a
 export ALMA_SELF_HOSTED_ENGINE=1
-export PORT="${ENGINE_PORT:-3100}"
+export PORT="${ENGINE_PORT:-3200}"
 # The commit this .next was BUILT from (stamped by vps-engine-deploy.sh) —
 # served via /api/build-info so drift from an advanced checkout is visible.
 if [ -f .next/ALMA_ENGINE_BUILD_SHA ]; then

@@ -62,17 +62,17 @@ NODE_OPTIONS="--max-old-space-size=4096" npx next build
 BUILT_SHA="$(git rev-parse HEAD)"
 printf '%s' "$BUILT_SHA" > .next/ALMA_ENGINE_BUILD_SHA
 
-echo "==> (re)start alma-agent-engine on port ${ENGINE_PORT:-3100}"
+echo "==> (re)start alma-agent-engine on port ${ENGINE_PORT:-3200}"
 pm2 delete alma-agent-engine >/dev/null 2>&1 || true
 pm2 start scripts/vps-engine-start.sh --name alma-agent-engine --time
 pm2 save
 
 echo "==> health check (must report the built commit, not just HTTP 200)"
 sleep 5
-HEALTH="$(curl -sf "http://127.0.0.1:${ENGINE_PORT:-3100}/api/build-info")"
+HEALTH="$(curl -sf "http://127.0.0.1:${ENGINE_PORT:-3200}/api/build-info")"
 echo "$HEALTH" | head -c 200 && echo
 if ! printf '%s' "$HEALTH" | grep -q "$BUILT_SHA"; then
   echo "FATAL: engine /api/build-info does not report the built commit $BUILT_SHA — stale or misconfigured build" >&2
   exit 1
 fi
-echo "OK — now set WORKER_TURN_ENGINE_URL=http://127.0.0.1:${ENGINE_PORT:-3100} in /opt/alma-erp/worker/.env and: pm2 restart alma-agent-worker"
+echo "OK — now set WORKER_TURN_ENGINE_URL=http://127.0.0.1:${ENGINE_PORT:-3200} in /opt/alma-erp/worker/.env and: pm2 restart alma-agent-worker"
