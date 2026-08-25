@@ -51,6 +51,17 @@ export function requireProviderApiKey(provider: Provider): Response | null {
       { status: 503, headers: { 'Content-Type': 'application/json' } },
     )
   }
+  if (provider === 'openrouter' && !isOpenRouterConfigured()) {
+    // Codex P1 #854: this branch was missing, so an OpenRouter-headed
+    // internal call passed preflight and died in createOpenRouterAdapter().
+    return new Response(
+      JSON.stringify({
+        error: 'openrouter_key_missing',
+        message: 'OPENROUTER_API_KEY is not set on the server.',
+      }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } },
+    )
+  }
   if (provider === 'xai' && !isXaiConfigured()) {
     return new Response(
       JSON.stringify({

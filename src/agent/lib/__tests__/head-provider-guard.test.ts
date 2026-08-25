@@ -86,3 +86,21 @@ describe('requireDefaultHeadProviderKey', () => {
     expect(body.error).toBe('no_head_provider_key')
   })
 })
+
+describe('requireModelProviderKey — OpenRouter branch (Codex P1 #854)', () => {
+  it('503s for an OpenRouter model when OPENROUTER_API_KEY is absent', async () => {
+    const id = modelIdForProvider('openrouter') ?? (() => {
+      for (const candidate of ['or-deepseek-v4-flash', 'or-qwen3-max']) {
+        try { if (getModel(candidate).provider === 'openrouter') return candidate } catch { /* absent */ }
+      }
+      return null
+    })()
+    if (!id) return
+    clearAll()
+    const { requireModelProviderKey } = await import('@/agent/lib/guards')
+    const res = requireModelProviderKey(id)
+    expect(res?.status).toBe(503)
+    process.env.OPENROUTER_API_KEY = 'sk-or-real-looking-key-1234567890'
+    expect(requireModelProviderKey(id)).toBeNull()
+  })
+})
