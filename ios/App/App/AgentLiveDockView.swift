@@ -557,6 +557,7 @@ final class AgentLiveDockStore {
             && (!inputTurnIsStreaming || inputConversationId != conversationId || inputTurnId != turnId)
         let inputChanged = inputConversationId != conversationId || inputTurnId != turnId
             || inputTurnIsStreaming != turnIsStreaming || inputTurnReconnecting != turnReconnecting
+        let previousInputConversationId = inputConversationId
         inputConversationId = conversationId
         inputTurnId = turnId
         inputTurnIsStreaming = turnIsStreaming
@@ -569,8 +570,13 @@ final class AgentLiveDockStore {
         // last pixels over the newly selected conversation.
         let movedConversation = trackedConversationId != nil && conversationId != nil
             && trackedConversationId != conversationId
+        // Codex P1 #853: New Chat (an explicit nil conversation after this
+        // store watched a real one) is a scope exit too — otherwise the
+        // now-indefinite finished card floats over the blank new-chat surface.
+        let movedToNewChat = trackedConversationId != nil && conversationId == nil
+            && previousInputConversationId != nil
         let movedTurn = trackedTurnId != nil && turnId != nil && trackedTurnId != turnId
-        if trackedActivityKey != nil, movedConversation || movedTurn {
+        if trackedActivityKey != nil, movedConversation || movedToNewChat || movedTurn {
             await releaseOwnedComputerUseResources()
             clearFeedAndFrameCaches()
             trackedConversationId = nil
@@ -867,12 +873,35 @@ final class AgentLiveDockStore {
     func dismiss() {
         dismissedActivityKey = currentVisibilityKey
         expanded = false
+        let hadLiveConsent = liveVideoArmed
         liveVideoArmed = false
+        // Codex P1 #853: closing a consent-gated live view REVOKES capture now,
+        // not at the server's 120s cap. The explicit-stop override also keeps
+        // the renewal loop from re-claiming for the remainder of this task.
+        if hadLiveConsent {
+            manualStreamOverride = true
+            Task { [weak self] in await self?.stopOwnedMacStreamNow() }
+        }
+    }
+
+    /// Immediate broadcaster stop for a consent revocation (✕ while live).
+    private func stopOwnedMacStreamNow() async {
+        guard let scope = ownedMacStream ?? currentMacStreamScope() else { return }
+        let _: StreamResponse? = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/mac-agent/stream",
+            body: ComputerUseStreamBody(
+                on: false, deviceId: scope.deviceId, maxSeconds: nil,
+                displayIndex: nil, reason: "computer_use",
+                conversationId: scope.conversationId, turnId: scope.turnId))
+        ownedMacStream = nil
+        setStreamOptimistic(false)
     }
 
     /// The ▶ chip on the mini player: arm live video AND start the Mac
-    /// broadcaster when it is not already running. Arming first — the renewal
-    /// loop is gated on it, so a started stream must never be orphaned.
+    /// broadcaster when it is not already running (a broadcaster that is
+    /// already live — e.g. after an app remount mid-stream — is only joined,
+    /// never toggled off). Arming first — the renewal loop is gated on it, so
+    /// a started stream must never be orphaned.
     func armLiveVideo() async {
         liveVideoArmed = true
         if !streamOn { await toggleStream() }
@@ -1983,28 +2012,36 @@ struct AgentLiveDockSheet: View {
                     }
 
                     if selectedSurface == "mac" {
+                        // Codex P2 #853: the button reflects the OWNER's consent,
+                        // not the server's broadcast bit — with a broadcaster
+                        // already live but consent unarmed (app remount mid-
+                        // stream), tapping must JOIN, never stop the stream.
+                        let liveNow = store.liveVideoArmed && store.streamOn
                         Button {
                             AlmaAgentHaptics.commit()
-                            Task { await store.toggleStream() }
+                            Task {
+                                if liveNow { await store.toggleStream() }
+                                else { await store.armLiveVideo() }
+                            }
                         } label: {
                             HStack(spacing: 7) {
                                 if store.streamBusy {
                                     ProgressView().controlSize(.small)
                                 } else {
-                                    Image(systemName: store.streamOn ? "stop.circle.fill" : "video.fill")
+                                    Image(systemName: liveNow ? "stop.circle.fill" : "video.fill")
                                         .font(.system(size: 13, weight: .semibold))
                                 }
-                                Text(store.streamOn ? "লাইভ ভিউ বন্ধ করুন" : "Mac-এর লাইভ ভিউ দেখুন")
+                                Text(liveNow ? "লাইভ ভিউ বন্ধ করুন" : "Mac-এর লাইভ ভিউ দেখুন")
                                     .font(.system(size: 13.5, weight: .semibold))
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 9)
-                            .foregroundStyle(store.streamOn ? Color.red : pal.mutedHi)
+                            .foregroundStyle(liveNow ? Color.red : pal.mutedHi)
                             .background(
-                                (store.streamOn ? Color.red.opacity(0.10) : pal.ink.opacity(0.04)),
+                                (liveNow ? Color.red.opacity(0.10) : pal.ink.opacity(0.04)),
                                 in: RoundedRectangle(cornerRadius: 11))
                             .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(
-                                store.streamOn ? Color.red.opacity(0.35) : pal.borderSubtle, lineWidth: 1))
+                                liveNow ? Color.red.opacity(0.35) : pal.borderSubtle, lineWidth: 1))
                         }
                         .disabled(store.streamBusy)
                         .accessibilityLabel("লাইভ স্ক্রিন ভিউ")

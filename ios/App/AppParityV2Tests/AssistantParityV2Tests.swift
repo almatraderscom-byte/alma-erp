@@ -6013,6 +6013,31 @@ final class AssistantParityV2Tests: XCTestCase {
         dock.debugAdvanceLifecycleClock(by: 3600)
         XCTAssertTrue(dock.show,
                       "the finished card must survive far beyond the old 12s linger")
+
+        // Codex P1 #853: New Chat (explicit nil conversation) is a scope exit —
+        // the frozen card must not float over the blank new-chat surface.
+        await dock.synchronize(
+            conversationId: nil, turnId: nil,
+            turnIsStreaming: false, turnReconnecting: false,
+            computerUseToolStartGeneration: 1,
+            computerUseSurface: nil,
+            computerUseAllowsOptimisticReveal: true,
+            computerUseConversationId: nil, computerUseTurnId: nil,
+            performNetwork: false)
+        XCTAssertFalse(dock.show, "New Chat clears the previous chat's card")
+    }
+
+    func testDismissRevokesLiveVideoConsent() async {
+        let dock = AgentLiveDockStore()
+        await dock.synchronize(
+            conversationId: "c1", turnId: "t1",
+            turnIsStreaming: true, turnReconnecting: false,
+            computerUseToolStartGeneration: 1,
+            computerUseSurface: .mac,
+            computerUseAllowsOptimisticReveal: true,
+            computerUseConversationId: "c1", computerUseTurnId: "t1",
+            performNetwork: false)
+        dock.liveVideoArmed = true
         dock.dismiss()
         XCTAssertFalse(dock.show, "close is the owner's exit and it must stick")
         XCTAssertFalse(dock.liveVideoArmed, "dismiss clears live-video consent")
