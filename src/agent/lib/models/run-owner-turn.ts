@@ -6792,46 +6792,12 @@ export async function* runOwnerTurn(
     const { isProviderKeyConfigured } = await import('@/agent/lib/guards')
     const resolved = getModel(decision.modelId)
     if (!isProviderKeyConfigured(resolved.provider)) {
-      const { heavyHeadModelId } = await import('@/agent/lib/models/head-router')
-      const { getDefaultHeadModelId } = await import('@/agent/lib/models/routing-config')
-      // A candidate must ALSO pass the owner's Monitor kill switch (a keyless
-      // pin must never resurrect a model the owner turned OFF — r4) AND must
-      // not itself be protocol-quarantined (the protocol-safety pass already
-      // ran against the ORIGINAL model, so this pick is the last gate — r5).
-      // Preference order: default head, heavy head, then ANY head-pickable
-      // registry model — a Gemini-only box with OpenAI defaults must still
-      // find its runnable native head instead of dying in a keyless adapter.
-      const { getModelEnabledMap, isModelEnabledSync, isAnthropicAllowed } = await import('@/agent/lib/models/model-enabled')
-      const { protocolConformanceFor } = await import('@/agent/lib/models/provider-protocol')
-      const enabledMap = await getModelEnabledMap()
-      const candidates = [
-        await getDefaultHeadModelId(),
-        heavyHeadModelId(),
-        ...MODEL_REGISTRY.filter((entry) => entry.headPickable !== false).map((entry) => entry.id),
-      ]
-      let fallbackId: string | undefined
-      for (const id of candidates) {
-        try {
-          const candidate = getModel(id)
-          if (id === resolved.id) continue
-          if (candidate.headPickable === false) continue
-          // A head fallback must be able to DRIVE tools — a vision-only
-          // model would silently turn an ERP action turn chat-only (r6 P2).
-          if (candidate.supportsTools === false) continue
-          if (!isModelEnabledSync(id, enabledMap)) continue
-          if (!isProviderKeyConfigured(candidate.provider)) continue
-          if (protocolConformanceFor(candidate).state === 'quarantined') continue
-          // ANTHROPIC_HEAD_DOWN (default ON) defines Claude as unavailable
-          // even with a key present — and the check is PER MODEL (r6 P1 +
-          // r7 P2: a blanket Sonnet-default answer wrongly rejected an
-          // enabled Opus while Sonnet alone was off in Monitor).
-          if (candidate.provider === 'anthropic' && !(await isAnthropicAllowed(candidate.id))) continue
-          fallbackId = id
-          break
-        } catch {
-          continue
-        }
-      }
+      // ONE shared definition of a runnable head (enabled + keyed +
+      // tool-capable + not quarantined + Anthropic-allowed per model) —
+      // the route's internal preflight uses the same selection, so gate and
+      // runner can never disagree (Codex #854 r4–r9).
+      const { findRunnableHeadFallback } = await import('@/agent/lib/models/head-fallback')
+      const fallbackId = await findRunnableHeadFallback(resolved.id)
       if (fallbackId) {
         const onModel = getModel(fallbackId)
         disabledSwitchNote = `${disabledSwitchNote ?? ''}⚙️ Boss, **${resolved.label}**-এর provider key এই server-এ নেই — এই মেসেজটা **${onModel.label}** দিয়ে চালাচ্ছি।\n\n`

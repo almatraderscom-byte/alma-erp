@@ -51,12 +51,22 @@ describe('requireDefaultHeadProviderKey', () => {
     expect(await requireDefaultHeadProviderKey()).toBeNull()
   })
 
-  it('503s when only an UNRELATED provider key exists (OpenAI head, Gemini-only box)', async () => {
+  it('an unrelated key PASSES when it makes some head runnable — the runner will fall back to it (Codex r9)', async () => {
     const id = modelIdForProvider('openai')
     if (!id) return
     routing.getDefaultHeadModelId.mockResolvedValue(id)
     clearAll()
     process.env.GEMINI_API_KEY = 'AIza-real-looking-key-1234567890'
+    // The gate delegates to the shared runnable-head selection; a Gemini-only
+    // box with an OpenAI default is executable via the in-turn fallback.
+    expect(await requireDefaultHeadProviderKey()).toBeNull()
+  })
+
+  it('503s the default-head error when NO runnable head exists anywhere', async () => {
+    const id = modelIdForProvider('openai')
+    if (!id) return
+    routing.getDefaultHeadModelId.mockResolvedValue(id)
+    clearAll()
     const res = await requireDefaultHeadProviderKey()
     expect(res?.status).toBe(503)
   })

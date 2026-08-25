@@ -125,11 +125,17 @@ export async function requireDefaultHeadProviderKey(
   resolvedDefaultHeadModelId?: string,
 ): Promise<Response | null> {
   try {
-    if (resolvedDefaultHeadModelId) {
-      return requireModelProviderKey(resolvedDefaultHeadModelId)
-    }
-    const { getDefaultHeadModelId } = await import('@/agent/lib/models/routing-config')
-    return requireModelProviderKey(await getDefaultHeadModelId())
+    const defaultId = resolvedDefaultHeadModelId
+      ?? await (await import('@/agent/lib/models/routing-config')).getDefaultHeadModelId()
+    const defaultMissing = requireModelProviderKey(defaultId)
+    if (!defaultMissing) return null
+    // The default head may be keyless/disabled while a runnable head exists
+    // (Gemini-only box, OpenAI default switched OFF in Monitor): the runner
+    // replaces disabled/keyless heads via the SAME shared selection, so the
+    // gate must not 503 what the runner would execute (Codex P1 #854 r9).
+    const { findRunnableHeadFallback } = await import('@/agent/lib/models/head-fallback')
+    if (await findRunnableHeadFallback()) return null
+    return defaultMissing
   } catch {
     // KV/registry glitch must not take the whole internal lane down: fall
     // back to "at least one head-capable provider exists".
