@@ -1,5 +1,5 @@
 /**
- * GET /api/cron/turn-watchdog — reap stranded 'running' turns.
+ * GET /api/assistant/internal/turn-watchdog — reap stranded 'running' turns.
  *
  * A turn whose executing process died without finalizing (deploy restart,
  * crash, OOM) stays 'running' forever, and every client honestly shows

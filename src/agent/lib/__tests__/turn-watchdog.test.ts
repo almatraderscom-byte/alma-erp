@@ -22,6 +22,8 @@ const turnStatus = vi.hoisted(() => ({
   finalizeTurnIfRunning: vi.fn(async () => {}),
 }))
 vi.mock('@/agent/lib/turn-status', () => turnStatus)
+// Claim-first semantics (Codex P1 #857 r2): updateMany on {id, status:'running'}
+// IS the claim — default mock reports 1 row claimed.
 
 import { sweepStrandedTurns, TURN_STALE_MS, WATCHDOG_TERMINAL_MESSAGE } from '@/agent/lib/turn-watchdog'
 
@@ -30,6 +32,8 @@ const OLD = new Date(NOW.getTime() - 2 * TURN_STALE_MS)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  prismaMock.agentTurn.updateMany.mockResolvedValue({ count: 1 })
+  prismaMock.agentTurnEvent.create.mockResolvedValue({})
   delete process.env.LONG_TASK_REDIS_URL
   delete process.env.REDIS_URL
 })
@@ -50,7 +54,22 @@ describe('sweepStrandedTurns', () => {
         payload: { type: 'error', message: WATCHDOG_TERMINAL_MESSAGE },
       },
     })
-    expect(turnStatus.finalizeTurnIfRunning).toHaveBeenCalledWith('turn-dead', 'error')
+    // Claim-first: the status CAS finalizes the row before any event append.
+    expect(prismaMock.agentTurn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'turn-dead', status: 'running' },
+      data: expect.objectContaining({ status: 'error' }),
+    }))
+  })
+
+  it('a turn that settled between selection and reap is NEVER fed a watchdog error', async () => {
+    prismaMock.agentTurn.findMany.mockResolvedValue([{ id: 'turn-settled', startedAt: OLD }])
+    prismaMock.agentTurnEvent.findFirst.mockResolvedValue({ seq: 8, createdAt: OLD })
+    prismaMock.agentTurn.updateMany.mockResolvedValue({ count: 0 })
+
+    const res = await sweepStrandedTurns(NOW)
+
+    expect(res.reaped).toEqual([])
+    expect(prismaMock.agentTurnEvent.create).not.toHaveBeenCalled()
   })
 
   it('an old turn with FRESH events is alive — never touched', async () => {
@@ -80,15 +99,15 @@ describe('sweepStrandedTurns', () => {
     )
   })
 
-  it('a seq conflict (racing writer) leaves the turn for the next pass', async () => {
+  it('a seq conflict after a WON claim still counts as reaped — status-only settlement covers tails', async () => {
     prismaMock.agentTurn.findMany.mockResolvedValue([{ id: 'turn-racy', startedAt: OLD }])
     prismaMock.agentTurnEvent.findFirst.mockResolvedValue({ seq: 3, createdAt: OLD })
     prismaMock.agentTurnEvent.create.mockRejectedValue(Object.assign(new Error('unique'), { code: 'P2002' }))
 
     const res = await sweepStrandedTurns(NOW)
 
-    expect(res.reaped).toEqual([])
-    expect(turnStatus.finalizeTurnIfRunning).not.toHaveBeenCalled()
+    // The claim already finalized the row; the tailer settles from status.
+    expect(res.reaped).toEqual(['turn-racy'])
   })
 
   it('young running turns are not even candidates', async () => {

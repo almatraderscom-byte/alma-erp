@@ -6686,7 +6686,14 @@ final class AssistantVM {
             let silent = Date().timeIntervalSince(lastLiveEventAt)
             let limit: TimeInterval = trigger == "stall" ? 0
                 : trigger == "poll" ? streamStallSeconds : 20
-            if silent <= limit { return }
+            if silent <= limit {
+                // The live stream is trusted — the conversation is already
+                // current, so a reopen overlay has nothing to wait for
+                // (Codex P2 #857 r2: a quiet tool call would otherwise hold
+                // it to the 12s ceiling).
+                resolveReopenSync()
+                return
+            }
             reconnecting = true
             AlmaTurnLog.event("turn.streamStallDetected", "\(trigger) after \(Int(silent))s silent")
         }

@@ -23,7 +23,6 @@
  * settle from that. Clients already handle all three paths.
  */
 import { prisma } from '@/lib/prisma'
-import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -81,6 +80,17 @@ async function publishTerminal(turnId: string, seq: number, payload: Record<stri
  */
 async function reapTurn(turnId: string, lastSeq: number): Promise<boolean> {
   try {
+    // CLAIM FIRST (Codex P1 #857 r2): the turn may settle legitimately
+    // between candidate selection and this reap — appending a watchdog error
+    // to a genuinely done turn would feed exact-turn tails a false failure.
+    // The status CAS is the claim; losing it means the real executor settled
+    // and there is nothing to repair. The brief claimed-but-no-terminal-row
+    // window is already handled by the tailer's status-only settlement.
+    const claimed = await db.agentTurn.updateMany({
+      where: { id: turnId, status: 'running' },
+      data: { status: 'error', finishedAt: new Date() },
+    })
+    if (!claimed?.count) return false
     const seq = lastSeq + 1
     const payload = { type: 'error', message: WATCHDOG_TERMINAL_MESSAGE }
     try {
@@ -88,14 +98,12 @@ async function reapTurn(turnId: string, lastSeq: number): Promise<boolean> {
         data: { turnId, seq, type: 'error', payload },
       })
     } catch {
-      // Unique conflict = a racing writer took this seq; the turn is not as
-      // dead as it looked (or a concurrent sweep won). Leave it for the next
-      // pass rather than fight over the log.
-      return false
+      // Unique conflict = a racing writer took this seq. The row is already
+      // finalized by our claim; status-only settlement covers the tails.
+      return true
     }
     await db.agentTurn.updateMany({ where: { id: turnId }, data: { lastSeq: seq } }).catch(() => {})
     await publishTerminal(turnId, seq, payload)
-    await finalizeTurnIfRunning(turnId, 'error')
     return true
   } catch (err) {
     console.warn(`[turn-watchdog] reap failed for ${turnId}:`, err instanceof Error ? err.message : err)

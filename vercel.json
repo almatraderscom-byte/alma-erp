@@ -22,7 +22,7 @@
       "schedule": "17 3 * * *"
     },
     {
-      "path": "/api/cron/turn-watchdog",
+      "path": "/api/assistant/internal/turn-watchdog",
       "schedule": "*/5 * * * *"
     },
     {
