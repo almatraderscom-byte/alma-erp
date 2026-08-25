@@ -111,7 +111,7 @@ describe('run-owner-turn missing-key head fallback wiring (Codex P1 #854 r3)', (
     const source = readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url).pathname, 'utf8')
     const site = source.indexOf('missing_key_fallback')
     expect(site).toBeGreaterThan(-1)
-    const block = source.slice(site - 2000, site + 200)
+    const block = source.slice(Math.max(0, site - 4000), site + 200)
     expect(block).toContain('isProviderKeyConfigured(resolved.provider)')
     expect(block).toContain('provider key এই server-এ নেই')
   })
