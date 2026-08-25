@@ -19,6 +19,9 @@ const prismaMock = vi.hoisted(() => ({
   agentTurnEvent: {
     findFirst: vi.fn(async (_args: { where: { turnId: string } }) => null as unknown),
     create: vi.fn(async () => ({} as unknown)),
+    // Default: batched liveness unavailable — sweeps fall back to per-turn
+    // findFirst. Individual tests prime this to exercise the batched path.
+    groupBy: vi.fn(async (): Promise<unknown> => { throw new Error('groupBy not primed') }),
   },
 }))
 vi.mock('@/lib/prisma', () => ({ prisma: prismaMock }))
@@ -39,6 +42,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   prismaMock.agentTurn.updateMany.mockResolvedValue({ count: 1 })
   prismaMock.agentTurnEvent.create.mockResolvedValue({})
+  prismaMock.agentTurnEvent.groupBy.mockRejectedValue(new Error('groupBy not primed'))
   delete process.env.LONG_TASK_REDIS_URL
   delete process.env.REDIS_URL
 })
@@ -166,6 +170,65 @@ describe('keyset pagination (Codex P2 #857 r3)', () => {
     expect(res.stillAlive).toBe(5)
     expect(res.reaped).toEqual(['dead-tail'])
     expect(prismaMock.agentTurn.findMany.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('round-6 fixes (Codex P2 #857 r6)', () => {
+  it('batched liveness: one groupBy per page, no per-turn findFirst round trips', async () => {
+    prismaMock.agentTurn.findMany
+      .mockResolvedValueOnce([
+        { id: 'alive-b', startedAt: OLD },
+        { id: 'dead-b', startedAt: OLD },
+      ])
+      .mockResolvedValue([])
+    prismaMock.agentTurnEvent.groupBy.mockResolvedValue([
+      { turnId: 'alive-b', _max: { seq: 10, createdAt: new Date(NOW.getTime() - 60_000) } },
+      { turnId: 'dead-b', _max: { seq: 3, createdAt: OLD } },
+    ])
+
+    const res = await sweepStrandedTurns(NOW, TURN_STALE_MS)
+
+    expect(res.stillAlive).toBe(1)
+    expect(res.reaped).toEqual(['dead-b'])
+    expect(prismaMock.agentTurnEvent.findFirst).not.toHaveBeenCalled()
+  })
+
+  it('a transient (non-P2002) terminal insert failure is retried, then the terminal lands', async () => {
+    prismaMock.agentTurn.findMany
+      .mockResolvedValueOnce([{ id: 'turn-flaky', startedAt: OLD }])
+      .mockResolvedValue([])
+    prismaMock.agentTurnEvent.findFirst.mockResolvedValue({ seq: 5, createdAt: OLD })
+    prismaMock.agentTurnEvent.create
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockResolvedValue({})
+
+    const res = await sweepStrandedTurns(NOW, TURN_STALE_MS)
+
+    expect(res.reaped).toEqual(['turn-flaky'])
+    expect(prismaMock.agentTurnEvent.create).toHaveBeenCalledTimes(2)
+    expect(prismaMock.agentTurnEvent.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ seq: 6 }) }),
+    )
+  })
+
+  it('the cursor persists after every FULL page, so a mid-sweep kill resumes forward', async () => {
+    const dead = { seq: 3, createdAt: OLD }
+    const page1 = Array.from({ length: 5 }, (_, i) => ({ id: `d1-${i}`, startedAt: OLD }))
+    prismaMock.agentTurn.findMany
+      .mockResolvedValueOnce(page1)
+      .mockResolvedValue([])
+    prismaMock.agentTurnEvent.findFirst.mockResolvedValue(dead)
+
+    await sweepStrandedTurns(NOW, TURN_STALE_MS, 50, 5)
+
+    // Full page 1 wrote a forward cursor BEFORE fetching page 2; the empty
+    // page 2 then cleared it (backlog fully walked).
+    expect(prismaMock.agentKvSetting.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ value: expect.stringContaining('d1-4') }),
+      }),
+    )
+    expect(prismaMock.agentKvSetting.deleteMany).toHaveBeenCalled()
   })
 })
 

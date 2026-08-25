@@ -5685,6 +5685,11 @@ final class AssistantVM {
                     // openConversation — without this, a reply that arrived while
                     // the app was closed stays counted even as he reads it.
                     await markConversationRead(cid)
+                    // Cold launch over a still-running turn is a reopen too
+                    // (Codex P2 #857 r6: bootstrap recovery starts following
+                    // the exact turn first, so the relaunch-path begin was
+                    // never reached).
+                    beginReopenSyncIfActive()
                     await recoverTurnState(trigger: "bootstrap")
                 } else {
                     // The pointer resolved but the history request failed —

@@ -110,14 +110,30 @@ async function reapTurn(turnId: string, lastSeq: number): Promise<boolean> {
     if (!claimed?.count) return false
     const seq = lastSeq + 1
     const payload = { type: 'error', message: WATCHDOG_TERMINAL_MESSAGE }
-    try {
-      await db.agentTurnEvent.create({
-        data: { turnId, seq, type: 'error', payload },
-      })
-    } catch {
-      // Unique conflict = a racing writer took this seq. The row is already
-      // finalized by our claim; status-only settlement covers the tails.
-      return true
+    let stored = false
+    for (let attempt = 0; attempt < 3 && !stored; attempt++) {
+      try {
+        await db.agentTurnEvent.create({
+          data: { turnId, seq, type: 'error', payload },
+        })
+        stored = true
+      } catch (err) {
+        if ((err as { code?: string })?.code === 'P2002') {
+          // Unique conflict = a racing writer took this seq. The row is
+          // already finalized by our claim; status-only settlement covers
+          // the tails.
+          return true
+        }
+        // Transient store error (Codex P2 #857 r6): the claim has already
+        // finalized the row, so this reap will never be retried by a later
+        // sweep — retry the durable terminal here before giving up on the
+        // log (status-only settlement still covers every client either way).
+        if (attempt === 2) {
+          console.warn(`[turn-watchdog] terminal event store failed for ${turnId} after retries:`, err instanceof Error ? err.message : err)
+          return true
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)))
+      }
     }
     await db.agentTurn.updateMany({ where: { id: turnId }, data: { lastSeq: seq } }).catch(() => {})
     await publishTerminal(turnId, seq, payload)
@@ -198,11 +214,34 @@ export async function sweepStrandedTurns(
       take: Math.min(scanLimit, hardScanCeiling - result.scanned),
       select: { id: true, startedAt: true },
     })
-    if (page.length === 0) break
+    if (page.length === 0) {
+      // Backlog exhausted exactly at a page boundary: clear the persisted
+      // cursor, or the next sweep would resume at the tail forever and the
+      // head would never be rescanned.
+      if (cursor) await writeSweepCursor(null)
+      break
+    }
+    // ONE grouped query per page instead of a serial lookup per turn — a
+    // large alive backlog must not spend the cron's whole 120s budget on
+    // round trips (Codex P2 #857 r6).
+    const newestByTurn = new Map<string, { seq: number; createdAt: Date }>()
+    try {
+      const grouped: Array<{ turnId: string; _max: { seq: number | null; createdAt: Date | string | null } }> =
+        await db.agentTurnEvent.groupBy({
+          by: ['turnId'],
+          where: { turnId: { in: page.map((t) => t.id) } },
+          _max: { seq: true, createdAt: true },
+        })
+      for (const g of grouped) {
+        if (g._max.seq != null && g._max.createdAt != null) {
+          newestByTurn.set(g.turnId, { seq: Number(g._max.seq), createdAt: new Date(g._max.createdAt) })
+        }
+      }
+    } catch { /* fall back to per-turn lookups below */ }
     for (const turn of page) {
       result.scanned += 1
       if (result.reaped.length >= batchLimit) break
-      const newest = await latestEvent(turn.id)
+      const newest = newestByTurn.get(turn.id) ?? await latestEvent(turn.id)
       const lastActivity = newest && newest.createdAt > turn.startedAt ? newest.createdAt : new Date(turn.startedAt)
       if (now.getTime() - lastActivity.getTime() < staleMs) {
         // Old turn, fresh events: a long slice that is genuinely alive.
@@ -215,12 +254,14 @@ export async function sweepStrandedTurns(
       }
     }
     const last = page[page.length - 1]
-    cursor = { startedAt: new Date(last.startedAt), id: last.id }
-    if (page.length < scanLimit) {
-      cursor = null // backlog fully walked — next sweep restarts at the head
-      break
-    }
+    cursor = page.length < scanLimit
+      ? null // backlog fully walked — next sweep restarts at the head
+      : { startedAt: new Date(last.startedAt), id: last.id }
+    // Persist per PAGE, not once at the end (Codex P2 #857 r6): if the cron
+    // function is killed at its time budget mid-sweep, the next run resumes
+    // past the pages already walked instead of repeating them forever.
+    await writeSweepCursor(cursor)
+    if (!cursor) break
   }
-  await writeSweepCursor(cursor && result.scanned >= hardScanCeiling ? cursor : null)
   return result
 }
