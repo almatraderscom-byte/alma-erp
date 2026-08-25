@@ -3857,8 +3857,12 @@ final class AssistantVM {
     /// Foreground/relaunch over an ACTIVE turn → start the reopen-sync loader.
     /// An idle chat reopens instantly and never sees it.
     func beginReopenSyncIfActive() {
+        // currentTurnId deliberately NOT consulted: it lingers after a turn
+        // settles (finishRecovery keeps it for identity checks), so an IDLE
+        // chat would start a loader nothing ever resolves (Codex P1 #857).
+        // The three states below are all cleared on settle.
         guard conversationId != nil,
-              isStreaming || reconnecting || recoverableTurn != nil || currentTurnId != nil
+              isStreaming || reconnecting || recoverableTurn != nil
         else { return }
         reopenSyncPending = true
         reopenSyncBeginTick += 1
@@ -6652,7 +6656,7 @@ final class AssistantVM {
             resumePreTurnDescriptor(recoverableTurn)
             return
         }
-        guard let cid = conversationId else { return }
+        guard let cid = conversationId else { resolveReopenSync(); return }
         if let descriptor = recoverableTurn,
            descriptor.conversationId != cid {
             // Cold bootstrap can restore a different active pointer first. Do

@@ -110,18 +110,23 @@ async function reapTurn(turnId: string, lastSeq: number): Promise<boolean> {
 export async function sweepStrandedTurns(
   now: Date = new Date(),
   staleMs: number = TURN_STALE_MS,
+  /** Caps REAPS per pass, not scans: a backlog of long-running-but-alive old
+   * turns at the head of the startedAt ordering must not starve stranded
+   * turns behind them forever (Codex P2 #857). */
   batchLimit = 50,
+  scanLimit = 500,
 ): Promise<StrandedSweepResult> {
   const cutoff = new Date(now.getTime() - staleMs)
   const candidates: Array<{ id: string; startedAt: Date }> = await db.agentTurn.findMany({
     where: { status: 'running', startedAt: { lt: cutoff } },
     orderBy: { startedAt: 'asc' },
-    take: batchLimit,
+    take: scanLimit,
     select: { id: true, startedAt: true },
   })
 
   const result: StrandedSweepResult = { scanned: candidates.length, reaped: [], stillAlive: 0 }
   for (const turn of candidates) {
+    if (result.reaped.length >= batchLimit) break
     const newest = await latestEvent(turn.id)
     const lastActivity = newest && newest.createdAt > turn.startedAt ? newest.createdAt : new Date(turn.startedAt)
     if (now.getTime() - lastActivity.getTime() < staleMs) {

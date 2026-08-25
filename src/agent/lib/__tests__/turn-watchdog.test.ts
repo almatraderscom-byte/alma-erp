@@ -12,8 +12,8 @@ const prismaMock = vi.hoisted(() => ({
     updateMany: vi.fn(async () => ({ count: 1 })),
   },
   agentTurnEvent: {
-    findFirst: vi.fn(async () => null as unknown),
-    create: vi.fn(async () => ({})),
+    findFirst: vi.fn(async (_args: { where: { turnId: string } }) => null as unknown),
+    create: vi.fn(async () => ({} as unknown)),
   },
 }))
 vi.mock('@/lib/prisma', () => ({ prisma: prismaMock }))
@@ -100,5 +100,25 @@ describe('sweepStrandedTurns', () => {
     ]
     expect(call[0].where.status).toBe('running')
     expect(call[0].where.startedAt.lt.getTime()).toBe(NOW.getTime() - TURN_STALE_MS)
+  })
+})
+
+describe('backlog starvation (Codex P2 #857)', () => {
+  it('alive old turns at the head do not stop stranded turns behind them from reaping', async () => {
+    const fresh = { seq: 10, createdAt: new Date(NOW.getTime() - 60_000) }
+    const dead = { seq: 3, createdAt: OLD }
+    prismaMock.agentTurn.findMany.mockResolvedValue([
+      { id: 'alive-1', startedAt: OLD },
+      { id: 'alive-2', startedAt: OLD },
+      { id: 'dead-1', startedAt: OLD },
+    ])
+    prismaMock.agentTurnEvent.create.mockResolvedValue({})
+    prismaMock.agentTurnEvent.findFirst.mockImplementation(async (args: { where: { turnId: string } }) =>
+      args.where.turnId.startsWith('alive') ? fresh : dead)
+
+    const res = await sweepStrandedTurns(NOW)
+
+    expect(res.stillAlive).toBe(2)
+    expect(res.reaped).toEqual(['dead-1'])
   })
 })
