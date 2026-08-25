@@ -6794,10 +6794,17 @@ export async function* runOwnerTurn(
     if (!isProviderKeyConfigured(resolved.provider)) {
       const { heavyHeadModelId } = await import('@/agent/lib/models/head-router')
       const { getDefaultHeadModelId } = await import('@/agent/lib/models/routing-config')
+      // A candidate must ALSO pass the owner's Monitor kill switch — a
+      // keyless pin must never resurrect a model the owner turned OFF
+      // (Codex P1 #854 r4).
+      const { getModelEnabledMap, isModelEnabledSync } = await import('@/agent/lib/models/model-enabled')
+      const enabledMap = await getModelEnabledMap()
       const candidates = [await getDefaultHeadModelId(), heavyHeadModelId()]
       const fallbackId = candidates.find((id) => {
         try {
-          return id !== resolved.id && isProviderKeyConfigured(getModel(id).provider)
+          return id !== resolved.id
+            && isModelEnabledSync(id, enabledMap)
+            && isProviderKeyConfigured(getModel(id).provider)
         } catch {
           return false
         }

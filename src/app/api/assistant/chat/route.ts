@@ -282,8 +282,12 @@ export async function POST(req: NextRequest) {
     // The provider the DEFAULT head actually runs on must be configured —
     // the Anthropic-specific demand was a Claude-head-era relic that 503'd
     // the self-hosted engine (owner ruling 2026-08-25; Codex P1 #854 made it
-    // exact rather than any-key).
-    const keyMissing = await requireDefaultHeadProviderKey(defaultHeadModelId)
+    // exact rather than any-key). A worker RERUN of an existing turn is
+    // exempt: it executes the conversation-pinned model, which gets its own
+    // exact provider check below — demanding the unused default's key here
+    // would 503 a perfectly executable queued turn (Codex P1 #854 r4).
+    const internalRerun = typeof body.turnId === 'string' && Boolean(body.turnId)
+    const keyMissing = internalRerun ? null : await requireDefaultHeadProviderKey(defaultHeadModelId)
     if (keyMissing) return keyMissing
   }
 
