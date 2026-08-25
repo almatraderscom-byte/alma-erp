@@ -28,9 +28,12 @@ if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
   echo "FATAL: /opt/alma-erp is not at origin/main — let the sync timer catch up (or git pull) first." >&2
   exit 1
 fi
-if [ -n "$(git status --porcelain)" ]; then
-  echo "FATAL: /opt/alma-erp has local modifications — the engine must build pristine origin/main:" >&2
-  git status --porcelain >&2
+# Tracked files only: the threat is MODIFIED reviewed code being served as
+# main. Untracked files (notably the required /opt/alma-erp/.env.engine, now
+# also gitignored) must not fail every documented first deploy (Codex P1 #852).
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "FATAL: /opt/alma-erp has local modifications to tracked files — the engine must build pristine origin/main:" >&2
+  git status --porcelain --untracked-files=no >&2
   exit 1
 fi
 
