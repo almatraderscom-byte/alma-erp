@@ -5,9 +5,26 @@
 # the built Next app on the loopback-only engine port.
 set -euo pipefail
 cd /opt/alma-erp
-set -a
-source /opt/alma-erp/.env.engine
-set +a
+# Dotenv-safe loader (Codex P1 #852): `source` executes the file as SHELL
+# code, so an unquoted pooled DATABASE_URL containing `&` backgrounds the
+# assignment and the variable arrives absent/truncated. Values are taken
+# literally after the first '=', with one optional pair of surrounding quotes
+# stripped — exactly dotenv semantics.
+load_env_file() {
+  local file="$1" line key value
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue ;; esac
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in ''|*[!A-Za-z0-9_]*) echo "WARN: skipping invalid env line key: $key" >&2; continue ;; esac
+    case "$value" in
+      \"*\") value="${value#\"}"; value="${value%\"}" ;;
+      \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+    export "$key=$value"
+  done < "$file"
+}
+load_env_file /opt/alma-erp/.env.engine
 export ALMA_SELF_HOSTED_ENGINE=1
 export PORT="${ENGINE_PORT:-3200}"
 # The commit this .next was BUILT from (stamped by vps-engine-deploy.sh) —

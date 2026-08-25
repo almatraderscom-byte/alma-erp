@@ -50,7 +50,26 @@ fi
 # Engine env loads FIRST: npm ci's postinstall runs `prisma generate`, and
 # prisma/schema.prisma resolves env("DATABASE_URL") — with no ambient value a
 # documented first deploy died before the build began (Codex P1 #852).
-set -a; source "$ENV_FILE"; set +a
+# Dotenv-safe loader (Codex P1 #852): `source` executes the file as SHELL
+# code, so an unquoted pooled DATABASE_URL containing `&` backgrounds the
+# assignment. Values are literal after the first '=', one optional pair of
+# surrounding quotes stripped — dotenv semantics, same loader as the start
+# script.
+load_env_file() {
+  local file="$1" line key value
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue ;; esac
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in ''|*[!A-Za-z0-9_]*) echo "WARN: skipping invalid env line key: $key" >&2; continue ;; esac
+    case "$value" in
+      \"*\") value="${value#\"}"; value="${value%\"}" ;;
+      \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+    export "$key=$value"
+  done < "$file"
+}
+load_env_file "$ENV_FILE"
 
 echo "==> npm ci"
 npm ci --no-audit --no-fund
