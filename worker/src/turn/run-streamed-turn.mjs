@@ -44,7 +44,7 @@ const REPAIR_ENQUEUE_DELAYS_MS = [1000, 3000]
 const TERMINAL_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 16000]
 
 import Redis from 'ioredis'
-import { getAppUrl, getInternalToken } from '../env.mjs'
+import { getTurnEngineUrl, getTurnFetchTimeoutMs, getInternalToken } from '../env.mjs'
 
 const SLOW_TURN_MS = 30_000
 
@@ -292,15 +292,19 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
     const requestBody = boundContinuation
       ? { conversationId, turnId, internalControl: true, continuationRequestId }
       : { conversationId, message, files, projectId, personalMode, turnId, clientRequestId, askCardId, internalControl, agentProseProtocol }
-    const res = await fetchImpl(`${getAppUrl()}/api/assistant/chat?stream=true`, {
+    // VPS model-loop V1: with WORKER_TURN_ENGINE_URL set, the slice executes
+    // on the self-hosted engine beside this worker (no Vercel ceiling);
+    // otherwise this is the Vercel app URL exactly as before. The timeout must
+    // outlive the executing side's slice cap or the worker becomes the
+    // ceiling (the old fixed 25 min killed a 30-min Vercel slice mid-stream).
+    const res = await fetchImpl(`${getTurnEngineUrl()}/api/assistant/chat?stream=true`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${getInternalToken()}`,
       },
       body: JSON.stringify(requestBody),
-      // Generous cap for genuinely long turns — this is the whole point of A2.
-      signal: AbortSignal.timeout(25 * 60 * 1000),
+      signal: AbortSignal.timeout(getTurnFetchTimeoutMs()),
     })
     if (
       boundContinuation

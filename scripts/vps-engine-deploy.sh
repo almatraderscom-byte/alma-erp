@@ -1,0 +1,49 @@
+#!/bin/bash
+# VPS model-loop engine deploy (docs/VPS_MODEL_LOOP.md).
+#
+# Runs ON the VPS in /opt/alma-erp (which already tracks origin/main via the
+# sync timer — this script never switches branches). Builds the Next app and
+# (re)starts the self-hosted turn engine under pm2 as `alma-agent-engine`.
+#
+# Prerequisites (one-time, owner-provided):
+#   /opt/alma-erp/.env.engine  — see docs/VPS_MODEL_LOOP.md for the checklist
+#
+# Usage on the VPS:
+#   bash scripts/vps-engine-deploy.sh
+set -euo pipefail
+
+cd /opt/alma-erp
+
+ENV_FILE=/opt/alma-erp/.env.engine
+if [ ! -f "$ENV_FILE" ]; then
+  echo "FATAL: $ENV_FILE missing — create it from the checklist in docs/VPS_MODEL_LOOP.md" >&2
+  exit 1
+fi
+
+# Refuse a stale checkout: the engine must serve exactly what main serves.
+git fetch origin main
+if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+  echo "FATAL: /opt/alma-erp is not at origin/main — let the sync timer catch up (or git pull) first." >&2
+  exit 1
+fi
+
+echo "==> npm ci"
+npm ci --no-audit --no-fund
+
+echo "==> prisma generate"
+npx prisma generate
+
+echo "==> next build (this is the heavy step)"
+# The box also runs Asterisk + the worker; keep Node's heap bounded but real.
+set -a; source "$ENV_FILE"; set +a
+NODE_OPTIONS="--max-old-space-size=4096" npx next build
+
+echo "==> (re)start alma-agent-engine on port ${ENGINE_PORT:-3100}"
+pm2 delete alma-agent-engine >/dev/null 2>&1 || true
+pm2 start scripts/vps-engine-start.sh --name alma-agent-engine --time
+pm2 save
+
+echo "==> health check"
+sleep 5
+curl -sf "http://127.0.0.1:${ENGINE_PORT:-3100}/api/build-info" | head -c 200 && echo
+echo "OK — now set WORKER_TURN_ENGINE_URL=http://127.0.0.1:${ENGINE_PORT:-3100} in /opt/alma-erp/worker/.env and: pm2 restart alma-agent-worker"
