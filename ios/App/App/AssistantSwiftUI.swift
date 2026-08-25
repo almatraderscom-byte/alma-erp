@@ -11040,11 +11040,12 @@ final class AssistantVM {
 
     #if DEBUG
     /// Perf stress fixture (owner report 2026-08-25: 100k-context chats scroll
-    /// slowly). Seeds a full mounted window of heavy settled markdown rows plus
-    /// a live-growing streaming tail, so scroll responsiveness under stream
-    /// churn can be exercised in the simulator without a real 100k session.
+    /// slowly; owner then asked for a 1M-class check). Seeds the MAXIMUM the UI
+    /// can ever mount — `mountedHistoryLimit` (72) rows of heavy markdown — plus
+    /// a live-growing streaming tail. A 1M-token conversation can never mount
+    /// more than this window, so this IS the 1M worst case for scroll work.
     func loadHeavyHistoryPerfFixture() {
-        let lorem = (1...18).map { i in
+        let lorem = (1...24).map { i in
             "ধাপ \(i): ব্যবসার হিসাব ও রিপোর্ট বিশ্লেষণ — অর্ডার, ইনভেন্টরি, ক্যাশফ্লো, "
             + "বিজ্ঞাপন খরচ এবং কাস্টমার সেগমেন্ট নিয়ে বিস্তারিত পর্যালোচনা। "
             + "This paragraph intentionally mixes **bold**, `inline code`, "
@@ -11055,7 +11056,7 @@ final class AssistantVM {
             + (1...12).map { "| খাত-\($0) | \($0 * 1250) | ঠিক আছে |" }.joined(separator: "\n")
         let code = "```swift\nfunc report(_ day: Int) -> Int {\n    return day * 42\n}\n```"
         var rows: [AgentChatMessage] = []
-        for i in 1...12 {
+        for i in 1...36 {
             var u = AgentChatMessage(id: "perf-u-\(i)", role: .user)
             u.text = "রিপোর্ট \(i) দাও — গত মাসের সেল, খরচ আর স্টক মিলিয়ে।"
             u.createdAt = "2026-08-20T0\(i % 10):00:00.000Z"

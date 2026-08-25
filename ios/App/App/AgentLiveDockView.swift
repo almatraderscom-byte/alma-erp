@@ -202,6 +202,11 @@ final class AgentLiveDockStore {
     var expanded = false
     /// He closed it by hand — respect that until genuinely NEW work starts.
     var dismissedActivityKey: String?
+    /// Owner rule 2026-08-25: Mac live VIDEO never starts by itself. The card
+    /// appears with frames/placeholder only; he arms the stream himself (the
+    /// ▶ chip on the mini player or the sheet's stream button). Reset on
+    /// dismiss, scope change and finish so a NEW task never inherits consent.
+    var liveVideoArmed = false
 
     private var lastActiveAt: Date = .distantPast
     private var lastSuccessfulRefreshAt: Date = .distantPast
@@ -269,8 +274,11 @@ final class AgentLiveDockStore {
     private var trackedLifecycleVisible: Bool {
         guard trackedActivityKey != nil else { return false }
         if trackedActive { return true }
-        guard let trackedFinishedAt else { return false }
-        return lifecycleClock.timeIntervalSince(trackedFinishedAt) < Self.finishedLingerSeconds
+        // Owner rule 2026-08-25: a finished card STAYS — frozen last frame plus
+        // the "শেষ" badge — until he closes it himself. The old 12s auto-hide
+        // vanished it mid-glance. Capture/RTC still stop at finish; navigation
+        // to another chat/turn and the ✕ button remain the only exits.
+        return trackedFinishedAt != nil
     }
 
     private var currentVisibilityKey: String? {
@@ -440,7 +448,9 @@ final class AgentLiveDockStore {
     /// Agora is a device-scoped transport. A Finished task may retain its exact
     /// cached JPEG for the bounded linger, but it must leave/hide RTC immediately
     /// so a newer task on the same Mac can never paint pixels into the old card.
-    var shouldRenderRealtimeVideo: Bool { presentationState != .finished }
+    /// And RTC never mounts at all until the owner armed it (owner 2026-08-25:
+    /// display first, live only on his tap).
+    var shouldRenderRealtimeVideo: Bool { presentationState != .finished && liveVideoArmed }
 
     /// The screenshot we HOLD. The poll sends `screenshotAfter` so the server
     /// answers an unchanged frame with metadata only — without this, an active
@@ -547,6 +557,7 @@ final class AgentLiveDockStore {
             && (!inputTurnIsStreaming || inputConversationId != conversationId || inputTurnId != turnId)
         let inputChanged = inputConversationId != conversationId || inputTurnId != turnId
             || inputTurnIsStreaming != turnIsStreaming || inputTurnReconnecting != turnReconnecting
+        let previousInputConversationId = inputConversationId
         inputConversationId = conversationId
         inputTurnId = turnId
         inputTurnIsStreaming = turnIsStreaming
@@ -559,8 +570,20 @@ final class AgentLiveDockStore {
         // last pixels over the newly selected conversation.
         let movedConversation = trackedConversationId != nil && conversationId != nil
             && trackedConversationId != conversationId
+        // Codex P1 #853: New Chat (an explicit nil conversation after this
+        // store watched a real one) is a scope exit too — otherwise the
+        // now-indefinite finished card floats over the blank new-chat surface.
+        let movedToNewChat = trackedConversationId != nil && conversationId == nil
+            && previousInputConversationId != nil
         let movedTurn = trackedTurnId != nil && turnId != nil && trackedTurnId != turnId
-        if trackedActivityKey != nil, movedConversation || movedTurn {
+        if trackedActivityKey != nil, movedConversation || movedToNewChat || movedTurn {
+            // Codex P1 #853 r5: a broadcast that survived a remount is not in
+            // ownedMacStream, so the owned-resource release misses it — revoke
+            // through the OLD scope (captured before the fields clear).
+            if streamOn || ownedMacStream != nil,
+               let staleScope = ownedMacStream ?? currentMacStreamScope() {
+                Task { [weak self] in await self?.stopOwnedMacStreamNow(staleScope) }
+            }
             await releaseOwnedComputerUseResources()
             clearFeedAndFrameCaches()
             trackedConversationId = nil
@@ -574,6 +597,8 @@ final class AgentLiveDockStore {
             frameMotionByPreview.removeAll()
             dismissedActivityKey = nil
             manualStreamOverride = false
+            liveVideoArmed = false
+            liveConsentGeneration &+= 1
             setStreamOptimistic(nil)
             lifecycleRevision &+= 1
         }
@@ -596,6 +621,12 @@ final class AgentLiveDockStore {
                 && scopesMatch(conversationId: eventConversationId, turnId: eventTurnId)
 
             if !belongsToTrackedTurn {
+                // Same r5 rule for a NEW task replacing a tracked one: the old
+                // task's remounted broadcast must not run to the server cap.
+                if streamOn || ownedMacStream != nil,
+                   let staleScope = ownedMacStream ?? currentMacStreamScope() {
+                    Task { [weak self] in await self?.stopOwnedMacStreamNow(staleScope) }
+                }
                 await releaseOwnedComputerUseResources()
                 clearFeedAndFrameCaches()
                 trackedConversationId = eventConversationId
@@ -603,6 +634,8 @@ final class AgentLiveDockStore {
                 trackedSurfaces.removeAll()
                 frameMotionByPreview.removeAll()
                 manualStreamOverride = false
+                liveVideoArmed = false
+                liveConsentGeneration &+= 1
                 trackedActivityKey = "computer:\(eventConversationId ?? "pending"):\(eventTurnId ?? "pending"):\(computerUseToolStartGeneration)"
                 dismissedActivityKey = nil
             }
@@ -801,6 +834,18 @@ final class AgentLiveDockStore {
         trackedActive = false
         trackedFinishedAt = lifecycleClock
         inputTurnReconnecting = false
+        // Codex P1 #853 r3: finish IS a consent revocation. A start still in
+        // flight when the task ends must not pass the generation guard and
+        // rearm capture after the finish-time resource release found nothing.
+        liveVideoArmed = false
+        liveConsentGeneration &+= 1
+        // Codex P1 #853 r4: a broadcaster that survived an app remount is not
+        // in ownedMacStream, so the owned-resource release misses it. Terminal
+        // reconciliation revokes the scoped stream directly, like ✕ does.
+        if streamOn || ownedMacStream != nil {
+            manualStreamOverride = true
+            Task { [weak self] in await self?.stopOwnedMacStreamNow() }
+        }
         lifecycleRevision &+= 1
     }
 
@@ -833,6 +878,17 @@ final class AgentLiveDockStore {
 
     private func expireStaleFeed(force: Bool = false) {
         guard Self.shouldExpireFeed(lastSuccessfulAt: lastSuccessfulRefreshAt, force: force) else { return }
+        // Codex P2 #853 r4+r5: the finished card persists until the owner
+        // closes it — a poll outage must not swap its frozen last frame for
+        // the "first frame arriving" placeholder. Keep the last feed AS-IS
+        // (nil-ing it made presentedFeed synthesize a pending:<surface>
+        // preview whose id can't reach the cached still); it is the static
+        // truth of a finished task. The forced (owner-auth-failure) path
+        // still clears everything sensitive.
+        if !force, trackedActivityKey != nil, !trackedActive, trackedFinishedAt != nil {
+            setStreamOptimistic(nil)
+            return
+        }
         clearFeedAndFrameCaches()
         lastActiveAt = .distantPast
         expanded = false
@@ -855,6 +911,47 @@ final class AgentLiveDockStore {
     func dismiss() {
         dismissedActivityKey = currentVisibilityKey
         expanded = false
+        let hadLiveConsent = liveVideoArmed
+        liveVideoArmed = false
+        // Codex P1 #853 r2: any in-flight start/switch completion after this
+        // point is stale — it must not rearm the hidden dock or restore the
+        // renewal loop's ownership.
+        liveConsentGeneration &+= 1
+        // Codex P1 #853: closing a consent-gated live view REVOKES capture now,
+        // not at the server's 120s cap. The explicit-stop override also keeps
+        // the renewal loop from re-claiming for the remainder of this task.
+        // r2: a broadcaster that survived an app remount streams while this
+        // fresh store never armed — revoke on the server bit too, not only on
+        // process-local consent.
+        if hadLiveConsent || streamOn {
+            manualStreamOverride = true
+            Task { [weak self] in await self?.stopOwnedMacStreamNow() }
+        }
+    }
+
+    /// Immediate broadcaster stop for a consent revocation (✕ while live).
+    /// `preScope` lets scope-change callers capture the OLD task's scope before
+    /// the tracked fields are cleared (Codex P1 #853 r5).
+    private func stopOwnedMacStreamNow(_ preScope: OwnedMacStream? = nil) async {
+        guard let scope = preScope ?? ownedMacStream ?? currentMacStreamScope() else { return }
+        let _: StreamResponse? = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/mac-agent/stream",
+            body: ComputerUseStreamBody(
+                on: false, deviceId: scope.deviceId, maxSeconds: nil,
+                displayIndex: nil, reason: "computer_use",
+                conversationId: scope.conversationId, turnId: scope.turnId))
+        ownedMacStream = nil
+        setStreamOptimistic(false)
+    }
+
+    /// The ▶ chip on the mini player: arm live video AND start the Mac
+    /// broadcaster when it is not already running (a broadcaster that is
+    /// already live — e.g. after an app remount mid-stream — is only joined,
+    /// never toggled off). Arming first — the renewal loop is gated on it, so
+    /// a started stream must never be orphaned.
+    func armLiveVideo() async {
+        liveVideoArmed = true
+        if !streamOn { await toggleStream() }
     }
 
     // MARK: L4 tap-to-reply
@@ -934,6 +1031,10 @@ final class AgentLiveDockStore {
     /// An explicit task-scoped Stop wins for the remainder of this task. Starts
     /// and display switches keep renewal enabled so long-running video survives.
     private var manualStreamOverride = false
+    /// Bumped whenever live-video consent is revoked (✕, scope change). An
+    /// async start/switch that resumes with a stale generation must not apply
+    /// its result — and must kill the stream it just started (Codex P1 #853 r2).
+    private var liveConsentGeneration = 0
 
     static let browserLeaseRenewSeconds: TimeInterval = 10
     static let macStreamRenewSeconds: TimeInterval = 60
@@ -1054,6 +1155,10 @@ final class AgentLiveDockStore {
     }
 
     private func ensureMacComputerUseStream(force: Bool) async {
+        // Owner rule 2026-08-25: the app must NEVER claim the Mac broadcaster
+        // by itself — screen capture starts only after he armed live video.
+        // Once armed, this same loop renews the stream past the daemon's cap.
+        guard liveVideoArmed else { return }
         guard !autoMacBusy, !manualStreamOverride,
               let activityKey = trackedActivityKey,
               let conversationId = trackedConversationId,
@@ -1211,6 +1316,7 @@ final class AgentLiveDockStore {
         guard !streamBusy, !autoMacBusy else { return }
         streamBusy = true
         defer { streamBusy = false }
+        let generation = liveConsentGeneration
         if trackedActivityKey != nil {
             guard let scope = currentMacStreamScope(),
                   let response: StreamResponse = try? await AlmaAPI.shared.send(
@@ -1221,15 +1327,32 @@ final class AgentLiveDockStore {
                         conversationId: scope.conversationId, turnId: scope.turnId)),
                   Self.responseOwnsScopedStream(
                     response, scope: scope, requireDeviceEcho: true) else { return }
+            guard generation == liveConsentGeneration else {
+                // Revoked mid-flight: stop what this switch just (re)started.
+                let _: StreamResponse? = try? await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/mac-agent/stream",
+                    body: ComputerUseStreamBody(
+                        on: false, deviceId: scope.deviceId, maxSeconds: nil,
+                        displayIndex: nil, reason: "computer_use",
+                        conversationId: scope.conversationId, turnId: scope.turnId))
+                return
+            }
             ownedMacStream = scope
             manualStreamOverride = Self.scopedManualControlBlocksRenewal(streamOn: true)
+            liveVideoArmed = true
             setStreamOptimistic(true)
         } else if let _: StreamResponse = try? await AlmaAPI.shared.send(
             "POST", "/api/assistant/mac-agent/stream",
             body: DisplayBody(on: true, displayIndex: index)) {
+            guard generation == liveConsentGeneration else {
+                let _: StreamResponse? = try? await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/mac-agent/stream", body: StreamBody(on: false))
+                return
+            }
             // The owner-global monitor remains backward compatible; only an
             // in-task player is required to retain exact activity scope.
             manualStreamOverride = true
+            liveVideoArmed = true
         }
     }
 
@@ -1237,6 +1360,7 @@ final class AgentLiveDockStore {
         guard !streamBusy, !autoMacBusy else { return }
         streamBusy = true
         defer { streamBusy = false }
+        let generation = liveConsentGeneration
         do {
             let next = !streamOn
             if trackedActivityKey != nil {
@@ -1250,13 +1374,37 @@ final class AgentLiveDockStore {
                         turnId: scope.turnId))
                 guard Self.responseOwnsScopedStream(
                     response, scope: scope, requireDeviceEcho: next) else { return }
+                guard generation == liveConsentGeneration else {
+                    // Consent was revoked while this request was in flight
+                    // (Codex P1 #853 r2): a stale START must not rearm the
+                    // hidden dock — kill the stream it just started instead.
+                    if next {
+                        let _: StreamResponse? = try? await AlmaAPI.shared.send(
+                            "POST", "/api/assistant/mac-agent/stream",
+                            body: ComputerUseStreamBody(
+                                on: false, deviceId: scope.deviceId, maxSeconds: nil,
+                                displayIndex: nil, reason: "computer_use",
+                                conversationId: scope.conversationId, turnId: scope.turnId))
+                    }
+                    return
+                }
                 ownedMacStream = next ? scope : nil
                 manualStreamOverride = Self.scopedManualControlBlocksRenewal(streamOn: next)
             } else {
                 let _: StreamResponse = try await AlmaAPI.shared.send(
                     "POST", "/api/assistant/mac-agent/stream", body: StreamBody(on: next))
+                guard generation == liveConsentGeneration else {
+                    if next {
+                        let _: StreamResponse? = try? await AlmaAPI.shared.send(
+                            "POST", "/api/assistant/mac-agent/stream", body: StreamBody(on: false))
+                    }
+                    return
+                }
                 manualStreamOverride = true
             }
+            // The sheet's stream button IS the owner's consent switch: starting
+            // arms the RTC render, stopping disarms it (owner 2026-08-25).
+            liveVideoArmed = next
             setStreamOptimistic(next)
         } catch {
             // The button simply stays where it was.
@@ -1520,6 +1668,8 @@ struct AgentLiveDockView: View {
             guard state == .finished else { return }
             // Finished linger is a still image only. Leave the device-scoped
             // channel before another task can reuse that broadcaster.
+            // Consent does not outlive the task: the next task must be armed anew.
+            store.liveVideoArmed = false
             macSession.leave()
             macControl.fullScreen = false
             if macControl.armed {
@@ -1640,6 +1790,30 @@ struct AgentLiveDockView: View {
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(.white.opacity(0.55))
                     }
+            }
+
+            // Owner rule 2026-08-25: live video is opt-in. Until he taps this,
+            // the card is display-only (agent's screenshots / placeholder) and
+            // the app neither starts the Mac broadcaster nor joins Agora.
+            if surface == "mac", !store.liveVideoArmed, presentationState != .finished {
+                Button {
+                    AlmaAgentHaptics.commit()
+                    Task { await store.armLiveVideo() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("লাইভ দেখুন")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(AgentPalette.coral.opacity(0.92), in: Capsule())
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.35), lineWidth: 1))
+                }
+                .accessibilityIdentifier("agent.live-dock.go-live")
+                .accessibilityLabel("Mac লাইভ ভিডিও চালু করুন")
             }
 
             LinearGradient(colors: [.black.opacity(0.78), .clear],
@@ -1927,28 +2101,36 @@ struct AgentLiveDockSheet: View {
                     }
 
                     if selectedSurface == "mac" {
+                        // Codex P2 #853: the button reflects the OWNER's consent,
+                        // not the server's broadcast bit — with a broadcaster
+                        // already live but consent unarmed (app remount mid-
+                        // stream), tapping must JOIN, never stop the stream.
+                        let liveNow = store.liveVideoArmed && store.streamOn
                         Button {
                             AlmaAgentHaptics.commit()
-                            Task { await store.toggleStream() }
+                            Task {
+                                if liveNow { await store.toggleStream() }
+                                else { await store.armLiveVideo() }
+                            }
                         } label: {
                             HStack(spacing: 7) {
                                 if store.streamBusy {
                                     ProgressView().controlSize(.small)
                                 } else {
-                                    Image(systemName: store.streamOn ? "stop.circle.fill" : "video.fill")
+                                    Image(systemName: liveNow ? "stop.circle.fill" : "video.fill")
                                         .font(.system(size: 13, weight: .semibold))
                                 }
-                                Text(store.streamOn ? "লাইভ ভিউ বন্ধ করুন" : "Mac-এর লাইভ ভিউ দেখুন")
+                                Text(liveNow ? "লাইভ ভিউ বন্ধ করুন" : "Mac-এর লাইভ ভিউ দেখুন")
                                     .font(.system(size: 13.5, weight: .semibold))
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 9)
-                            .foregroundStyle(store.streamOn ? Color.red : pal.mutedHi)
+                            .foregroundStyle(liveNow ? Color.red : pal.mutedHi)
                             .background(
-                                (store.streamOn ? Color.red.opacity(0.10) : pal.ink.opacity(0.04)),
+                                (liveNow ? Color.red.opacity(0.10) : pal.ink.opacity(0.04)),
                                 in: RoundedRectangle(cornerRadius: 11))
                             .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(
-                                store.streamOn ? Color.red.opacity(0.35) : pal.borderSubtle, lineWidth: 1))
+                                liveNow ? Color.red.opacity(0.35) : pal.borderSubtle, lineWidth: 1))
                         }
                         .disabled(store.streamBusy)
                         .accessibilityLabel("লাইভ স্ক্রিন ভিউ")

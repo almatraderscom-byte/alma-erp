@@ -5976,6 +5976,73 @@ final class AssistantParityV2Tests: XCTestCase {
                        "a disappeared context must fall back to the remaining card")
     }
 
+    func testMacLiveVideoIsOptInAndFinishedCardPersistsUntilClosed() async {
+        // Owner rule 2026-08-25: the Mac card appears display-only; RTC video
+        // is armed by the owner, and the finished card stays until he closes it.
+        let dock = AgentLiveDockStore()
+        await dock.synchronize(
+            conversationId: "c1", turnId: "t1",
+            turnIsStreaming: true, turnReconnecting: false,
+            computerUseToolStartGeneration: 1,
+            computerUseSurface: .mac,
+            computerUseAllowsOptimisticReveal: true,
+            computerUseConversationId: "c1", computerUseTurnId: "t1",
+            performNetwork: false)
+        XCTAssertTrue(dock.show, "mac computer use reveals the display card")
+        XCTAssertFalse(dock.shouldRenderRealtimeVideo,
+                       "RTC must not mount before the owner arms live video")
+        dock.liveVideoArmed = true
+        XCTAssertTrue(dock.shouldRenderRealtimeVideo)
+
+        // Turn ends (backend confirms inactive): card persists indefinitely,
+        // consent resets with the finished lifecycle, RTC unmounts.
+        dock.feed = AgentLiveActivityFeed(
+            active: false, current: nil, steps: [], streaming: false, sessions: nil,
+            screenshot: nil, screenshotAt: nil, screenshotSurface: "mac",
+            videoDeviceId: nil, macDisplays: nil, previews: nil)
+        await dock.synchronize(
+            conversationId: "c1", turnId: "t1",
+            turnIsStreaming: false, turnReconnecting: false,
+            computerUseToolStartGeneration: 1,
+            computerUseSurface: .mac,
+            computerUseAllowsOptimisticReveal: true,
+            computerUseConversationId: "c1", computerUseTurnId: "t1",
+            performNetwork: false)
+        XCTAssertFalse(dock.shouldRenderRealtimeVideo,
+                       "a finished task never keeps RTC mounted")
+        dock.debugAdvanceLifecycleClock(by: 3600)
+        XCTAssertTrue(dock.show,
+                      "the finished card must survive far beyond the old 12s linger")
+
+        // Codex P1 #853: New Chat (explicit nil conversation) is a scope exit —
+        // the frozen card must not float over the blank new-chat surface.
+        await dock.synchronize(
+            conversationId: nil, turnId: nil,
+            turnIsStreaming: false, turnReconnecting: false,
+            computerUseToolStartGeneration: 1,
+            computerUseSurface: nil,
+            computerUseAllowsOptimisticReveal: true,
+            computerUseConversationId: nil, computerUseTurnId: nil,
+            performNetwork: false)
+        XCTAssertFalse(dock.show, "New Chat clears the previous chat's card")
+    }
+
+    func testDismissRevokesLiveVideoConsent() async {
+        let dock = AgentLiveDockStore()
+        await dock.synchronize(
+            conversationId: "c1", turnId: "t1",
+            turnIsStreaming: true, turnReconnecting: false,
+            computerUseToolStartGeneration: 1,
+            computerUseSurface: .mac,
+            computerUseAllowsOptimisticReveal: true,
+            computerUseConversationId: "c1", computerUseTurnId: "t1",
+            performNetwork: false)
+        dock.liveVideoArmed = true
+        dock.dismiss()
+        XCTAssertFalse(dock.show, "close is the owner's exit and it must stick")
+        XCTAssertFalse(dock.liveVideoArmed, "dismiss clears live-video consent")
+    }
+
     func testLiveDockExpiresFrozenFeedAfterFailedPollWindow() {
         let start = Date(timeIntervalSince1970: 1_000)
         XCTAssertFalse(AgentLiveDockStore.shouldExpireFeed(
@@ -6258,8 +6325,10 @@ final class AssistantParityV2Tests: XCTestCase {
             performNetwork: false)
         XCTAssertEqual(store.presentationState, .finished)
         XCTAssertTrue(store.show)
+        // Owner rule 2026-08-25 (#853): the finished card is no longer
+        // time-bounded — it persists past any linger until the owner closes it.
         store.debugAdvanceLifecycleClock(by: AgentLiveDockStore.finishedLingerSeconds + 0.1)
-        XCTAssertFalse(store.show, "finished linger is bounded")
+        XCTAssertTrue(store.show, "finished card persists until closed")
 
         let delayed = AgentLiveActivityPreview(
             surface: "browser", contextId: "browser:delayed", screenshot: nil,
@@ -6414,6 +6483,9 @@ final class AssistantParityV2Tests: XCTestCase {
             screenshot: nil, screenshotAt: exact.screenshotAt, screenshotSurface: "mac",
             videoDeviceId: "shared-device", macDisplays: nil, previews: [exact])
         store.reconcilePreviewSelection([exact])
+        // Live video is owner-armed since #853; arm so this test keeps
+        // exercising the finished-state RTC teardown it was written for.
+        store.liveVideoArmed = true
         XCTAssertTrue(store.shouldRenderRealtimeVideo)
 
         store.feed = AgentLiveActivityFeed(
