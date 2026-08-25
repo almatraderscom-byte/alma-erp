@@ -22,6 +22,10 @@
       "schedule": "17 3 * * *"
     },
     {
+      "path": "/api/assistant/internal/turn-watchdog",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/scheduled-calls",
       "schedule": "* * * * *"
     },

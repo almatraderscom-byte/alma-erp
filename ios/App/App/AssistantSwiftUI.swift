@@ -3843,6 +3843,48 @@ final class AssistantVM {
     /// Transport lost while the server turn (presumably) still runs — drives the
     /// truthful "কাজ চলছে — সংযোগ ফিরছে…" label instead of an error (Phase 1.1).
     var reconnecting = false
+    /// Reopen-sync performance (owner spec 2026-08-26, web parity): coming back
+    /// to a RUNNING conversation shows the ONE session loader while recovery
+    /// re-syncs with the server, then dismisses the moment fresh truth lands.
+    /// Ticks (not booleans) so the screen can restart the overlay on every
+    /// reopen; the loader's own 12s hard ceiling guarantees it can never become
+    /// a new stuck state of its own.
+    private(set) var reopenSyncBeginTick = 0
+    private(set) var reopenSyncResolveTick = 0
+    /// True between begin and resolve — the first applied event batch resolves.
+    /// Readable so the surface observer can DEFER its history-ready loader
+    /// dismissal while a reopen sync is still waiting on server truth
+    /// (Codex P2 #857 r7: cold launch begins the sync while the history
+    /// loader is active, so the begin tick alone cannot keep it alive).
+    private(set) var reopenSyncPending = false
+
+    /// Foreground/relaunch over an ACTIVE turn → start the reopen-sync loader.
+    /// An idle chat reopens instantly and never sees it.
+    func beginReopenSyncIfActive() {
+        // currentTurnId deliberately NOT consulted: it lingers after a turn
+        // settles (finishRecovery keeps it for identity checks), so an IDLE
+        // chat would start a loader nothing ever resolves (Codex P1 #857).
+        // The three states below are all cleared on settle.
+        // A persisted descriptor only counts for the conversation it belongs
+        // to: cold bootstrap can restore a DIFFERENT active chat, and recovery
+        // deliberately parks a mismatched descriptor — the displayed idle chat
+        // must not wear its loader (Codex P2 #857 r3).
+        let descriptorMatchesHere = recoverableTurn?.conversationId != nil
+            && recoverableTurn?.conversationId == conversationId
+        guard conversationId != nil,
+              isStreaming || reconnecting || descriptorMatchesHere
+        else { return }
+        reopenSyncPending = true
+        reopenSyncBeginTick += 1
+    }
+
+    /// Fresh server truth arrived (live/replayed events applied, terminal
+    /// settled, or recovery concluded) — dismiss the loader smoothly.
+    func resolveReopenSync() {
+        guard reopenSyncPending else { return }
+        reopenSyncPending = false
+        reopenSyncResolveTick += 1
+    }
     /// Bumped on every owner send — the screen scrolls to the tail on THIS signal
     /// (user-initiated), while plain count changes respect the reading position.
     var ownSendTick = 0
@@ -5456,6 +5498,7 @@ final class AssistantVM {
         if conversationId != recoverConversationId {
             await openConversation(recoverConversationId, recoveringPersistedTurn: true)
         } else {
+            beginReopenSyncIfActive()
             await recoverTurnState(trigger: "relaunch")
         }
         // `openConversation`/recoverTurnState now follows recoverTurnId directly.
@@ -5543,6 +5586,10 @@ final class AssistantVM {
                 await self.sendPresenceState("active")
                 AlmaTurnLog.event("turn.foreground")
                 self.resumePendingAttachmentUploads()
+                // Web-parity reopen (owner 2026-08-26): a running conversation
+                // shows the session loader while recovery re-syncs, instead of
+                // a frozen stale frame.
+                self.beginReopenSyncIfActive()
                 await self.recoverTurnState(trigger: "foreground")
                 // Coming back is exactly when chats may have gone unread while
                 // he was away — that is what the badge is for.
@@ -5636,6 +5683,14 @@ final class AssistantVM {
                     showSpinner: messages.isEmpty, surfaceToken: historyToken)
                 guard surfaceTokenIsCurrent(historyToken) else { return }
                 if committed {
+                    // Cold launch over a still-running turn is a reopen too
+                    // (Codex P2 #857 r6: bootstrap recovery starts following
+                    // the exact turn first, so the relaunch-path begin was
+                    // never reached). Begin BEFORE the surface flips ready —
+                    // the surface observer defers its loader dismissal while
+                    // reopenSyncPending, so the ONE loader survives into the
+                    // sync instead of dismissing under it (Codex P2 r7).
+                    beginReopenSyncIfActive()
                     sessionSurface = .readyConversation(conversationId: cid)
                     await loadArtifacts()
                     // Cold launch restores the active chat through THIS path, not
@@ -6610,21 +6665,27 @@ final class AssistantVM {
            recoverableTurn.sessionIdentity == selectedSessionIdentity,
            !isStreaming {
             guard (recoverableTurn.preTurnEOFRetryCount ?? 0) < Self.maxPreTurnEOFRetries else {
+                // Deferred/capped pre-turn retry: nothing will happen this
+                // foreground — the loader has nothing to wait for (Codex P2
+                // #857 r4).
+                resolveReopenSync()
                 return
             }
             if let notBefore = recoverableTurn.preTurnRetryNotBefore,
                notBefore > Date() {
+                resolveReopenSync()
                 return
             }
             resumePreTurnDescriptor(recoverableTurn)
             return
         }
-        guard let cid = conversationId else { return }
+        guard let cid = conversationId else { resolveReopenSync(); return }
         if let descriptor = recoverableTurn,
            descriptor.conversationId != cid {
             // Cold bootstrap can restore a different active pointer first. Do
             // not attach its conversation-latest turn while an exact persisted
             // owner turn is waiting to take over the recovery surface.
+            resolveReopenSync()
             return
         }
         let matchingDescriptor = recoverableTurn.flatMap {
@@ -6649,7 +6710,14 @@ final class AssistantVM {
             let silent = Date().timeIntervalSince(lastLiveEventAt)
             let limit: TimeInterval = trigger == "stall" ? 0
                 : trigger == "poll" ? streamStallSeconds : 20
-            if silent <= limit { return }
+            if silent <= limit {
+                // The live stream is trusted — the conversation is already
+                // current, so a reopen overlay has nothing to wait for
+                // (Codex P2 #857 r2: a quiet tool call would otherwise hold
+                // it to the 12s ceiling).
+                resolveReopenSync()
+                return
+            }
             reconnecting = true
             AlmaTurnLog.event("turn.streamStallDetected", "\(trigger) after \(Int(silent))s silent")
         }
@@ -6979,6 +7047,7 @@ final class AssistantVM {
         terminalStatus: String,
         exactTerminal: AgentTurnTerminal? = nil
     ) async {
+        resolveReopenSync()
         exactRecoveryGeneration = nil
         recoveringExactTurnId = nil
         recoveryTask?.cancel()
@@ -7105,6 +7174,7 @@ final class AssistantVM {
     private func failRecovery(preserveDescriptor: Bool = false,
                               ownerRetryable: Bool = false,
                               message: String = "পাঠানো যায়নি — আবার চেষ্টা করুন") async {
+        resolveReopenSync()
         exactRecoveryGeneration = nil
         recoveringExactTurnId = nil
         recoveryTask?.cancel()
@@ -9506,6 +9576,9 @@ final class AssistantVM {
     private func apply(_ events: [AgentTurnEvent]) {
         // Stall watchdog heartbeat: ANY delivered batch proves the stream lives.
         lastLiveEventAt = Date()
+        // Reopen-sync (owner 2026-08-26): the first delivered batch after a
+        // foreground/relaunch IS the fresh server truth — dismiss the loader.
+        resolveReopenSync()
         if stallRetryAttempt != 0 { stallRetryAttempt = 0 }   // stream is back
         var touchedStream = false
         for ev in events {
@@ -11243,6 +11316,23 @@ final class AssistantVM {
         conversationId = nil
         composerDraft = ""
         send("আজকের স্টক রিপোর্ট দাও")
+    }
+    #endif
+
+    #if DEBUG
+    /// Reopen-sync fixture hooks (owner spec 2026-08-26): stage a "running
+    /// turn" so beginReopenSyncIfActive takes the real gate, then drive the
+    /// same begin/resolve transitions foreground recovery uses.
+    func debugArmReopenSyncFixture() {
+        conversationId = conversationId ?? "fixture-reopen-sync"
+        isStreaming = true
+        thinkingLive = true
+    }
+    func debugBeginReopenSyncFixture() { beginReopenSyncIfActive() }
+    func debugResolveReopenSyncFixture() {
+        resolveReopenSync()
+        isStreaming = false
+        thinkingLive = false
     }
     #endif
 
@@ -21240,6 +21330,21 @@ struct AgentModelSwitchCardView: View {
 }
 
 @available(iOS 17.0, *)
+private struct AgentReopenSyncDriver: ViewModifier {
+    let vm: AssistantVM
+    let awakening: AgentAwakeningModel
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: vm.reopenSyncBeginTick) { _, _ in
+                if !awakening.isActive { awakening.restart(sessionNeedsRestore: true) }
+            }
+            .onChange(of: vm.reopenSyncResolveTick) { _, _ in
+                awakening.markReady(hasContent: !vm.messages.isEmpty)
+            }
+    }
+}
+
+@available(iOS 17.0, *)
 struct AgentThinkingRow: View {
     let mode: String
     let pal: AgentPalette
@@ -26913,7 +27018,13 @@ struct AssistantScreen: View {
             // robot must not blink between the two phases.
             if !awakening.isActive { awakening.restart(sessionNeedsRestore: true) }
         case .readyConversation:
-            awakening.markReady(hasContent: !vm.messages.isEmpty)
+            // Cold launch over a RUNNING turn: history committed but the
+            // reopen sync is still waiting on server truth — keep the ONE
+            // loader up; the resolve tick (or the loader's own 12s hard
+            // ceiling) dismisses it (Codex P2 #857 r7).
+            if !vm.reopenSyncPending {
+                awakening.markReady(hasContent: !vm.messages.isEmpty)
+            }
         case .readyNew, .failedHistory:
             awakening.markReady(hasContent: false)
         }
@@ -27273,6 +27384,14 @@ struct AssistantScreen: View {
         .onChange(of: vm.sessionSurface) { _, newSurface in
             syncAwakening(with: newSurface)
         }
+        // Web-parity reopen (owner 2026-08-26): coming back to a RUNNING
+        // conversation replays the same ONE session loader while recovery
+        // re-syncs with the server; the first fresh truth (applied events or a
+        // settled terminal) dismisses it with the normal smooth exit. The
+        // model's 12s hard ceiling means this can never become a stuck loader
+        // of its own. (Separate modifier: the screen body is already at the
+        // type-checker's limit.)
+        .modifier(AgentReopenSyncDriver(vm: vm, awakening: awakening))
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
@@ -27495,6 +27614,28 @@ struct AssistantScreen: View {
                 return
             }
             #if DEBUG
+            if argFlag("ALMA_REOPEN_SYNC_FIXTURE") {
+                // Owner spec 2026-08-26 (web-parity reopen): replay the exact
+                // background→foreground sequence headlessly — content mounts,
+                // the reopen-sync begins (session loader over the running
+                // chat), fresh truth arrives, the loader dismisses smoothly.
+                vm.loadDebugFixture()
+                vm.debugArmReopenSyncFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=reopen-sync")
+                Task {
+                    // Several capture windows: the sequence replays so a
+                    // headless screenshot run can catch begin AND dismiss.
+                    for _ in 0..<4 {
+                        try? await Task.sleep(for: .milliseconds(2_000))
+                        vm.debugArmReopenSyncFixture()
+                        vm.debugBeginReopenSyncFixture()
+                        try? await Task.sleep(for: .milliseconds(3_200))
+                        vm.debugResolveReopenSyncFixture()
+                        try? await Task.sleep(for: .milliseconds(2_800))
+                    }
+                }
+                return
+            }
             if argFlag("ALMA_ASSISTANT_ATTACHMENT_ATOMIC") {
                 vm.runAttachmentAtomicFixture()
                 AlmaTurnLog.event("assistant.contentReady", "fixture=attachment-atomic")

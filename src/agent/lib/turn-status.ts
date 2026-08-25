@@ -491,6 +491,12 @@ export async function getTurnInstructionOrigin(
  * 'running' row keeps the app's resume spinner alive forever AND stays eligible
  * for a stale worker-job re-run of the whole turn.
  */
+/** Base ghost age for the legacy poll-path reaper. The EFFECTIVE threshold
+ * follows the largest per-slice execution budget (effectiveStaleMs,
+ * turn-watchdog.ts): a healthy one-hour self-hosted engine slice polled by
+ * the web client after 30 minutes must NOT be finalized mid-run (Codex P1
+ * #857 r5) — the activity-aware watchdog owns precise reaping; this path is
+ * only the last-resort ghost cutoff and must never undercut a live slice. */
 const GHOST_RUNNING_MS = 30 * 60 * 1000
 
 /** Latest turn for a conversation — drives the client's re-open polling.
@@ -507,7 +513,8 @@ export async function getLatestTurn(
       select: TURN_SNAPSHOT_SELECT,
     })
     if (!row) return null
-    if (row.status === 'running' && Date.now() - new Date(row.startedAt).getTime() > GHOST_RUNNING_MS) {
+    const { effectiveStaleMs } = await import('@/agent/lib/turn-watchdog')
+    if (row.status === 'running' && Date.now() - new Date(row.startedAt).getTime() > effectiveStaleMs(GHOST_RUNNING_MS)) {
       await finalizeTurnIfRunning(row.id as string, 'error')
       return { ...(row as TurnSnapshot), status: 'error' as TurnStatus }
     }
