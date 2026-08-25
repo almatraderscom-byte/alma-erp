@@ -202,6 +202,11 @@ final class AgentLiveDockStore {
     var expanded = false
     /// He closed it by hand — respect that until genuinely NEW work starts.
     var dismissedActivityKey: String?
+    /// Owner rule 2026-08-25: Mac live VIDEO never starts by itself. The card
+    /// appears with frames/placeholder only; he arms the stream himself (the
+    /// ▶ chip on the mini player or the sheet's stream button). Reset on
+    /// dismiss, scope change and finish so a NEW task never inherits consent.
+    var liveVideoArmed = false
 
     private var lastActiveAt: Date = .distantPast
     private var lastSuccessfulRefreshAt: Date = .distantPast
@@ -269,8 +274,11 @@ final class AgentLiveDockStore {
     private var trackedLifecycleVisible: Bool {
         guard trackedActivityKey != nil else { return false }
         if trackedActive { return true }
-        guard let trackedFinishedAt else { return false }
-        return lifecycleClock.timeIntervalSince(trackedFinishedAt) < Self.finishedLingerSeconds
+        // Owner rule 2026-08-25: a finished card STAYS — frozen last frame plus
+        // the "শেষ" badge — until he closes it himself. The old 12s auto-hide
+        // vanished it mid-glance. Capture/RTC still stop at finish; navigation
+        // to another chat/turn and the ✕ button remain the only exits.
+        return trackedFinishedAt != nil
     }
 
     private var currentVisibilityKey: String? {
@@ -440,7 +448,9 @@ final class AgentLiveDockStore {
     /// Agora is a device-scoped transport. A Finished task may retain its exact
     /// cached JPEG for the bounded linger, but it must leave/hide RTC immediately
     /// so a newer task on the same Mac can never paint pixels into the old card.
-    var shouldRenderRealtimeVideo: Bool { presentationState != .finished }
+    /// And RTC never mounts at all until the owner armed it (owner 2026-08-25:
+    /// display first, live only on his tap).
+    var shouldRenderRealtimeVideo: Bool { presentationState != .finished && liveVideoArmed }
 
     /// The screenshot we HOLD. The poll sends `screenshotAfter` so the server
     /// answers an unchanged frame with metadata only — without this, an active
@@ -574,6 +584,7 @@ final class AgentLiveDockStore {
             frameMotionByPreview.removeAll()
             dismissedActivityKey = nil
             manualStreamOverride = false
+            liveVideoArmed = false
             setStreamOptimistic(nil)
             lifecycleRevision &+= 1
         }
@@ -603,6 +614,7 @@ final class AgentLiveDockStore {
                 trackedSurfaces.removeAll()
                 frameMotionByPreview.removeAll()
                 manualStreamOverride = false
+                liveVideoArmed = false
                 trackedActivityKey = "computer:\(eventConversationId ?? "pending"):\(eventTurnId ?? "pending"):\(computerUseToolStartGeneration)"
                 dismissedActivityKey = nil
             }
@@ -855,6 +867,15 @@ final class AgentLiveDockStore {
     func dismiss() {
         dismissedActivityKey = currentVisibilityKey
         expanded = false
+        liveVideoArmed = false
+    }
+
+    /// The ▶ chip on the mini player: arm live video AND start the Mac
+    /// broadcaster when it is not already running. Arming first — the renewal
+    /// loop is gated on it, so a started stream must never be orphaned.
+    func armLiveVideo() async {
+        liveVideoArmed = true
+        if !streamOn { await toggleStream() }
     }
 
     // MARK: L4 tap-to-reply
@@ -1054,6 +1075,10 @@ final class AgentLiveDockStore {
     }
 
     private func ensureMacComputerUseStream(force: Bool) async {
+        // Owner rule 2026-08-25: the app must NEVER claim the Mac broadcaster
+        // by itself — screen capture starts only after he armed live video.
+        // Once armed, this same loop renews the stream past the daemon's cap.
+        guard liveVideoArmed else { return }
         guard !autoMacBusy, !manualStreamOverride,
               let activityKey = trackedActivityKey,
               let conversationId = trackedConversationId,
@@ -1223,6 +1248,7 @@ final class AgentLiveDockStore {
                     response, scope: scope, requireDeviceEcho: true) else { return }
             ownedMacStream = scope
             manualStreamOverride = Self.scopedManualControlBlocksRenewal(streamOn: true)
+            liveVideoArmed = true
             setStreamOptimistic(true)
         } else if let _: StreamResponse = try? await AlmaAPI.shared.send(
             "POST", "/api/assistant/mac-agent/stream",
@@ -1230,6 +1256,7 @@ final class AgentLiveDockStore {
             // The owner-global monitor remains backward compatible; only an
             // in-task player is required to retain exact activity scope.
             manualStreamOverride = true
+            liveVideoArmed = true
         }
     }
 
@@ -1257,6 +1284,9 @@ final class AgentLiveDockStore {
                     "POST", "/api/assistant/mac-agent/stream", body: StreamBody(on: next))
                 manualStreamOverride = true
             }
+            // The sheet's stream button IS the owner's consent switch: starting
+            // arms the RTC render, stopping disarms it (owner 2026-08-25).
+            liveVideoArmed = next
             setStreamOptimistic(next)
         } catch {
             // The button simply stays where it was.
@@ -1520,6 +1550,8 @@ struct AgentLiveDockView: View {
             guard state == .finished else { return }
             // Finished linger is a still image only. Leave the device-scoped
             // channel before another task can reuse that broadcaster.
+            // Consent does not outlive the task: the next task must be armed anew.
+            store.liveVideoArmed = false
             macSession.leave()
             macControl.fullScreen = false
             if macControl.armed {
@@ -1640,6 +1672,30 @@ struct AgentLiveDockView: View {
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(.white.opacity(0.55))
                     }
+            }
+
+            // Owner rule 2026-08-25: live video is opt-in. Until he taps this,
+            // the card is display-only (agent's screenshots / placeholder) and
+            // the app neither starts the Mac broadcaster nor joins Agora.
+            if surface == "mac", !store.liveVideoArmed, presentationState != .finished {
+                Button {
+                    AlmaAgentHaptics.commit()
+                    Task { await store.armLiveVideo() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("লাইভ দেখুন")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(AgentPalette.coral.opacity(0.92), in: Capsule())
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.35), lineWidth: 1))
+                }
+                .accessibilityIdentifier("agent.live-dock.go-live")
+                .accessibilityLabel("Mac লাইভ ভিডিও চালু করুন")
             }
 
             LinearGradient(colors: [.black.opacity(0.78), .clear],
