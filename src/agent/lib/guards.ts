@@ -94,6 +94,11 @@ export function requireModelProviderKey(modelId?: string | null): Response | nul
   return requireProviderApiKey(model.provider)
 }
 
+/** Boolean view of requireProviderApiKey, for in-turn fallback decisions. */
+export function isProviderKeyConfigured(provider: Provider): boolean {
+  return requireProviderApiKey(provider) === null
+}
+
 function isOpenRouterConfigured(): boolean {
   const key = process.env.OPENROUTER_API_KEY?.trim()
   return Boolean(key && key.length >= 20 && !/^REPLACE_|YOUR_/i.test(key))
@@ -112,8 +117,17 @@ function isOpenRouterConfigured(): boolean {
  * still gets its exact provider checked downstream by
  * requireModelProviderKey / the head router's fallbacks.
  */
-export async function requireDefaultHeadProviderKey(): Promise<Response | null> {
+export async function requireDefaultHeadProviderKey(
+  /** The default-head id the caller ALREADY resolved for this request — pass
+   * it so the guard validates the exact model the request will run instead of
+   * doing a second KV read that can race an in-flight owner switch (Codex P2
+   * #854). */
+  resolvedDefaultHeadModelId?: string,
+): Promise<Response | null> {
   try {
+    if (resolvedDefaultHeadModelId) {
+      return requireModelProviderKey(resolvedDefaultHeadModelId)
+    }
     const { getDefaultHeadModelId } = await import('@/agent/lib/models/routing-config')
     return requireModelProviderKey(await getDefaultHeadModelId())
   } catch {

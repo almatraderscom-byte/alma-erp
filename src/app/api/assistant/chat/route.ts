@@ -283,7 +283,7 @@ export async function POST(req: NextRequest) {
     // the Anthropic-specific demand was a Claude-head-era relic that 503'd
     // the self-hosted engine (owner ruling 2026-08-25; Codex P1 #854 made it
     // exact rather than any-key).
-    const keyMissing = await requireDefaultHeadProviderKey()
+    const keyMissing = await requireDefaultHeadProviderKey(defaultHeadModelId)
     if (keyMissing) return keyMissing
   }
 

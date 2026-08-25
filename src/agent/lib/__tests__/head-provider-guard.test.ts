@@ -104,3 +104,15 @@ describe('requireModelProviderKey — OpenRouter branch (Codex P1 #854)', () => 
     expect(requireModelProviderKey(id)).toBeNull()
   })
 })
+
+describe('run-owner-turn missing-key head fallback wiring (Codex P1 #854 r3)', () => {
+  it('the resolved head is key-checked with a visible-note fallback before any adapter runs', async () => {
+    const { readFileSync } = await import('node:fs')
+    const source = readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url).pathname, 'utf8')
+    const site = source.indexOf('missing_key_fallback')
+    expect(site).toBeGreaterThan(-1)
+    const block = source.slice(site - 2000, site + 200)
+    expect(block).toContain('isProviderKeyConfigured(resolved.provider)')
+    expect(block).toContain('provider key এই server-এ নেই')
+  })
+})
