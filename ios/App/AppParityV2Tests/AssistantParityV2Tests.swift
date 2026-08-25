@@ -5757,7 +5757,7 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(vm.workTrackers["plan-turn-1"]?.status, "completed")
     }
 
-    func testDockShowsOnlyTheCurrentProspectivePlanNeverRuntimeToolRows() throws {
+    func testDockPrefersThePlanTrackerAndFallsBackToRuntimeSteps() throws {
         let vm = AssistantVM()
         vm.conversationId = "conversation-1"
         vm.isStreaming = true
@@ -5771,8 +5771,9 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(vm.activeWorkTracker?.trackerId, "plan-turn-1")
         XCTAssertEqual(vm.activeWorkTracker?.source, "agent_plan")
 
-        // A plan tracker from a PREVIOUS turn and a runtime projection from the
-        // current turn must both stay out: tool calls are activity, not a plan.
+        // A plan tracker from a PREVIOUS turn stays out; the CURRENT turn's
+        // runtime projection is the honest live fallback (owner 2026-08-25:
+        // unplanned turns showed no dock at all while the agent worked).
         let stale = AssistantVM()
         stale.conversationId = "conversation-1"
         stale.isStreaming = true
@@ -5780,7 +5781,8 @@ final class AssistantParityV2Tests: XCTestCase {
         stale.debugMergeWorkSteps(try snapshotFixture(revision: 4, turnId: "turn-OLD"))
         stale.debugMergeWorkSteps(try snapshotFixture(
             revision: 5, updatedAt: "2026-08-11T09:00:00Z", source: "turn_runtime"))
-        XCTAssertNil(stale.activeWorkTracker)
+        XCTAssertEqual(stale.activeWorkTracker?.trackerId, "turn:turn-1")
+        XCTAssertEqual(stale.activeWorkTracker?.source, "turn_runtime")
 
         // A stale RUNNING plan with no runtime tracker (first round of a new
         // turn) must not hold the dock (Codex P2 #765) …
@@ -5801,14 +5803,27 @@ final class AssistantParityV2Tests: XCTestCase {
             revision: 2, status: "waiting_owner", turnId: "turn-OLD"))
         XCTAssertNil(waitingOld.activeWorkTracker)
 
-        // With no plan tracker at all, runtime tool rows never manufacture one.
+        // Unplanned turn (the common non-plan-staging model path): the
+        // turn_runtime projection now drives the chip so the owner watches
+        // real named tool steps instead of a bare spinner. The runtime
+        // tracker still obeys every other dock rule (turn linkage, terminal/
+        // paused exits, streaming guard).
         let runtimeOnly = AssistantVM()
         runtimeOnly.conversationId = "conversation-1"
         runtimeOnly.isStreaming = true
         runtimeOnly.currentTurnId = "turn-1"
         runtimeOnly.debugMergeWorkSteps(try snapshotFixture(
             revision: 2, source: "turn_runtime"))
-        XCTAssertNil(runtimeOnly.activeWorkTracker)
+        XCTAssertEqual(runtimeOnly.activeWorkTracker?.trackerId, "turn:turn-1")
+        XCTAssertEqual(runtimeOnly.activeWorkTracker?.source, "turn_runtime")
+        // …and a runtime projection for ANOTHER turn never attaches.
+        let runtimeForeign = AssistantVM()
+        runtimeForeign.conversationId = "conversation-1"
+        runtimeForeign.isStreaming = true
+        runtimeForeign.currentTurnId = "turn-2"
+        runtimeForeign.debugMergeWorkSteps(try snapshotFixture(
+            revision: 2, source: "turn_runtime", turnId: "turn-1"))
+        XCTAssertNil(runtimeForeign.activeWorkTracker)
     }
 
     func testDockShowsOnlyLiveWorkNeverPausedOrStalledChips() throws {

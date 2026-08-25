@@ -3447,9 +3447,9 @@ final class AssistantVM {
         return result.sorted { $0.trackerId < $1.trackerId }
     }
     /// The dock projection: the prospective plan for the turn that is visibly
-    /// streaming right now. Runtime/tool-call projections remain useful as
-    /// protocol evidence, but they are not a plan and must never impersonate
-    /// Codex's step tracker in the composer chrome.
+    /// streaming right now. When the turn staged no plan, the honest
+    /// turn_runtime projection (real named tool steps) is the live fallback —
+    /// a plan tracker, whenever one exists for the turn, always wins over it.
     var activeWorkTracker: AgentWorkStepsSnapshot? { activeWorkTracker(now: Date()) }
 
     /// `now` remains in the API because the view uses a TimelineView, but exact
@@ -3459,16 +3459,30 @@ final class AssistantVM {
         guard isStreaming, let cid = conversationId, let liveTurnId = currentTurnId else {
             return nil
         }
-        return workTrackers.values
+        let live = workTrackers.values
             .filter { snapshot in
-                guard snapshot.source == "agent_plan",
-                      !snapshot.isTerminal,
+                guard !snapshot.isTerminal,
                       snapshot.status != "paused",
                       snapshot.conversationId.isEmpty || snapshot.conversationId == cid,
                       snapshot.currentTurnId == liveTurnId || snapshot.turnIds.contains(liveTurnId)
                 else { return false }
                 return true
             }
+        // PR #765 intent: the dock PREFERS the plan tracker whenever one is
+        // live for this turn (the runtime projection re-emits every round and
+        // must never impersonate the real step list). But an unplanned turn —
+        // the head serving a complex request without staging an AgentPlan —
+        // has ONLY the turn_runtime projection, and hiding it left the owner
+        // watching a spinner with no live tracker at all (owner report
+        // 2026-08-25: chip missing during most models' work while the settled
+        // in-message tracker was fine).
+        if let plan = live
+            .filter({ $0.source == "agent_plan" })
+            .max(by: { $0.updatedAt < $1.updatedAt }) {
+            return plan
+        }
+        return live
+            .filter { $0.source == "turn_runtime" }
             .max { $0.updatedAt < $1.updatedAt }
     }
     func clearWorkTrackersForConversationSwitch() {
@@ -10985,16 +10999,19 @@ final class AssistantVM {
             "Create clean release branch, commit and PR",
             "Verify TestFlight readiness and report",
         ]
+        // "runtime" — the unplanned-turn projection (source turn_runtime): the
+        // dock must show it as the live fallback when no plan tracker exists.
+        let runtime = variant == "runtime"
         let snapshot = AgentWorkStepsSnapshot(
-            trackerId: "fixture-plan-1",
+            trackerId: runtime ? "turn:fixture-turn-1" : "fixture-plan-1",
             originTurnId: "fixture-turn-1",
             currentTurnId: "fixture-turn-1",
             turnIds: ["fixture-turn-1"],
             conversationId: "fixture-work-steps-conversation",
             originAssistantMessageId: variant == "settled" ? "fix-work-steps-message" : nil,
             revision: variant == "settled" ? 7 : 3,
-            sourceId: "fixture-plan-1",
-            source: "agent_plan",
+            sourceId: runtime ? "fixture-turn-1" : "fixture-plan-1",
+            source: runtime ? "turn_runtime" : "agent_plan",
             goal: "Ship the Build 103 three-issue candidate",
             status: status,
             headline: variant == "waiting" ? "আপনার সিদ্ধান্তের অপেক্ষায়"
@@ -11018,6 +11035,56 @@ final class AssistantVM {
         #endif
         mergeWorkStepsSnapshot(snapshot, anchoredMessageId: "fix-work-steps-message")
     }
+
+    #if DEBUG
+    /// Perf stress fixture (owner report 2026-08-25: 100k-context chats scroll
+    /// slowly). Seeds a full mounted window of heavy settled markdown rows plus
+    /// a live-growing streaming tail, so scroll responsiveness under stream
+    /// churn can be exercised in the simulator without a real 100k session.
+    func loadHeavyHistoryPerfFixture() {
+        let lorem = (1...18).map { i in
+            "ধাপ \(i): ব্যবসার হিসাব ও রিপোর্ট বিশ্লেষণ — অর্ডার, ইনভেন্টরি, ক্যাশফ্লো, "
+            + "বিজ্ঞাপন খরচ এবং কাস্টমার সেগমেন্ট নিয়ে বিস্তারিত পর্যালোচনা। "
+            + "This paragraph intentionally mixes **bold**, `inline code`, "
+            + "[a link](https://alma-erp-six.vercel.app/orders) and long prose so the "
+            + "markdown pipeline does real segmentation work on every parse."
+        }.joined(separator: "\n\n")
+        let table = "| খাত | টাকা | মন্তব্য |\n|---|---|---|\n"
+            + (1...12).map { "| খাত-\($0) | \($0 * 1250) | ঠিক আছে |" }.joined(separator: "\n")
+        let code = "```swift\nfunc report(_ day: Int) -> Int {\n    return day * 42\n}\n```"
+        var rows: [AgentChatMessage] = []
+        for i in 1...12 {
+            var u = AgentChatMessage(id: "perf-u-\(i)", role: .user)
+            u.text = "রিপোর্ট \(i) দাও — গত মাসের সেল, খরচ আর স্টক মিলিয়ে।"
+            u.createdAt = "2026-08-20T0\(i % 10):00:00.000Z"
+            var a = AgentChatMessage(id: "perf-a-\(i)", role: .assistant)
+            a.serverId = "perf-a-\(i)"
+            a.text = lorem + "\n\n" + table + "\n\n" + code
+            a.createdAt = "2026-08-20T0\(i % 10):01:00.000Z"
+            rows.append(contentsOf: [u, a])
+        }
+        var tail = AgentChatMessage(id: "perf-stream-tail", role: .assistant)
+        tail.isStreaming = true
+        tail.text = "কাজ চলছে…"
+        rows.append(tail)
+        messages = rows
+        conversationId = "fixture-perf-conversation"
+        isStreaming = true
+        currentTurnId = "fixture-perf-turn"
+        debugSetSessionSurface(.readyConversation(conversationId: "fixture-perf-conversation"))
+        // Emulate the worst-case SSE cadence: ~20 text deltas/second growing the
+        // tail while the owner scrolls the settled window above it.
+        Task { @MainActor [weak self] in
+            for tick in 0..<600 {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard let self, self.conversationId == "fixture-perf-conversation" else { return }
+                if let i = self.messages.lastIndex(where: { $0.id == "perf-stream-tail" }) {
+                    self.messages[i].text += " ডেল্টা-\(tick) কাজ এগোচ্ছে,"
+                }
+            }
+        }
+    }
+    #endif
 
     /// Focused pending-image pricing proof. The legacy server value remains in
     /// the model so the production card must prove it is suppressed, not merely
@@ -14625,6 +14692,9 @@ struct AgentMarkdownText: View {
                                  references: [AgentReferenceV1Wire] = [],
                                  contractActive: Bool = true) -> [AgentCitation] {
         guard contractActive else { return [] }
+        // No references ⇒ citationReference() can never match; skip the O(n)
+        // link scan (it used to run on the FULL streaming text every delta).
+        guard !references.isEmpty else { return [] }
         return extractMarkdownLinks(source)
             .compactMap { link -> (ParsedMarkdownLink, AgentReferenceV1Wire, String)? in
                 guard AgentMarkdownLinkRouter.destination(
@@ -14668,6 +14738,7 @@ struct AgentMarkdownText: View {
 
     private static func extractMediaLinks(_ source: String,
                                           references: [AgentReferenceV1Wire]) -> [AgentVerifiedMediaLink] {
+        guard !references.isEmpty else { return [] }
         var seen: Set<String> = []
         return extractMarkdownLinks(source).compactMap { link in
             guard let reference = references.first(where: { reference in
@@ -14689,6 +14760,7 @@ struct AgentMarkdownText: View {
         _ source: String,
         references: [AgentReferenceV1Wire]
     ) -> [AgentVerifiedDestinationLink] {
+        guard !references.isEmpty else { return [] }
         var seen: Set<String> = []
         return extractMarkdownLinks(source).compactMap { link in
             guard let reference = references.first(where: {
@@ -14780,6 +14852,21 @@ struct AgentMarkdownText: View {
         }
     }
 
+    /// Perf (owner report 2026-08-25, 100k-context scroll): the full segment
+    /// parse is pure in `text`, but it used to re-run on every body evaluation
+    /// of every mounted settled row. Memoized here; NSCache evicts under
+    /// pressure and the key includes the length so per-launch hash collisions
+    /// cannot cross texts of different sizes.
+    private final class ParsedSegmentsBox {
+        let segments: [Segment]
+        init(_ segments: [Segment]) { self.segments = segments }
+    }
+    private static let parsedSegmentsCache: NSCache<NSString, ParsedSegmentsBox> = {
+        let cache = NSCache<NSString, ParsedSegmentsBox>()
+        cache.countLimit = 192
+        return cache
+    }()
+
     private var segments: [Segment] {
         // Roadmap 2.4 fast path: in-flight prose usually has no fences/tables/
         // images — skip the split/scan work on every streaming re-render (≤25/s)
@@ -14788,6 +14875,10 @@ struct AgentMarkdownText: View {
            !text.contains("\n|"), !text.hasPrefix("|") {
             return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? [] : [.paragraph(text)]
+        }
+        let cacheKey = "\(text.count):\(text.hashValue)" as NSString
+        if let cached = Self.parsedSegmentsCache.object(forKey: cacheKey) {
+            return cached.segments
         }
         var out: [Segment] = []
         let parts = text.components(separatedBy: "```")
@@ -14833,6 +14924,7 @@ struct AgentMarkdownText: View {
                 flushBuf(); flushTbl()
             }
         }
+        Self.parsedSegmentsCache.setObject(ParsedSegmentsBox(out), forKey: cacheKey)
         return out
     }
 
@@ -16895,7 +16987,7 @@ struct AgentMessageTimeDivider: View {
 }
 
 @available(iOS 17.0, *)
-struct AgentMessageRow: View {
+struct AgentMessageRow: View, Equatable {
     let message: AgentChatMessage
     let vm: AssistantVM
     let showWorkingIndicator: Bool
@@ -16907,6 +16999,23 @@ struct AgentMessageRow: View {
     let onToolTap: (AgentChatMessage.Tool) -> Void
     let onActivitySheet: (AgentActivitySheetRequest) -> Void
     @Environment(\.colorScheme) private var scheme
+
+    /// Perf (owner report 2026-08-25): a 100k-context chat scrolled slowly
+    /// because EVERY streaming delta re-ran the thread body, and the closure
+    /// props above defeat SwiftUI's reflection diff — so all mounted rows
+    /// re-evaluated (full markdown re-parse per row) up to 25×/s. Rows whose
+    /// inputs are unchanged now short-circuit here. Correctness stays intact:
+    /// any `vm` property a row's body actually reads is tracked by Observation
+    /// per view, so a tracker/image/action mutation still invalidates exactly
+    /// the rows that displayed it; this gate only stops parent-driven re-runs.
+    static func == (lhs: AgentMessageRow, rhs: AgentMessageRow) -> Bool {
+        lhs.vm === rhs.vm
+            && lhs.showWorkingIndicator == rhs.showWorkingIndicator
+            && lhs.isLastAssistant == rhs.isLastAssistant
+            && lhs.showsBackgroundTaskAnchor == rhs.showsBackgroundTaskAnchor
+            && lhs.backgroundTaskHandoff == rhs.backgroundTaskHandoff
+            && lhs.message == rhs.message
+    }
     /// PA-4 — the voice-instruction chip state, derived from the turn that follows
     /// this message: no assistant yet → গৃহীত; streaming → চলছে; settled → শেষ.
     private enum VoiceTurnStatus { case received, working, done }
@@ -26944,6 +27053,9 @@ struct AssistantScreen: View {
                                 },
                                 onToolTap: { tool in toolSheet = tool },
                                 onActivitySheet: { activitySheet = $0 })
+                            // Explicit Equatable gate (see AgentMessageRow.==):
+                            // settled rows skip body re-evaluation on stream churn.
+                            .equatable()
                             .modifier(AgentRowDebugOverlay(message: msg))
                             // IOSP-5: Reduce Motion → new rows appear without the
                             // slide/offset (a plain fade), calmer for motion-sensitive users.
@@ -27422,6 +27534,11 @@ struct AssistantScreen: View {
                 vm.loadWorkStepsProofFixture(
                     variant: rawEnv["ALMA_ASSISTANT_WORK_STEPS_VARIANT"] ?? "running")
                 AlmaTurnLog.event("assistant.contentReady", "fixture=work-steps-proof")
+                return
+            }
+            if argFlag("ALMA_ASSISTANT_PERF_HISTORY") {
+                vm.loadHeavyHistoryPerfFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=perf-history")
                 return
             }
             if argFlag("ALMA_ASSISTANT_ACTION_FIXTURE") {
