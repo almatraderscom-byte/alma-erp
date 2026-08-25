@@ -577,6 +577,13 @@ final class AgentLiveDockStore {
             && previousInputConversationId != nil
         let movedTurn = trackedTurnId != nil && turnId != nil && trackedTurnId != turnId
         if trackedActivityKey != nil, movedConversation || movedToNewChat || movedTurn {
+            // Codex P1 #853 r5: a broadcast that survived a remount is not in
+            // ownedMacStream, so the owned-resource release misses it — revoke
+            // through the OLD scope (captured before the fields clear).
+            if streamOn || ownedMacStream != nil,
+               let staleScope = ownedMacStream ?? currentMacStreamScope() {
+                Task { [weak self] in await self?.stopOwnedMacStreamNow(staleScope) }
+            }
             await releaseOwnedComputerUseResources()
             clearFeedAndFrameCaches()
             trackedConversationId = nil
@@ -614,6 +621,12 @@ final class AgentLiveDockStore {
                 && scopesMatch(conversationId: eventConversationId, turnId: eventTurnId)
 
             if !belongsToTrackedTurn {
+                // Same r5 rule for a NEW task replacing a tracked one: the old
+                // task's remounted broadcast must not run to the server cap.
+                if streamOn || ownedMacStream != nil,
+                   let staleScope = ownedMacStream ?? currentMacStreamScope() {
+                    Task { [weak self] in await self?.stopOwnedMacStreamNow(staleScope) }
+                }
                 await releaseOwnedComputerUseResources()
                 clearFeedAndFrameCaches()
                 trackedConversationId = eventConversationId
@@ -865,12 +878,14 @@ final class AgentLiveDockStore {
 
     private func expireStaleFeed(force: Bool = false) {
         guard Self.shouldExpireFeed(lastSuccessfulAt: lastSuccessfulRefreshAt, force: force) else { return }
-        // Codex P2 #853 r4: the finished card persists until the owner closes
-        // it — a poll outage must not swap its frozen last frame for the
-        // "first frame arriving" placeholder. Only the live metadata expires;
-        // the forced (owner-auth-failure) path still clears sensitive frames.
+        // Codex P2 #853 r4+r5: the finished card persists until the owner
+        // closes it — a poll outage must not swap its frozen last frame for
+        // the "first frame arriving" placeholder. Keep the last feed AS-IS
+        // (nil-ing it made presentedFeed synthesize a pending:<surface>
+        // preview whose id can't reach the cached still); it is the static
+        // truth of a finished task. The forced (owner-auth-failure) path
+        // still clears everything sensitive.
         if !force, trackedActivityKey != nil, !trackedActive, trackedFinishedAt != nil {
-            feed = nil
             setStreamOptimistic(nil)
             return
         }
@@ -915,8 +930,10 @@ final class AgentLiveDockStore {
     }
 
     /// Immediate broadcaster stop for a consent revocation (✕ while live).
-    private func stopOwnedMacStreamNow() async {
-        guard let scope = ownedMacStream ?? currentMacStreamScope() else { return }
+    /// `preScope` lets scope-change callers capture the OLD task's scope before
+    /// the tracked fields are cleared (Codex P1 #853 r5).
+    private func stopOwnedMacStreamNow(_ preScope: OwnedMacStream? = nil) async {
+        guard let scope = preScope ?? ownedMacStream ?? currentMacStreamScope() else { return }
         let _: StreamResponse? = try? await AlmaAPI.shared.send(
             "POST", "/api/assistant/mac-agent/stream",
             body: ComputerUseStreamBody(
