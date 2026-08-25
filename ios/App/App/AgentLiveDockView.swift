@@ -821,6 +821,11 @@ final class AgentLiveDockStore {
         trackedActive = false
         trackedFinishedAt = lifecycleClock
         inputTurnReconnecting = false
+        // Codex P1 #853 r3: finish IS a consent revocation. A start still in
+        // flight when the task ends must not pass the generation guard and
+        // rearm capture after the finish-time resource release found nothing.
+        liveVideoArmed = false
+        liveConsentGeneration &+= 1
         lifecycleRevision &+= 1
     }
 

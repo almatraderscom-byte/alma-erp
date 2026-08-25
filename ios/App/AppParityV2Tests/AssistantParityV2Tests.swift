@@ -6325,8 +6325,10 @@ final class AssistantParityV2Tests: XCTestCase {
             performNetwork: false)
         XCTAssertEqual(store.presentationState, .finished)
         XCTAssertTrue(store.show)
+        // Owner rule 2026-08-25 (#853): the finished card is no longer
+        // time-bounded — it persists past any linger until the owner closes it.
         store.debugAdvanceLifecycleClock(by: AgentLiveDockStore.finishedLingerSeconds + 0.1)
-        XCTAssertFalse(store.show, "finished linger is bounded")
+        XCTAssertTrue(store.show, "finished card persists until closed")
 
         let delayed = AgentLiveActivityPreview(
             surface: "browser", contextId: "browser:delayed", screenshot: nil,
@@ -6481,6 +6483,9 @@ final class AssistantParityV2Tests: XCTestCase {
             screenshot: nil, screenshotAt: exact.screenshotAt, screenshotSurface: "mac",
             videoDeviceId: "shared-device", macDisplays: nil, previews: [exact])
         store.reconcilePreviewSelection([exact])
+        // Live video is owner-armed since #853; arm so this test keeps
+        // exercising the finished-state RTC teardown it was written for.
+        store.liveVideoArmed = true
         XCTAssertTrue(store.shouldRenderRealtimeVideo)
 
         store.feed = AgentLiveActivityFeed(
