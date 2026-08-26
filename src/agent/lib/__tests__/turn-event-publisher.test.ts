@@ -20,15 +20,22 @@ const leaseState = { status: 'running' }
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     agentTurnEvent: {
-      upsert: async ({ create }: { create: Row }) => {
+      create: async ({ data }: { data: Row }) => {
         upsertFailures.attempts += 1
         if (upsertFailures.remaining > 0) {
           upsertFailures.remaining -= 1
           throw new Error('db write failed')
         }
-        // (turnId, seq) unique: second write with same key is a no-op (upsert update:{})
-        if (!rows.some((r) => r.turnId === create.turnId && r.seq === create.seq)) rows.push(create)
-        return create
+        // (turnId, seq) unique constraint — occupied seq is LOUD (P2002).
+        if (rows.some((r) => r.turnId === data.turnId && r.seq === data.seq)) {
+          throw Object.assign(new Error('unique constraint'), { code: 'P2002' })
+        }
+        rows.push(data)
+        return data
+      },
+      findUnique: async ({ where }: { where: { turnId_seq: { turnId: string; seq: number } } }) => {
+        const r = rows.find((row) => row.turnId === where.turnId_seq.turnId && row.seq === where.turnId_seq.seq)
+        return r ? { type: r.type, payload: r.payload } : null
       },
     },
     agentTurn: {
@@ -54,23 +61,55 @@ beforeEach(() => {
 })
 
 describe('Phase 3 — createTurnEventPublisher', () => {
-  it('a revoked lease (row claimed away from running) drops the write and fires the abort', async () => {
+  it('the independent lease timer aborts a quiet executor and later writes are dropped', async () => {
     leaseState.status = 'error'
     const revokedFn = vi.fn()
-    const pub = createTurnEventPublisher('t-lease', { coalesceMs: 1, revokeCheckMs: 0, onRevoked: revokedFn })
-    pub.emit({ type: 'tool_start', id: 'x', name: 'check_mac_command' })
+    const pub = createTurnEventPublisher('t-lease', { coalesceMs: 1, revokeCheckMs: 25, onRevoked: revokedFn })
+    // No events flowing — the turn is quiet inside a long tool call. The
+    // TIMER alone must detect the claimed-away row (Codex P1 #859 r5).
+    await new Promise((resolve) => setTimeout(resolve, 90))
+    expect(revokedFn).toHaveBeenCalled()
+    // A write attempted after revocation never lands.
     pub.emit({ type: 'tool_end', id: 'x' })
+    await pub.finish()
+    expect(rows.filter((r) => r.turnId === 't-lease')).toHaveLength(0)
+    expect(pub.durabilityHoles()).toBe(0)
+  })
+
+  it('an occupied seq holding a FOREIGN row revokes the lease and publishes nothing (Codex P2 r5)', async () => {
+    // A reviver's terminal already sits at seq 0 of this turn.
+    rows.push({ turnId: 't-foreign', seq: 0, type: 'error', payload: { type: 'error', message: 'turn_stalled_stream_lost' } })
+    const revokedFn = vi.fn()
+    const pub = createTurnEventPublisher('t-foreign', { coalesceMs: 1, revokeCheckMs: 60_000, onRevoked: revokedFn })
+    pub.emit({ type: 'tool_start', id: 'z', name: 'get_orders' })
     await pub.finish()
 
     expect(revokedFn).toHaveBeenCalled()
-    // Nothing may land after the claiming writer's terminal (Codex P1 #859 r4).
-    expect(rows.filter((r) => r.turnId === 't-lease')).toHaveLength(0)
+    // The foreign terminal still owns seq 0 — our payload never replaced or
+    // shadowed it, and the drop is not counted as a durability hole.
+    expect(rows.filter((r) => r.turnId === 't-foreign')).toHaveLength(1)
+    expect(rows[rows.length - 1].type).toBe('error')
+    expect(pub.durabilityHoles()).toBe(0)
+  })
+
+  it('our own crash-retry duplicate at an occupied seq still counts as stored', async () => {
+    const pub = createTurnEventPublisher('t-dup', { coalesceMs: 1 })
+    pub.emit({ type: 'tool_start', id: 'a', name: 'get_orders' })
+    await pub.finish()
+    // Same event body already durable at seq 0 — a retried write of the SAME
+    // event must be success, not a revocation.
+    const pub2 = createTurnEventPublisher('t-dup', { coalesceMs: 1 })
+    pub2.emit({ type: 'tool_start', id: 'a', name: 'get_orders' })
+    const lastSeq = await pub2.finish()
+    expect(lastSeq).toBe(0)
+    expect(pub2.durabilityHoles()).toBe(0)
   })
 
   it('a healthy running row is untouched by the lease check', async () => {
     const revokedFn = vi.fn()
-    const pub = createTurnEventPublisher('t-lease2', { coalesceMs: 1, revokeCheckMs: 0, onRevoked: revokedFn })
+    const pub = createTurnEventPublisher('t-lease2', { coalesceMs: 1, revokeCheckMs: 25, onRevoked: revokedFn })
     pub.emit({ type: 'tool_start', id: 'y', name: 'get_sales_summary' })
+    await new Promise((resolve) => setTimeout(resolve, 60))
     await pub.finish()
 
     expect(revokedFn).not.toHaveBeenCalled()

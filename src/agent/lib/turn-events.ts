@@ -164,26 +164,48 @@ export function createTurnEventPublisher(
   const maxDeltaChars = opts?.maxDeltaChars ?? 2000
   const retryDelaysMs = opts?.retryDelaysMs ?? DEFAULT_DURABLE_RETRY_DELAYS_MS
   const onRevoked = opts?.onRevoked
-  const revokeCheckMs = opts?.revokeCheckMs ?? 10_000
+  const revokeCheckMs = Math.max(opts?.revokeCheckMs ?? 10_000, 25)
   let lastRevokeCheck = Date.now()
   let revoked = false
+  let leaseTimer: ReturnType<typeof setInterval> | null = null
 
-  /** Throttled row-status lease check. Only active when onRevoked is wired. */
-  async function leaseRevoked(): Promise<boolean> {
+  function markRevoked() {
+    revoked = true
+    stopLeaseTimer()
+    try { onRevoked?.() } catch { /* abort callback must not break the chain */ }
+  }
+
+  function stopLeaseTimer() {
+    if (leaseTimer) { clearInterval(leaseTimer); leaseTimer = null }
+  }
+
+  /** One row-status lease read. Shared by the timer and the write chain. */
+  async function pollLeaseNow(): Promise<boolean> {
     if (revoked) return true
-    if (!onRevoked) return false
-    const nowMs = Date.now()
-    if (nowMs - lastRevokeCheck < revokeCheckMs) return false
-    lastRevokeCheck = nowMs
+    lastRevokeCheck = Date.now()
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const row = await (prisma as any).agentTurn.findUnique({ where: { id: turnId }, select: { status: true } })
-      if (row && row.status !== 'running') {
-        revoked = true
-        try { onRevoked() } catch { /* abort callback must not break the chain */ }
-      }
+      if (row && row.status !== 'running') markRevoked()
     } catch { /* lease check is best-effort — the run continues */ }
     return revoked
+  }
+
+  // Independent lease poll (Codex P1 #859 r5): a turn quiet inside a long
+  // tool call produces NO events, so a chain-only check could never abort it
+  // before the tool returned. The timer polls regardless of event flow; it is
+  // stopped on revocation and in finish().
+  if (onRevoked) {
+    leaseTimer = setInterval(() => { void pollLeaseNow() }, revokeCheckMs)
+    ;(leaseTimer as { unref?: () => void }).unref?.()
+  }
+
+  /** Throttled chain-side lease check (the timer does the steady polling). */
+  async function leaseRevoked(): Promise<boolean> {
+    if (revoked) return true
+    if (!onRevoked) return false
+    if (Date.now() - lastRevokeCheck < revokeCheckMs) return false
+    return pollLeaseNow()
   }
   let seq = -1
   let holes = 0
@@ -214,19 +236,39 @@ export function createTurnEventPublisher(
     return redis
   }
 
-  /** Durable append with bounded retries. Returns false when the row was never stored. */
+  /** Durable append with bounded retries. Returns false when the row was never stored.
+   * Atomic ownership (Codex P2 #859 r5): a plain create makes an occupied seq
+   * LOUD — the old upsert(update:{}) silently "succeeded" on a foreign row
+   * (e.g. a reviver's terminal) and then published OUR payload at that seq,
+   * letting live subscribers advance past a terminal replay contains. On
+   * P2002 the row is fetched: an identical row is our own crash-retry
+   * duplicate (success); a different one is a foreign writer — the lease is
+   * gone, nothing is published, and the executor is aborted. */
   async function storeDurably(mySeq: number, event: { type: string }): Promise<boolean> {
     let lastError: unknown = null
     for (let attempt = 0; attempt <= retryDelaysMs.length; attempt++) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (prisma as any).agentTurnEvent.upsert({
-          where: { turnId_seq: { turnId, seq: mySeq } },
-          create: { turnId, seq: mySeq, type: event.type, payload: event },
-          update: {},
+        await (prisma as any).agentTurnEvent.create({
+          data: { turnId, seq: mySeq, type: event.type, payload: event },
         })
         return true
       } catch (err) {
+        if ((err as { code?: string })?.code === 'P2002') {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const existing = await (prisma as any).agentTurnEvent.findUnique({
+              where: { turnId_seq: { turnId, seq: mySeq } },
+              select: { type: true, payload: true },
+            })
+            if (existing && existing.type === event.type
+              && JSON.stringify(existing.payload) === JSON.stringify(event)) {
+              return true // our own earlier write landed — retry made it look new
+            }
+          } catch { /* fall through to revocation — never publish over a foreign row */ }
+          markRevoked()
+          return false
+        }
         lastError = err
         if (attempt < retryDelaysMs.length) {
           await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[attempt]))
@@ -249,6 +291,10 @@ export function createTurnEventPublisher(
       // tail and the replay log must never disagree about what happened.
       const stored = await storeDurably(mySeq, event)
       if (!stored) {
+        // A revoked lease is not a durability hole: a foreign terminal owns
+        // the log now and the tail settles from it — repairing would append
+        // BEHIND that terminal.
+        if (revoked) return
         holes += 1
         if (isTerminalEventType(event.type)) terminalLost = event.type
         return
@@ -307,6 +353,7 @@ export function createTurnEventPublisher(
       writeRow(event)
     },
     async finish() {
+      stopLeaseTimer()
       flushDelta()
       await chain
       if (terminalLost) {
