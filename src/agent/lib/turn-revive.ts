@@ -142,10 +142,15 @@ export async function reviveStalledInlineTurn(input: {
           return NONE
         }
         if (attempt === 2) {
-          // The claim stands but the log write is failing: settle status-only
-          // (clients settle from status) and do NOT schedule — a successor
-          // without a durable stall terminal would be unexplainable.
+          // The claim stands but the log write is failing: no successor was
+          // queued and no durable terminal explains the loss, so 'done'
+          // would read as a successful completion — settle the claimed row
+          // as an honest error before returning (Codex P2 #859 r12).
           console.warn(`[turn-revive] terminal event store failed for ${turn.id}:`, err instanceof Error ? err.message : err)
+          await db.agentTurn.updateMany({
+            where: { id: turn.id, status: 'done' },
+            data: { status: 'error' },
+          }).catch(() => {})
           return { revived: true, continuationScheduled: false }
         }
         await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))

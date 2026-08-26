@@ -193,6 +193,21 @@ describe('reviveStalledInlineTurn', () => {
     expect(prismaMock.agentTurnEvent.create).not.toHaveBeenCalled()
   })
 
+  it('a triple terminal-store failure settles the claimed row as error, not done (Codex P2 r12)', async () => {
+    prismaMock.agentTurn.findUnique.mockResolvedValue(runningTurn())
+    prismaMock.agentTurnEvent.findFirst.mockResolvedValue({ seq: 5, createdAt: SILENT })
+    prismaMock.agentTurnEvent.create.mockRejectedValue(new Error('db down'))
+
+    const res = await reviveStalledInlineTurn({ turnId: 'turn-1', conversationId: 'conv-1', now: NOW })
+
+    expect(res).toEqual({ revived: true, continuationScheduled: false })
+    expect(selfContinue.scheduleSelfContinue).not.toHaveBeenCalled()
+    expect(prismaMock.agentTurn.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 'turn-1', status: 'done' },
+      data: expect.objectContaining({ status: 'error' }),
+    }))
+  })
+
   it('reviveSilentMs floors the env override', () => {
     process.env.AGENT_REOPEN_REVIVE_SILENT_MS = '1000'
     expect(reviveSilentMs()).toBe(180_000)
