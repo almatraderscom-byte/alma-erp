@@ -28,6 +28,7 @@ import { publishTurnTerminal } from '@/agent/lib/turn-watchdog'
 const db = prisma as any
 
 export const REVIVE_TERMINAL_MESSAGE = 'turn_stalled_stream_lost'
+export const REVIVE_CONTINUED_MESSAGE = 'turn_stalled_continued'
 const REVIVE_SILENT_MS_DEFAULT = 180_000
 const REVIVE_SILENT_MS_FLOOR = 60_000
 
@@ -73,11 +74,23 @@ export async function reviveStalledInlineTurn(input: {
       : started
     if (now.getTime() - lastActivity.getTime() < reviveSilentMs()) return NONE
 
-    // Schedule the resume BEFORE settling: buildSelfContinueBinding requires
-    // the source turn to still be running/done, and every #850 brake (hop
+    // Claim FIRST (Codex P1 #859 r2): scheduling before the claim let a
+    // successor be queued while the real executor could still resume and
+    // finish normally — duplicated tool side effects with no way to revoke
+    // the queued hop. The CAS claims running→'done' ('done' is what
+    // buildSelfContinueBinding and claimContinuationExecution accept for a
+    // continuation source — Codex P1 r1); losing it means the executor
+    // settled and its own terminal is the truth. If no resume ends up
+    // queued, the row is downgraded to an honest 'error' below.
+    const claimed = await db.agentTurn.updateMany({
+      where: { id: turn.id, status: 'running' },
+      data: { status: 'done', finishedAt: now },
+    })
+    if (!claimed?.count) return NONE
+
+    // Resume the work when the turn left persisted authority behind
+    // (workflow event / intake focus / checkpoint). Every #850 brake (hop
     // budget, dry-hop, halt marker, worker-down deferral) applies unchanged.
-    // A turn with no persisted authority simply doesn't schedule — the settle
-    // below still frees the chat honestly.
     let continuationScheduled = false
     try {
       const { scheduleSelfContinue } = await import('@/agent/lib/self-continue')
@@ -89,30 +102,28 @@ export async function reviveStalledInlineTurn(input: {
     } catch (err) {
       console.warn(`[turn-revive] continuation not scheduled for ${turn.id}:`, err instanceof Error ? err.message : err)
     }
+    if (!continuationScheduled) {
+      // Dead end — no resume queued, so 'done' would be a lie. Only our own
+      // claim can hold 'done' here (the executor lost the CAS above).
+      await db.agentTurn.updateMany({
+        where: { id: turn.id, status: 'done' },
+        data: { status: 'error' },
+      }).catch(() => {})
+    }
 
-    // Claim-first CAS — identical semantics to the watchdog reap: losing the
-    // claim means the real executor settled in the meantime, and its own
-    // terminal (plus any continuation it scheduled) is the truth.
-    // Codex P1 #859: when a continuation WAS queued, the source must settle
-    // as 'done', not 'error' — buildSelfContinueBinding and the worker's
-    // claimContinuationExecution both revalidate the source status against
-    // running/done, so an 'error' source would reject the queued hop with
-    // continuation_source_status_mismatch and the work would never resume.
-    // This mirrors the deadline salvage, which also ends a continued turn
-    // 'done'. Only a dead end (no resume queued) settles as 'error'.
-    const settledStatus = continuationScheduled ? 'done' : 'error'
-    const claimed = await db.agentTurn.updateMany({
-      where: { id: turn.id, status: 'running' },
-      data: { status: settledStatus, finishedAt: now },
-    })
-    if (!claimed?.count) return NONE
-
+    // Codex P2 #859 r2: the durable terminal must agree with the settlement —
+    // a continued turn ends 'done' with a done terminal (the successor turn
+    // carries the work on), a dead end ends 'error'. An error terminal on a
+    // continued turn made clients show a retry toast for work the server had
+    // already resumed.
     const seq = (newest ? Number(newest.seq) : -1) + 1
-    const payload = { type: 'error', message: REVIVE_TERMINAL_MESSAGE }
+    const payload = continuationScheduled
+      ? { type: 'done', message: REVIVE_CONTINUED_MESSAGE }
+      : { type: 'error', message: REVIVE_TERMINAL_MESSAGE }
     let stored = false
     for (let attempt = 0; attempt < 3 && !stored; attempt++) {
       try {
-        await db.agentTurnEvent.create({ data: { turnId: turn.id, seq, type: 'error', payload } })
+        await db.agentTurnEvent.create({ data: { turnId: turn.id, seq, type: payload.type, payload } })
         stored = true
       } catch (err) {
         if ((err as { code?: string })?.code === 'P2002') {
@@ -132,7 +143,7 @@ export async function reviveStalledInlineTurn(input: {
     }
     await db.agentTurn.updateMany({ where: { id: turn.id }, data: { lastSeq: seq } }).catch(() => {})
     await publishTurnTerminal(turn.id, seq, payload)
-    console.warn(`[turn-revive] settled silent inline turn ${turn.id} as ${settledStatus} (last activity ${lastActivity.toISOString()}, continuation=${continuationScheduled})`)
+    console.warn(`[turn-revive] settled silent inline turn ${turn.id} as ${continuationScheduled ? 'done+continued' : 'error'} (last activity ${lastActivity.toISOString()})`)
     return { revived: true, continuationScheduled }
   } catch (err) {
     console.warn('[turn-revive] revive failed:', err instanceof Error ? err.message : err)

@@ -80,7 +80,8 @@ export async function publishTurnTerminal(turnId: string, seq: number, payload: 
     })
     redis.on('error', () => { /* surfaced by the failed publish below */ })
     try {
-      await redis.publish(`turn:${turnId}:events`, JSON.stringify({ seq, type: 'error', payload }))
+      const type = typeof payload.type === 'string' ? payload.type : 'error'
+      await redis.publish(`turn:${turnId}:events`, JSON.stringify({ seq, type, payload }))
     } finally {
       try { await redis.quit() } catch { redis.disconnect?.() }
     }
