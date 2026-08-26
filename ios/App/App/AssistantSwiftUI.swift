@@ -6529,10 +6529,12 @@ final class AssistantVM {
         justSettledId = messages.last(where: { $0.role == .assistant })?.id
         guard let cid = conversationId else { return false }
         var reconciledServerAssistantIds = Set<String>()
+        var rowReconcileFetchSucceeded = false
         if let wire: [AgentMessageWire] = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/messages") {
             guard streamTaskGeneration == expectedGeneration,
                   selectedSessionIdentity == expectedSessionIdentity,
                   conversationId == cid else { return false }
+            rowReconcileFetchSucceeded = true
             reconciledServerAssistantIds = Set(
                 wire.lazy.filter { $0.role == "assistant" }.map(\.id))
             lastFetchedAssistantRows = (cid, reconciledServerAssistantIds)
@@ -6559,7 +6561,11 @@ final class AssistantVM {
             // `done` may beat message visibility by a small persistence window.
             // The exact descriptor remains authoritative until that named row is
             // mounted; a later poll re-opens the same turn, never the prompt.
-            if terminal.assistantMessageId == nil && terminal.status == "done" {
+            // Only a SUCCESSFUL messages fetch counts as a reconciliation
+            // attempt (Codex P2 #859 r11) — transport failures must not walk
+            // the bound toward retiring an unconfirmed descriptor.
+            if terminal.assistantMessageId == nil && terminal.status == "done"
+                && rowReconcileFetchSucceeded {
                 rowlessDoneReconcileAttempts += 1
             }
             reconnecting = true
@@ -7096,12 +7102,12 @@ final class AssistantVM {
             }
         }
         let lastAssistantBefore = messages.last(where: { $0.role == .assistant })?.id
-        await loadMessages()
+        var rowReconcileFetchSucceeded = await loadMessages()
         // "Final content within 2s": persistence can trail the terminal status by a
         // beat — one short retry before we surface whatever state we have.
         if messages.last(where: { $0.role == .assistant })?.id == lastAssistantBefore {
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            await loadMessages()
+            rowReconcileFetchSucceeded = await loadMessages() || rowReconcileFetchSucceeded
         }
         let reconciledAssistantIds: Set<String>
         if let fetched = lastFetchedAssistantRows,
@@ -7135,7 +7141,10 @@ final class AssistantVM {
                 // Lifecycle can become terminal a beat before the assistant
                 // message query sees its row. Preserve the exact descriptor and
                 // resume only this turn; a newer row cannot satisfy it.
-                if exactTerminal.assistantMessageId == nil && exactTerminal.status == "done" {
+                // Successful fetches only (Codex P2 #859 r11): a failed
+                // /messages round must not walk the retirement bound.
+                if exactTerminal.assistantMessageId == nil && exactTerminal.status == "done"
+                    && rowReconcileFetchSucceeded {
                     rowlessDoneReconcileAttempts += 1
                 }
                 reconnecting = true

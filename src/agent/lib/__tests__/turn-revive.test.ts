@@ -169,16 +169,15 @@ describe('reviveStalledInlineTurn', () => {
     expect(res.revived).toBe(false)
   })
 
-  it('a turn with no events uses startedAt as last activity and reaps at seq 0', async () => {
+  it('a turn with NO durable events is never revived — the non-stream branch has no lease (Codex P1 r11)', async () => {
     prismaMock.agentTurn.findUnique.mockResolvedValue(runningTurn())
     prismaMock.agentTurnEvent.findFirst.mockResolvedValue(null)
 
     const res = await reviveStalledInlineTurn({ turnId: 'turn-1', conversationId: 'conv-1', now: NOW })
 
-    expect(res.revived).toBe(true)
-    expect(prismaMock.agentTurnEvent.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ seq: 0 }) }),
-    )
+    expect(res.revived).toBe(false)
+    expect(prismaMock.agentTurn.updateMany).not.toHaveBeenCalled()
+    expect(selfContinue.scheduleSelfContinue).not.toHaveBeenCalled()
   })
 
   it('an executor that stamped a newer event after the silence read wins — the lastSeq CAS fails', async () => {

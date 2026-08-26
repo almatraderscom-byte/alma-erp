@@ -79,10 +79,17 @@ export async function reviveStalledInlineTurn(input: {
       orderBy: { seq: 'desc' },
       select: { seq: true, createdAt: true },
     })
-    const started = new Date(turn.startedAt)
-    const lastActivity = newest && new Date(newest.createdAt) > started
+    // Codex P1 #859 r11: a turn with NO durable events is not necessarily
+    // dead — the non-stream branch (?stream=false) is stamped 'inline' but
+    // never installs the publisher/lease and writes no events at all, so
+    // startedAt-only silence would claim it while its generator still runs
+    // tools. Event-less turns stay with the watchdog (whose window exceeds
+    // every inline budget). Streamed turns emit events within seconds, so
+    // this excludes nothing the reviver was built for.
+    if (!newest) return NONE
+    const lastActivity = new Date(newest.createdAt) > new Date(turn.startedAt)
       ? new Date(newest.createdAt)
-      : started
+      : new Date(turn.startedAt)
     if (now.getTime() - lastActivity.getTime() < reviveSilentMs()) return NONE
 
     // Claim FIRST (Codex P1 #859 r2): scheduling before the claim let a
