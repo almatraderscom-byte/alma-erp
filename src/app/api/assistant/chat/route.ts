@@ -1357,7 +1357,13 @@ export async function POST(req: NextRequest) {
   // (agent_turn_events + Redis live channel + AgentTurn.lastSeq), so a client that
   // reconnects mid-turn replays from its cursor instead of waiting for polls.
   // Internal (worker-driven) calls skip it: the worker mirrors events itself.
-  const durable = !isInternalCall && turnId ? createTurnEventPublisher(turnId) : null
+  // The publisher doubles as the execution-revocation lease (Codex P1 #859
+  // r4): if the reopen revive or the watchdog claims this turn away, the next
+  // durable write detects it and this abort stops the generator + tools
+  // instead of letting side effects run twice behind a foreign terminal.
+  const durable = !isInternalCall && turnId
+    ? createTurnEventPublisher(turnId, { onRevoked: () => turnAbort.abort() })
+    : null
   const stream = new ReadableStream({
     async start(controller) {
       // CRITICAL (owner bug 2026-07-12, "app close = kaj theme jay"): once the
@@ -1441,7 +1447,9 @@ export async function POST(req: NextRequest) {
             // so a recovering client fetches one message, not the whole history.
             const doneMessageId = (event as { messageId?: string }).messageId
             if (doneMessageId && turnId) await linkTurnAssistantMessage(turnId, doneMessageId)
-            await finalizeTurnIfRunning(turnId, 'done', { continuationNeeded: event.needContinue === true })
+            durable?.suspendLease()
+            const settledHere = await finalizeTurnIfRunning(turnId, 'done', { continuationNeeded: event.needContinue === true })
+            if (settledHere) durable?.releaseLease(); else durable?.revokeNow()
             streamTerminalStamped = true
             void traceTurnStage(turnId, 'turn_done', 'done').catch(() => {})
             if (turnId && conversationId && convSource === 'web' && event.needContinue !== true) {
@@ -1501,7 +1509,9 @@ export async function POST(req: NextRequest) {
             break
           }
           if (event.type === 'error') {
-            await finalizeTurnIfRunning(turnId, 'error')
+            durable?.suspendLease()
+            const settledHere = await finalizeTurnIfRunning(turnId, 'error')
+            if (settledHere) durable?.releaseLease(); else durable?.revokeNow()
             break
           }
         }
@@ -1550,7 +1560,9 @@ export async function POST(req: NextRequest) {
         // Safety net: if the turn ended without done/error (hard-cap timeout or a
         // crash), leave it marked error rather than stuck 'running'. No-op if the
         // turn already reached a terminal status (done / canceled by Stop).
-        await finalizeTurnIfRunning(turnId, 'error')
+        durable?.suspendLease()
+        const settledHere = await finalizeTurnIfRunning(turnId, 'error')
+        if (settledHere) durable?.releaseLease(); else durable?.revokeNow()
         // P0-2: close the trace here too. A turn killed by the hard cap is the
         // WORST wait Boss experiences, and it was the one the split could not
         // measure at all (review bot #690). Duplicate stamps are harmless — the

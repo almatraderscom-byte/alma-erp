@@ -92,7 +92,20 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
 
       // 0) Connection snapshot — lets the client reconcile turn state instantly
       //    (roadmap 3.5) without a separate status request.
-      const snap = await getTurnSnapshot(turnId)
+      let snap = await getTurnSnapshot(turnId)
+      // Reopen-time stall revive (Codex P1 #859 r3): the iOS persisted-descriptor
+      // reopen attaches HERE, never to the conversation status poll — so this
+      // attach must run the same silent-turn check, or the most common reopen
+      // path would stay stuck until the long watchdog. The updatedAt pre-gate
+      // keeps healthy attaches at zero extra queries.
+      if (snap?.status === 'running') {
+        const { reviveStalledInlineTurn, reviveSilentMs } = await import('@/agent/lib/turn-revive')
+        const lastTouch = new Date(snap.updatedAt ?? snap.startedAt).getTime()
+        if (Date.now() - lastTouch >= reviveSilentMs()) {
+          const revived = await reviveStalledInlineTurn({ turnId, conversationId: snap.conversationId })
+          if (revived.revived) snap = (await getTurnSnapshot(turnId)) ?? snap
+        }
+      }
       if (!snap) {
         // Fail closed (Codex P1 #834 r6): without the snapshot the turn's prose
         // family is unknown — serving stored v2 rows as if v1 would put a
@@ -128,7 +141,20 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
           getReplay: (after, limit) => getReplayEvents(turnId, after, limit, { throwOnError: true }),
           subscribe: (onEvent, signal) => subscribeTurnEvents(turnId, onEvent, { signal }),
           getStatus: async () => {
-            const current = await getTurnSnapshot(turnId)
+            let current = await getTurnSnapshot(turnId)
+            // The lifecycle poll gets the same guard: a turn that dies silently
+            // while a tail is already attached settles within one poll past the
+            // revive window instead of waiting for the watchdog (Codex P1 r3).
+            if (current?.status === 'running') {
+              try {
+                const { reviveStalledInlineTurn, reviveSilentMs } = await import('@/agent/lib/turn-revive')
+                const lastTouch = new Date(current.updatedAt ?? current.startedAt).getTime()
+                if (Date.now() - lastTouch >= reviveSilentMs()) {
+                  const revived = await reviveStalledInlineTurn({ turnId, conversationId: current.conversationId })
+                  if (revived.revived) current = (await getTurnSnapshot(turnId)) ?? current
+                }
+              } catch { /* the poll answer must never fail on revive plumbing */ }
+            }
             return current
               ? {
                   turnId: current.id,

@@ -40,6 +40,12 @@ const harness = vi.hoisted(() => ({
 }))
 
 vi.mock('@/agent/lib/guards', () => ({ requireAgentEnabled: () => null }))
+// The revive guard is unit-tested in turn-revive.test.ts; here it must never
+// reach for the real prisma client under fake timers.
+vi.mock('@/agent/lib/turn-revive', () => ({
+  reviveStalledInlineTurn: vi.fn(async () => ({ revived: false, continuationScheduled: false })),
+  reviveSilentMs: () => 180_000,
+}))
 vi.mock('next-auth/jwt', () => ({ getToken: async () => ({ sub: 'owner' }) }))
 vi.mock('@/lib/roles', () => ({ isSystemOwner: () => true }))
 

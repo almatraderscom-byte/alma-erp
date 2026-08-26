@@ -944,16 +944,25 @@ enum DurableTurnRecoveryContract {
         terminal: AgentTurnTerminal,
         expectedTurnId: String,
         expectedConversationId: String,
-        reconciledAssistantIds: Set<String>
+        reconciledAssistantIds: Set<String>,
+        rowlessDoneAttempts: Int = 0
     ) -> Bool {
         guard matches(terminal, expectedTurnId: expectedTurnId,
                       expectedConversationId: expectedConversationId) else { return false }
         if let assistantMessageId = terminal.assistantMessageId {
             return reconciledAssistantIds.contains(assistantMessageId)
         }
-        // A successful turn must name and reconcile its persisted assistant row.
         // Error/cancel can truthfully have no assistant row to reconcile.
-        return terminal.status == "error" || terminal.status == "canceled"
+        if terminal.status == "error" || terminal.status == "canceled" { return true }
+        // Row-less `done` is ambiguous (Codex #859 r7↔r9): a normal completion
+        // whose assistant-row link write failed recovers within a retry or two
+        // — retiring instantly would settle the UI without mounting the
+        // answer. A revive-continued source ('done', executor died before any
+        // reply persisted, successor queued server-side) NEVER gains a row —
+        // retrying forever pinned the client to the settled source. Bounded
+        // reconciliation attempts serve both: retry first, then retire so the
+        // successor can be discovered.
+        return terminal.status == "done" && rowlessDoneAttempts >= 3
     }
 }
 

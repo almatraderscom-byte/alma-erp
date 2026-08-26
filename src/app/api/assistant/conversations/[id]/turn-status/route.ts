@@ -22,8 +22,20 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   const { id } = await Promise.resolve(params)
-  const turn = await getLatestTurn(id)
+  let turn = await getLatestTurn(id)
   if (!turn) return Response.json({ status: 'idle', turnId: null })
+  // Reopen-time stall revive (owner 2026-08-26): this poll is the moment the
+  // server learns someone is looking at a possibly-dead turn. The updatedAt
+  // pre-gate keeps the healthy-turn poll path at zero extra queries; the
+  // revive module re-verifies silence against the durable event log itself.
+  if (turn.status === 'running') {
+    const { reviveStalledInlineTurn, reviveSilentMs } = await import('@/agent/lib/turn-revive')
+    const lastTouch = turn.updatedAt ? new Date(turn.updatedAt).getTime() : new Date(turn.startedAt).getTime()
+    if (Date.now() - lastTouch >= reviveSilentMs()) {
+      const revived = await reviveStalledInlineTurn({ turnId: turn.id, conversationId: id })
+      if (revived.revived) turn = (await getLatestTurn(id)) ?? turn
+    }
+  }
   // Roadmap 3.6 — lastSeq lets the client tell "stream quiet but alive" from
   // stale/ghost; assistantMessageId lets it fetch the exact final row.
   return Response.json({
