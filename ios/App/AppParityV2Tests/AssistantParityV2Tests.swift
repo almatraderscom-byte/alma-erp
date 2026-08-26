@@ -2338,15 +2338,32 @@ final class AssistantParityV2Tests: XCTestCase {
             expectedTurnId: "turn-exact",
             expectedConversationId: "conversation-exact",
             reconciledAssistantIds: ["assistant-newer", "assistant-exact"]))
-        // Revive-continued source (Codex P1 #859 r7): 'done' with NO assistant
-        // row — the executor died pre-persist and a successor was queued. The
-        // descriptor must retire so the successor can be discovered.
+        // Row-less 'done' (Codex #859 r7↔r9): retried first (a link-write
+        // hiccup recovers), retired after bounded attempts (a revive-continued
+        // source never gains a row — the successor must be discoverable).
         let continuedSource = AgentTurnTerminal(
             turnId: "turn-exact", conversationId: "conversation-exact",
             status: "done", lastSeq: 3,
             assistantMessageId: nil, continuationNeeded: false)
+        XCTAssertFalse(DurableTurnRecoveryContract.canClearDescriptor(
+            terminal: continuedSource,
+            expectedTurnId: "turn-exact",
+            expectedConversationId: "conversation-exact",
+            reconciledAssistantIds: [],
+            rowlessDoneAttempts: 0))
         XCTAssertTrue(DurableTurnRecoveryContract.canClearDescriptor(
             terminal: continuedSource,
+            expectedTurnId: "turn-exact",
+            expectedConversationId: "conversation-exact",
+            reconciledAssistantIds: [],
+            rowlessDoneAttempts: 3))
+        // Error stays instantly retirable regardless of attempts.
+        let rowlessError = AgentTurnTerminal(
+            turnId: "turn-exact", conversationId: "conversation-exact",
+            status: "error", lastSeq: 3,
+            assistantMessageId: nil, continuationNeeded: false)
+        XCTAssertTrue(DurableTurnRecoveryContract.canClearDescriptor(
+            terminal: rowlessError,
             expectedTurnId: "turn-exact",
             expectedConversationId: "conversation-exact",
             reconciledAssistantIds: []))

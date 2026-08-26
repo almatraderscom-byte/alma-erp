@@ -4449,6 +4449,7 @@ final class AssistantVM {
     private static let recoverableTurnKey = "alma.assistant.recoverableTurn"
     private var recoverableTurn: RecoverableTurn? = AssistantVM.loadRecoverableTurn() {
         didSet {
+            if recoverableTurn?.turnId != oldValue?.turnId { rowlessDoneReconcileAttempts = 0 }
             if let rt = recoverableTurn, let d = try? JSONEncoder().encode(rt) {
                 UserDefaults.standard.set(d, forKey: Self.recoverableTurnKey)
             } else {
@@ -4456,6 +4457,11 @@ final class AssistantVM {
             }
         }
     }
+    /// Bounded row-less-`done` reconciliation (Codex P2 #859 r9): a normal
+    /// completion whose assistant-row link write hiccuped recovers within a
+    /// retry or two; a revive-continued source NEVER gains a row. Counted per
+    /// descriptor turn, reset when the descriptor changes.
+    private var rowlessDoneReconcileAttempts = 0
     private static func loadRecoverableTurn() -> RecoverableTurn? {
         guard let d = UserDefaults.standard.data(forKey: recoverableTurnKey) else { return nil }
         return try? JSONDecoder().decode(RecoverableTurn.self, from: d)
@@ -6548,10 +6554,14 @@ final class AssistantVM {
             terminal: terminal,
             expectedTurnId: descriptorTurnId,
             expectedConversationId: cid,
-            reconciledAssistantIds: reconciledServerAssistantIds) {
+            reconciledAssistantIds: reconciledServerAssistantIds,
+            rowlessDoneAttempts: rowlessDoneReconcileAttempts) {
             // `done` may beat message visibility by a small persistence window.
             // The exact descriptor remains authoritative until that named row is
             // mounted; a later poll re-opens the same turn, never the prompt.
+            if terminal.assistantMessageId == nil && terminal.status == "done" {
+                rowlessDoneReconcileAttempts += 1
+            }
             reconnecting = true
             Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -7120,10 +7130,14 @@ final class AssistantVM {
                 terminal: exactTerminal,
                 expectedTurnId: expectedTurnId,
                 expectedConversationId: expectedConversationId,
-                reconciledAssistantIds: reconciledAssistantIds) {
+                reconciledAssistantIds: reconciledAssistantIds,
+                rowlessDoneAttempts: rowlessDoneReconcileAttempts) {
                 // Lifecycle can become terminal a beat before the assistant
                 // message query sees its row. Preserve the exact descriptor and
                 // resume only this turn; a newer row cannot satisfy it.
+                if exactTerminal.assistantMessageId == nil && exactTerminal.status == "done" {
+                    rowlessDoneReconcileAttempts += 1
+                }
                 reconnecting = true
                 isStreaming = true
                 thinkingLive = true
@@ -27368,6 +27382,15 @@ struct AssistantScreen: View {
                         }
                     } else {
                         scrollToBottom(proxy: proxy)
+                    }
+                }
+                // Reopen sync began: the inline row mounts BELOW the previous
+                // fold, and content growth alone does not move the offset —
+                // bring it on screen; it IS the reopen feedback (Codex P2 #859
+                // r9). One bounded scroll, not a follow.
+                .onChange(of: vm.reopenSyncBeginTick) { _, _ in
+                    withAnimation(.easeOut(duration: 0.35)) {
+                        proxy.scrollTo("ALMA_REOPEN_SYNC", anchor: .bottom)
                     }
                 }
                 .onChange(of: timelineScrollTarget) { _, target in
