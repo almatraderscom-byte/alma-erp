@@ -90,6 +90,16 @@ describe('reviveStalledInlineTurn', () => {
     expect(prismaMock.agentTurnEvent.findFirst).not.toHaveBeenCalled()
   })
 
+  it('a pending cancellation stays with the cancellation drain path (Codex P2 r7)', async () => {
+    prismaMock.agentTurn.findUnique.mockResolvedValue(runningTurn({ cancelRequested: true }))
+
+    const res = await reviveStalledInlineTurn({ turnId: 'turn-1', conversationId: 'conv-1', now: NOW })
+
+    expect(res.revived).toBe(false)
+    expect(prismaMock.agentTurnEvent.findFirst).not.toHaveBeenCalled()
+    expect(selfContinue.scheduleSelfContinue).not.toHaveBeenCalled()
+  })
+
   it('a NULL execution mode is not inline — worker-bound continuations are bound without a stamp (Codex P1 r4)', async () => {
     prismaMock.agentTurn.findUnique.mockResolvedValue(runningTurn({ executionMode: null }))
 

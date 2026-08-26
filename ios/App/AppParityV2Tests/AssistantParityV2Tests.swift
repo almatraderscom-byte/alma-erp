@@ -2338,6 +2338,18 @@ final class AssistantParityV2Tests: XCTestCase {
             expectedTurnId: "turn-exact",
             expectedConversationId: "conversation-exact",
             reconciledAssistantIds: ["assistant-newer", "assistant-exact"]))
+        // Revive-continued source (Codex P1 #859 r7): 'done' with NO assistant
+        // row — the executor died pre-persist and a successor was queued. The
+        // descriptor must retire so the successor can be discovered.
+        let continuedSource = AgentTurnTerminal(
+            turnId: "turn-exact", conversationId: "conversation-exact",
+            status: "done", lastSeq: 3,
+            assistantMessageId: nil, continuationNeeded: false)
+        XCTAssertTrue(DurableTurnRecoveryContract.canClearDescriptor(
+            terminal: continuedSource,
+            expectedTurnId: "turn-exact",
+            expectedConversationId: "conversation-exact",
+            reconciledAssistantIds: []))
     }
 
     func testPreTurnCleanEOFRetryIsBoundedAndBacksOff() {

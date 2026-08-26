@@ -951,9 +951,14 @@ enum DurableTurnRecoveryContract {
         if let assistantMessageId = terminal.assistantMessageId {
             return reconciledAssistantIds.contains(assistantMessageId)
         }
-        // A successful turn must name and reconcile its persisted assistant row.
-        // Error/cancel can truthfully have no assistant row to reconcile.
-        return terminal.status == "error" || terminal.status == "canceled"
+        // No named assistant row: there is nothing to wait for. A normally-
+        // completed turn always names its persisted row, so a row-less
+        // terminal is error/cancel — or a revive-continued source ('done',
+        // Codex P1 #859 r7: the executor died before persisting a reply and
+        // the server queued a successor turn; holding the descriptor here
+        // reattached to the settled source forever and never discovered the
+        // successor). Any settled status without a row retires the descriptor.
+        return terminal.status != "running"
     }
 }
 

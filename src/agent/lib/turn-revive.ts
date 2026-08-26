@@ -57,10 +57,16 @@ export async function reviveStalledInlineTurn(input: {
     const now = input.now ?? new Date()
     const turn = await db.agentTurn.findUnique({
       where: { id: input.turnId },
-      select: { id: true, conversationId: true, status: true, executionMode: true, startedAt: true, lastSeq: true },
+      select: { id: true, conversationId: true, status: true, executionMode: true, startedAt: true, lastSeq: true, cancelRequested: true },
     })
     if (!turn || turn.status !== 'running') return NONE
     if (turn.conversationId !== input.conversationId) return NONE
+    // Codex P2 #859 r7: a Stop pressed mid-effect deliberately parks the turn
+    // 'running' with cancelRequested until the authorized effect drains
+    // (live-browser companion). That settlement belongs to the cancellation
+    // path — reviving it would replace the owner's requested cancel with a
+    // done/error and try to continue work the owner just stopped.
+    if (turn.cancelRequested === true) return NONE
     // Codex P1 #859 r4: ONLY explicitly-inline rows. A null mode is not
     // inline — worker-bound continuations are bound without a mode stamp
     // (approval-continuation), and a legitimate worker slice may sit quiet
