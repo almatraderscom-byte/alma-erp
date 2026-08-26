@@ -3876,6 +3876,14 @@ final class AssistantVM {
         else { return }
         reopenSyncPending = true
         reopenSyncBeginTick += 1
+        // The old loader arc had a 12s hard ceiling; the inline row keeps the
+        // same guarantee at the VM so it can never become a stuck state.
+        let tick = reopenSyncBeginTick
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard let self, self.reopenSyncPending, self.reopenSyncBeginTick == tick else { return }
+            self.resolveReopenSync()
+        }
     }
 
     /// Fresh server truth arrived (live/replayed events applied, terminal
@@ -17470,7 +17478,11 @@ struct AgentMessageRow: View, Equatable {
                                          modelName: vm.answeringModelName,
                                          message: message,
                                          lastThinkingGrowthAt: vm.lastThinkingGrowthAt,
-                                         reconnecting: vm.reconnecting,
+                                         // Owner 2026-08-26: the transport-drop state is
+                                         // carried by the inline sync row in the thread —
+                                         // the thinking row keeps its normal working face
+                                         // instead of the old "সংযোগ ফিরছে…" label.
+                                         reconnecting: false,
                                          stallRetryAttempt: vm.stallRetryAttempt)
                             .padding(.top, 2)
                     }
@@ -21330,17 +21342,48 @@ struct AgentModelSwitchCardView: View {
 }
 
 @available(iOS 17.0, *)
-private struct AgentReopenSyncDriver: ViewModifier {
-    let vm: AssistantVM
-    let awakening: AgentAwakeningModel
-    func body(content: Content) -> some View {
-        content
-            .onChange(of: vm.reopenSyncBeginTick) { _, _ in
-                if !awakening.isActive { awakening.restart(sessionNeedsRestore: true) }
+private struct AgentReopenSyncInlineRow: View {
+    // Claude/web-style reopen sync (owner 2026-08-26): rendered INSIDE the
+    // chat thread as a ghost assistant row — pulsing coral dot + breathing
+    // skeleton bars, iOS-system skeleton feel. The robot loader keeps every
+    // other role (boot, history restore, drawer switch) untouched.
+    let pal: AgentPalette
+    @State private var pulse = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [AgentPalette.coralLt, AgentPalette.coral, AgentPalette.coralDim],
+                        center: UnitPoint(x: 0.35, y: 0.3), startRadius: 1, endRadius: 8))
+                    .frame(width: 12, height: 12)
+                    .scaleEffect(pulse ? 1.08 : 0.9)
+                    .opacity(pulse ? 1 : 0.55)
+                Text("সেশন সিংক হচ্ছে…")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(pal.muted)
             }
-            .onChange(of: vm.reopenSyncResolveTick) { _, _ in
-                awakening.markReady(hasContent: !vm.messages.isEmpty)
+            Group {
+                skeletonBar(maxWidth: 300)
+                skeletonBar(maxWidth: 214)
+                skeletonBar(maxWidth: 256)
             }
+            .opacity(pulse ? 0.95 : 0.45)
+        }
+        .padding(.top, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .transition(.opacity.combined(with: .offset(y: 8)))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("সেশন সিংক হচ্ছে")
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) { pulse = true }
+        }
+    }
+    private func skeletonBar(maxWidth: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .fill(pal.dark ? Color.white.opacity(0.07) : Color.black.opacity(0.055))
+            .frame(height: 13)
+            .frame(maxWidth: maxWidth, alignment: .leading)
     }
 }
 
@@ -27018,13 +27061,11 @@ struct AssistantScreen: View {
             // robot must not blink between the two phases.
             if !awakening.isActive { awakening.restart(sessionNeedsRestore: true) }
         case .readyConversation:
-            // Cold launch over a RUNNING turn: history committed but the
-            // reopen sync is still waiting on server truth — keep the ONE
-            // loader up; the resolve tick (or the loader's own 12s hard
-            // ceiling) dismisses it (Codex P2 #857 r7).
-            if !vm.reopenSyncPending {
-                awakening.markReady(hasContent: !vm.messages.isEmpty)
-            }
+            // The robot dismisses on committed history exactly as before —
+            // a still-pending reopen sync is carried by the inline thread row
+            // (AgentReopenSyncInlineRow), never by holding the robot (owner
+            // 2026-08-26: robot everywhere else, Claude-style inline here).
+            awakening.markReady(hasContent: !vm.messages.isEmpty)
         case .readyNew, .failedHistory:
             awakening.markReady(hasContent: false)
         }
@@ -27198,6 +27239,13 @@ struct AssistantScreen: View {
                             }
                             .buttonStyle(AlmaAgentPressStyle())
                             .accessibilityHint("পরের cached page দেখাবে; বর্তমান জায়গা অপরিবর্তিত থাকবে")
+                        }
+                        // Reopen-over-a-running-turn sync: Claude-style inline
+                        // ghost row at the thread tail while server truth
+                        // arrives; resolve (or the VM's 12s ceiling) removes it.
+                        if vm.reopenSyncPending || (vm.isStreaming && vm.reconnecting) {
+                            AgentReopenSyncInlineRow(pal: pal)
+                                .id("ALMA_REOPEN_SYNC")
                         }
                         // A brand-new chat intentionally has no reply footer.
                         // ALMA identity + Background Tasks belong to a settled
@@ -27384,14 +27432,6 @@ struct AssistantScreen: View {
         .onChange(of: vm.sessionSurface) { _, newSurface in
             syncAwakening(with: newSurface)
         }
-        // Web-parity reopen (owner 2026-08-26): coming back to a RUNNING
-        // conversation replays the same ONE session loader while recovery
-        // re-syncs with the server; the first fresh truth (applied events or a
-        // settled terminal) dismisses it with the normal smooth exit. The
-        // model's 12s hard ceiling means this can never become a stuck loader
-        // of its own. (Separate modifier: the screen body is already at the
-        // type-checker's limit.)
-        .modifier(AgentReopenSyncDriver(vm: vm, awakening: awakening))
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
@@ -27625,13 +27665,13 @@ struct AssistantScreen: View {
                 Task {
                     // Several capture windows: the sequence replays so a
                     // headless screenshot run can catch begin AND dismiss.
-                    for _ in 0..<4 {
+                    for _ in 0..<30 {
                         try? await Task.sleep(for: .milliseconds(2_000))
                         vm.debugArmReopenSyncFixture()
                         vm.debugBeginReopenSyncFixture()
-                        try? await Task.sleep(for: .milliseconds(3_200))
+                        try? await Task.sleep(for: .milliseconds(4_000))
                         vm.debugResolveReopenSyncFixture()
-                        try? await Task.sleep(for: .milliseconds(2_800))
+                        try? await Task.sleep(for: .milliseconds(2_500))
                     }
                 }
                 return

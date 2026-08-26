@@ -67,7 +67,7 @@ async function latestEvent(turnId: string): Promise<{ seq: number; createdAt: Da
   return row ? { seq: Number(row.seq), createdAt: new Date(row.createdAt) } : null
 }
 
-async function publishTerminal(turnId: string, seq: number, payload: Record<string, unknown>): Promise<void> {
+export async function publishTurnTerminal(turnId: string, seq: number, payload: Record<string, unknown>): Promise<void> {
   const url = process.env.LONG_TASK_REDIS_URL || process.env.REDIS_URL
   if (!url) return
   try {
@@ -136,7 +136,7 @@ async function reapTurn(turnId: string, lastSeq: number): Promise<boolean> {
       }
     }
     await db.agentTurn.updateMany({ where: { id: turnId }, data: { lastSeq: seq } }).catch(() => {})
-    await publishTerminal(turnId, seq, payload)
+    await publishTurnTerminal(turnId, seq, payload)
     return true
   } catch (err) {
     console.warn(`[turn-watchdog] reap failed for ${turnId}:`, err instanceof Error ? err.message : err)
