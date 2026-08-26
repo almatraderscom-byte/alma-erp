@@ -108,6 +108,43 @@ export async function reviveStalledInlineTurn(input: {
     })
     if (!claimed?.count) return NONE
 
+    // ATOMIC LOG OWNERSHIP BEFORE ANY SCHEDULING (Codex P1 #859 r10): the
+    // executor appends the event row and stamps lastSeq in SEPARATE writes,
+    // so the lastSeq pin above can pass while a fresher event already sits in
+    // the log. Creating the terminal row at the observed next seq is the
+    // atomic verify — P2002 here means the executor demonstrably wrote after
+    // the silence read, so the claim is ROLLED BACK and nothing is ever
+    // queued (previously the successor was already enqueued by this point).
+    // The terminal is provisional 'done' (matching the claimed status) and is
+    // rewritten below if no continuation ends up queued.
+    const seq = (newest ? Number(newest.seq) : -1) + 1
+    let provisionalStored = false
+    for (let attempt = 0; attempt < 3 && !provisionalStored; attempt++) {
+      try {
+        await db.agentTurnEvent.create({
+          data: { turnId: turn.id, seq, type: 'done', payload: { type: 'done', message: REVIVE_CONTINUED_MESSAGE } },
+        })
+        provisionalStored = true
+      } catch (err) {
+        if ((err as { code?: string })?.code === 'P2002') {
+          await db.agentTurn.updateMany({
+            where: { id: turn.id, status: 'done' },
+            data: { status: 'running', finishedAt: null },
+          }).catch(() => {})
+          console.warn(`[turn-revive] seq collision on ${turn.id} — executor wrote after silence read; claim rolled back, nothing scheduled`)
+          return NONE
+        }
+        if (attempt === 2) {
+          // The claim stands but the log write is failing: settle status-only
+          // (clients settle from status) and do NOT schedule — a successor
+          // without a durable stall terminal would be unexplainable.
+          console.warn(`[turn-revive] terminal event store failed for ${turn.id}:`, err instanceof Error ? err.message : err)
+          return { revived: true, continuationScheduled: false }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))
+      }
+    }
+
     // Resume the work when the turn left persisted authority behind
     // (workflow event / intake focus / checkpoint). Every #850 brake (hop
     // budget, dry-hop, halt marker, worker-down deferral) applies unchanged.
@@ -122,44 +159,22 @@ export async function reviveStalledInlineTurn(input: {
     } catch (err) {
       console.warn(`[turn-revive] continuation not scheduled for ${turn.id}:`, err instanceof Error ? err.message : err)
     }
+    const payload = continuationScheduled
+      ? { type: 'done', message: REVIVE_CONTINUED_MESSAGE }
+      : { type: 'error', message: REVIVE_TERMINAL_MESSAGE }
     if (!continuationScheduled) {
       // Dead end — no resume queued, so 'done' would be a lie. Only our own
-      // claim can hold 'done' here (the executor lost the CAS above).
+      // claim can hold 'done' here, and we own the provisional terminal row —
+      // both are downgraded to the honest error (Codex P2 #859 r2 contract:
+      // the durable terminal must agree with the settlement).
       await db.agentTurn.updateMany({
         where: { id: turn.id, status: 'done' },
         data: { status: 'error' },
       }).catch(() => {})
-    }
-
-    // Codex P2 #859 r2: the durable terminal must agree with the settlement —
-    // a continued turn ends 'done' with a done terminal (the successor turn
-    // carries the work on), a dead end ends 'error'. An error terminal on a
-    // continued turn made clients show a retry toast for work the server had
-    // already resumed.
-    const seq = (newest ? Number(newest.seq) : -1) + 1
-    const payload = continuationScheduled
-      ? { type: 'done', message: REVIVE_CONTINUED_MESSAGE }
-      : { type: 'error', message: REVIVE_TERMINAL_MESSAGE }
-    let stored = false
-    for (let attempt = 0; attempt < 3 && !stored; attempt++) {
-      try {
-        await db.agentTurnEvent.create({ data: { turnId: turn.id, seq, type: payload.type, payload } })
-        stored = true
-      } catch (err) {
-        if ((err as { code?: string })?.code === 'P2002') {
-          // Codex P2 #859: a seq collision means the executor wrote MORE
-          // events after our silence read — never stamp lastSeq backwards or
-          // publish an event that is not in the durable log. The status
-          // claim above already settles pollers; tails settle status-only.
-          console.warn(`[turn-revive] seq collision on ${turn.id} — executor wrote after silence read; skipping stamp/publish`)
-          return { revived: true, continuationScheduled }
-        }
-        if (attempt === 2) {
-          console.warn(`[turn-revive] terminal event store failed for ${turn.id}:`, err instanceof Error ? err.message : err)
-          return { revived: true, continuationScheduled }
-        }
-        await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))
-      }
+      await db.agentTurnEvent.update({
+        where: { turnId_seq: { turnId: turn.id, seq } },
+        data: { type: 'error', payload },
+      }).catch(() => {})
     }
     await db.agentTurn.updateMany({ where: { id: turn.id }, data: { lastSeq: seq } }).catch(() => {})
     await publishTurnTerminal(turn.id, seq, payload)

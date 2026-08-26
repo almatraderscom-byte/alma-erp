@@ -156,6 +156,24 @@ export interface TurnEventPublisher {
 
 const DEFAULT_DURABLE_RETRY_DELAYS_MS = [50, 200, 600]
 
+/** Canonical JSON (recursively sorted keys) — Postgres JSONB does not preserve
+ * object-key order, so a committed-but-lost insert read back on retry must be
+ * compared structurally, not byte-wise (Codex P2 #859 r10). */
+export function stableJson(value: unknown): string {
+  return JSON.stringify(sortKeysDeep(value))
+}
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysDeep)
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      out[key] = sortKeysDeep((value as Record<string, unknown>)[key])
+    }
+    return out
+  }
+  return value
+}
+
 export function createTurnEventPublisher(
   turnId: string,
   opts?: {
@@ -201,6 +219,11 @@ export function createTurnEventPublisher(
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const row = await (prisma as any).agentTurn.findUnique({ where: { id: turnId }, select: { status: true } })
+      // Re-check AFTER the await (Codex P2 #859 r10): a poll already in
+      // flight when suspendLease()/releaseLease() ran must not revoke off a
+      // status this executor just settled itself — stopping the interval
+      // cannot cancel a running query.
+      if (leaseReleased || leaseSuspended) return false
       if (row && row.status !== 'running') markRevoked()
     } catch { /* lease check is best-effort — the run continues */ }
     return revoked
@@ -277,7 +300,7 @@ export function createTurnEventPublisher(
               select: { type: true, payload: true },
             })
             if (existing && existing.type === event.type
-              && JSON.stringify(existing.payload) === JSON.stringify(event)) {
+              && stableJson(existing.payload) === stableJson(event)) {
               return true // our own earlier write landed — retry made it look new
             }
           } catch { /* fall through to revocation — never publish over a foreign row */ }

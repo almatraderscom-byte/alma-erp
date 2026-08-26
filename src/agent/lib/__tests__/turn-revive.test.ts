@@ -8,6 +8,7 @@ const prismaMock = vi.hoisted(() => ({
   agentTurnEvent: {
     findFirst: vi.fn(async () => null as unknown),
     create: vi.fn(async () => ({} as unknown)),
+    update: vi.fn(async () => ({} as unknown)),
   },
 }))
 vi.mock('@/lib/prisma', () => ({ prisma: prismaMock }))
@@ -37,6 +38,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   prismaMock.agentTurn.updateMany.mockResolvedValue({ count: 1 })
   prismaMock.agentTurnEvent.create.mockResolvedValue({})
+  prismaMock.agentTurnEvent.update.mockResolvedValue({})
   selfContinue.scheduleSelfContinue.mockResolvedValue({ scheduled: true, hops: 1 })
   delete process.env.AGENT_REOPEN_REVIVE_SILENT_MS
 })
@@ -50,12 +52,13 @@ describe('reviveStalledInlineTurn', () => {
 
     expect(res).toEqual({ revived: true, continuationScheduled: true })
     expect(selfContinue.scheduleSelfContinue).toHaveBeenCalledWith({ conversationId: 'conv-1', sourceTurnId: 'turn-1' })
-    // Codex P1 #859 r2: the CLAIM comes first (running→done, binding-valid),
-    // and only then is the continuation queued — a successor must never be
-    // enqueued while the real executor could still resume and finish.
+    // Ordering (Codex r2 + r10): claim CAS first, then the terminal insert
+    // (atomic log ownership), and only then is the continuation queued.
     const claimOrder = prismaMock.agentTurn.updateMany.mock.invocationCallOrder[0]
+    const insertOrder = prismaMock.agentTurnEvent.create.mock.invocationCallOrder[0]
     const scheduleOrder = selfContinue.scheduleSelfContinue.mock.invocationCallOrder[0]
-    expect(claimOrder).toBeLessThan(scheduleOrder)
+    expect(claimOrder).toBeLessThan(insertOrder)
+    expect(insertOrder).toBeLessThan(scheduleOrder)
     // The CAS pins the observed activity too (Codex P1 r6): status AND
     // lastSeq must both be unmoved for the claim to win.
     expect(prismaMock.agentTurn.updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
@@ -131,28 +134,32 @@ describe('reviveStalledInlineTurn', () => {
 
     expect(res).toEqual({ revived: true, continuationScheduled: false })
     // No resume queued: the claimed 'done' is downgraded to an honest 'error',
-    // and the terminal event matches it.
+    // and the provisional terminal row is rewritten to match (Codex r10 order:
+    // the row is created BEFORE the schedule outcome is known).
     expect(prismaMock.agentTurn.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
       where: { id: 'turn-1', status: 'done' },
       data: expect.objectContaining({ status: 'error' }),
     }))
-    expect(prismaMock.agentTurnEvent.create).toHaveBeenCalledWith(
+    expect(prismaMock.agentTurnEvent.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ type: 'error' }) }),
     )
   })
 
-  it('a seq collision (executor woke after the silence read) skips the stamp and publish', async () => {
+  it('a seq collision rolls the claim back and schedules NOTHING (Codex P1 r10)', async () => {
     prismaMock.agentTurn.findUnique.mockResolvedValue(runningTurn())
     prismaMock.agentTurnEvent.findFirst.mockResolvedValue({ seq: 51, createdAt: SILENT })
     prismaMock.agentTurnEvent.create.mockRejectedValue(Object.assign(new Error('unique'), { code: 'P2002' }))
 
     const res = await reviveStalledInlineTurn({ turnId: 'turn-1', conversationId: 'conv-1', now: NOW })
 
-    expect(res.revived).toBe(true)
-    // lastSeq was never stamped backwards, and nothing was published that is
-    // not in the durable log (Codex P2 #859). (The claim + downgrade-free
-    // continued path leaves exactly one row update.)
-    expect(prismaMock.agentTurn.updateMany).toHaveBeenCalledTimes(1)
+    expect(res.revived).toBe(false)
+    // The executor demonstrably wrote after the silence read: the claim is
+    // rolled back to running, no successor is ever queued, nothing published.
+    expect(selfContinue.scheduleSelfContinue).not.toHaveBeenCalled()
+    expect(prismaMock.agentTurn.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 'turn-1', status: 'done' },
+      data: expect.objectContaining({ status: 'running' }),
+    }))
     expect(watchdog.publishTurnTerminal).not.toHaveBeenCalled()
   })
 
