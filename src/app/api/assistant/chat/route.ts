@@ -1447,6 +1447,7 @@ export async function POST(req: NextRequest) {
             // so a recovering client fetches one message, not the whole history.
             const doneMessageId = (event as { messageId?: string }).messageId
             if (doneMessageId && turnId) await linkTurnAssistantMessage(turnId, doneMessageId)
+            durable?.releaseLease()
             await finalizeTurnIfRunning(turnId, 'done', { continuationNeeded: event.needContinue === true })
             streamTerminalStamped = true
             void traceTurnStage(turnId, 'turn_done', 'done').catch(() => {})
@@ -1507,6 +1508,7 @@ export async function POST(req: NextRequest) {
             break
           }
           if (event.type === 'error') {
+            durable?.releaseLease()
             await finalizeTurnIfRunning(turnId, 'error')
             break
           }
@@ -1556,6 +1558,7 @@ export async function POST(req: NextRequest) {
         // Safety net: if the turn ended without done/error (hard-cap timeout or a
         // crash), leave it marked error rather than stuck 'running'. No-op if the
         // turn already reached a terminal status (done / canceled by Stop).
+        durable?.releaseLease()
         await finalizeTurnIfRunning(turnId, 'error')
         // P0-2: close the trace here too. A turn killed by the hard cap is the
         // WORST wait Boss experiences, and it was the one the split could not

@@ -141,6 +141,11 @@ export interface TurnEventPublisher {
   finish(): Promise<number>
   /** Events that could not be stored durably (and were therefore not published). */
   durabilityHoles(): number
+  /** End the revocation lease because THIS executor is settling normally —
+   * called before finalizeTurnIfRunning so the lease poll cannot mistake our
+   * own terminal status for a foreign claim and drop the still-pending
+   * durable tail (Codex P2 #859 r6). Idempotent. */
+  releaseLease(): void
 }
 
 const DEFAULT_DURABLE_RETRY_DELAYS_MS = [50, 200, 600]
@@ -167,9 +172,11 @@ export function createTurnEventPublisher(
   const revokeCheckMs = Math.max(opts?.revokeCheckMs ?? 10_000, 25)
   let lastRevokeCheck = Date.now()
   let revoked = false
+  let leaseReleased = false
   let leaseTimer: ReturnType<typeof setInterval> | null = null
 
   function markRevoked() {
+    if (leaseReleased) return
     revoked = true
     stopLeaseTimer()
     try { onRevoked?.() } catch { /* abort callback must not break the chain */ }
@@ -181,6 +188,7 @@ export function createTurnEventPublisher(
 
   /** One row-status lease read. Shared by the timer and the write chain. */
   async function pollLeaseNow(): Promise<boolean> {
+    if (leaseReleased) return false
     if (revoked) return true
     lastRevokeCheck = Date.now()
     try {
@@ -203,7 +211,7 @@ export function createTurnEventPublisher(
   /** Throttled chain-side lease check (the timer does the steady polling). */
   async function leaseRevoked(): Promise<boolean> {
     if (revoked) return true
-    if (!onRevoked) return false
+    if (leaseReleased || !onRevoked) return false
     if (Date.now() - lastRevokeCheck < revokeCheckMs) return false
     return pollLeaseNow()
   }
@@ -267,6 +275,9 @@ export function createTurnEventPublisher(
             }
           } catch { /* fall through to revocation — never publish over a foreign row */ }
           markRevoked()
+          // Even after releaseLease, a foreign row at this seq must never be
+          // shadowed — the write is dropped either way.
+          revoked = true
           return false
         }
         lastError = err
@@ -352,7 +363,12 @@ export function createTurnEventPublisher(
       flushDelta()       // control events land AFTER the prose that preceded them
       writeRow(event)
     },
+    releaseLease() {
+      leaseReleased = true
+      stopLeaseTimer()
+    },
     async finish() {
+      leaseReleased = true
       stopLeaseTimer()
       flushDelta()
       await chain

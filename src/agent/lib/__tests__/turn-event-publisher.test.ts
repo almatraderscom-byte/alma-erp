@@ -82,9 +82,12 @@ describe('Phase 3 — createTurnEventPublisher', () => {
     const revokedFn = vi.fn()
     const pub = createTurnEventPublisher('t-foreign', { coalesceMs: 1, revokeCheckMs: 60_000, onRevoked: revokedFn })
     pub.emit({ type: 'tool_start', id: 'z', name: 'get_orders' })
+    // Let the write chain hit the foreign row while the run is still live —
+    // finish() itself releases the lease (normal settlement).
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(revokedFn).toHaveBeenCalled()
     await pub.finish()
 
-    expect(revokedFn).toHaveBeenCalled()
     // The foreign terminal still owns seq 0 — our payload never replaced or
     // shadowed it, and the drop is not counted as a durability hole.
     expect(rows.filter((r) => r.turnId === 't-foreign')).toHaveLength(1)
@@ -103,6 +106,22 @@ describe('Phase 3 — createTurnEventPublisher', () => {
     const lastSeq = await pub2.finish()
     expect(lastSeq).toBe(0)
     expect(pub2.durabilityHoles()).toBe(0)
+  })
+
+  it('releaseLease lets a normally-settling executor flush its tail even after the row is finalized', async () => {
+    const revokedFn = vi.fn()
+    const pub = createTurnEventPublisher('t-release', { coalesceMs: 1, revokeCheckMs: 25, onRevoked: revokedFn })
+    // Normal completion order: releaseLease → finalize (status leaves
+    // 'running') → the durable tail still flushing (Codex P2 #859 r6).
+    pub.releaseLease()
+    leaseState.status = 'done'
+    pub.emit({ type: 'done', message: 'ok' })
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    await pub.finish()
+
+    expect(revokedFn).not.toHaveBeenCalled()
+    expect(rows.filter((r) => r.turnId === 't-release')).toHaveLength(1)
+    expect(pub.durabilityHoles()).toBe(0)
   })
 
   it('a healthy running row is untouched by the lease check', async () => {

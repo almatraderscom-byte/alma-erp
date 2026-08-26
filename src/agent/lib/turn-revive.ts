@@ -57,7 +57,7 @@ export async function reviveStalledInlineTurn(input: {
     const now = input.now ?? new Date()
     const turn = await db.agentTurn.findUnique({
       where: { id: input.turnId },
-      select: { id: true, conversationId: true, status: true, executionMode: true, startedAt: true },
+      select: { id: true, conversationId: true, status: true, executionMode: true, startedAt: true, lastSeq: true },
     })
     if (!turn || turn.status !== 'running') return NONE
     if (turn.conversationId !== input.conversationId) return NONE
@@ -87,8 +87,14 @@ export async function reviveStalledInlineTurn(input: {
     // continuation source — Codex P1 r1); losing it means the executor
     // settled and its own terminal is the truth. If no resume ends up
     // queued, the row is downgraded to an honest 'error' below.
+    // Codex P1 #859 r6: the CAS also pins the observed activity — if the
+    // executor stamped ANY newer event between our silence read and this
+    // claim, lastSeq has advanced and the claim fails, so a demonstrably
+    // resumed executor is never settled out from under. (The publisher-side
+    // lease + atomic append close the stamp-lag remainder from the other
+    // side.)
     const claimed = await db.agentTurn.updateMany({
-      where: { id: turn.id, status: 'running' },
+      where: { id: turn.id, status: 'running', lastSeq: turn.lastSeq },
       data: { status: 'done', finishedAt: now },
     })
     if (!claimed?.count) return NONE

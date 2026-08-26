@@ -30,7 +30,7 @@ const FRESH = new Date(NOW.getTime() - 30 * 1000)
 
 const runningTurn = (over: Record<string, unknown> = {}) => ({
   id: 'turn-1', conversationId: 'conv-1', status: 'running',
-  executionMode: 'inline', startedAt: SILENT, ...over,
+  executionMode: 'inline', startedAt: SILENT, lastSeq: 51, ...over,
 })
 
 beforeEach(() => {
@@ -56,8 +56,10 @@ describe('reviveStalledInlineTurn', () => {
     const claimOrder = prismaMock.agentTurn.updateMany.mock.invocationCallOrder[0]
     const scheduleOrder = selfContinue.scheduleSelfContinue.mock.invocationCallOrder[0]
     expect(claimOrder).toBeLessThan(scheduleOrder)
+    // The CAS pins the observed activity too (Codex P1 r6): status AND
+    // lastSeq must both be unmoved for the claim to win.
     expect(prismaMock.agentTurn.updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      where: { id: 'turn-1', status: 'running' },
+      where: { id: 'turn-1', status: 'running', lastSeq: 51 },
       data: expect.objectContaining({ status: 'done' }),
     }))
     // Codex P2 #859 r2: a continued turn's terminal agrees with the 'done'
@@ -160,6 +162,19 @@ describe('reviveStalledInlineTurn', () => {
     expect(prismaMock.agentTurnEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ seq: 0 }) }),
     )
+  })
+
+  it('an executor that stamped a newer event after the silence read wins — the lastSeq CAS fails', async () => {
+    prismaMock.agentTurn.findUnique.mockResolvedValue(runningTurn({ lastSeq: 51 }))
+    prismaMock.agentTurnEvent.findFirst.mockResolvedValue({ seq: 51, createdAt: SILENT })
+    // Row now carries lastSeq 52 — updateMany with lastSeq:51 matches nothing.
+    prismaMock.agentTurn.updateMany.mockResolvedValueOnce({ count: 0 })
+
+    const res = await reviveStalledInlineTurn({ turnId: 'turn-1', conversationId: 'conv-1', now: NOW })
+
+    expect(res.revived).toBe(false)
+    expect(selfContinue.scheduleSelfContinue).not.toHaveBeenCalled()
+    expect(prismaMock.agentTurnEvent.create).not.toHaveBeenCalled()
   })
 
   it('reviveSilentMs floors the env override', () => {
