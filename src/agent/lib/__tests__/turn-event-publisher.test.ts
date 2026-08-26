@@ -14,6 +14,8 @@ const rows: Row[] = []
 const turnUpdates: Array<{ id: string; lastSeq: number }> = []
 /** Per-test failure injection for the durable write (R-3 fail-closed tests). */
 const upsertFailures = { remaining: 0, attempts: 0 }
+/** Row status served to the publisher's revocation-lease check. */
+const leaseState = { status: 'running' }
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
@@ -34,6 +36,7 @@ vi.mock('@/lib/prisma', () => ({
         turnUpdates.push({ id: where.id, lastSeq: data.lastSeq })
         return { count: 1 }
       },
+      findUnique: async () => ({ status: leaseState.status }),
     },
   },
 }))
@@ -45,11 +48,35 @@ beforeEach(() => {
   turnUpdates.length = 0
   upsertFailures.remaining = 0
   upsertFailures.attempts = 0
+  leaseState.status = 'running'
   delete process.env.REDIS_URL
   delete process.env.LONG_TASK_REDIS_URL
 })
 
 describe('Phase 3 — createTurnEventPublisher', () => {
+  it('a revoked lease (row claimed away from running) drops the write and fires the abort', async () => {
+    leaseState.status = 'error'
+    const revokedFn = vi.fn()
+    const pub = createTurnEventPublisher('t-lease', { coalesceMs: 1, revokeCheckMs: 0, onRevoked: revokedFn })
+    pub.emit({ type: 'tool_start', id: 'x', name: 'check_mac_command' })
+    pub.emit({ type: 'tool_end', id: 'x' })
+    await pub.finish()
+
+    expect(revokedFn).toHaveBeenCalled()
+    // Nothing may land after the claiming writer's terminal (Codex P1 #859 r4).
+    expect(rows.filter((r) => r.turnId === 't-lease')).toHaveLength(0)
+  })
+
+  it('a healthy running row is untouched by the lease check', async () => {
+    const revokedFn = vi.fn()
+    const pub = createTurnEventPublisher('t-lease2', { coalesceMs: 1, revokeCheckMs: 0, onRevoked: revokedFn })
+    pub.emit({ type: 'tool_start', id: 'y', name: 'get_sales_summary' })
+    await pub.finish()
+
+    expect(revokedFn).not.toHaveBeenCalled()
+    expect(rows.filter((r) => r.turnId === 't-lease2')).toHaveLength(1)
+  })
+
   it('coalesces adjacent deltas and flushes them BEFORE a control event', async () => {
     const pub = createTurnEventPublisher('t1', { coalesceMs: 5_000 })
     pub.emit({ type: 'text_delta', delta: 'আজ' })

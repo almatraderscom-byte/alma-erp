@@ -61,7 +61,12 @@ export async function reviveStalledInlineTurn(input: {
     })
     if (!turn || turn.status !== 'running') return NONE
     if (turn.conversationId !== input.conversationId) return NONE
-    if (turn.executionMode && turn.executionMode !== 'inline') return NONE
+    // Codex P1 #859 r4: ONLY explicitly-inline rows. A null mode is not
+    // inline — worker-bound continuations are bound without a mode stamp
+    // (approval-continuation), and a legitimate worker slice may sit quiet
+    // far longer than the inline window. Unknown modes stay with the
+    // slice-aware watchdog.
+    if (turn.executionMode !== 'inline') return NONE
 
     const newest = await db.agentTurnEvent.findFirst({
       where: { turnId: turn.id },

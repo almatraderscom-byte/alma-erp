@@ -147,11 +147,44 @@ const DEFAULT_DURABLE_RETRY_DELAYS_MS = [50, 200, 600]
 
 export function createTurnEventPublisher(
   turnId: string,
-  opts?: { coalesceMs?: number; maxDeltaChars?: number; retryDelaysMs?: number[] },
+  opts?: {
+    coalesceMs?: number
+    maxDeltaChars?: number
+    retryDelaysMs?: number[]
+    /** Execution-revocation lease (Codex P1 #859 r4): when the turn row has
+     * been claimed away from 'running' (reopen revive, watchdog), the next
+     * durable write past the check interval detects it, drops the write —
+     * nothing may land after another writer's terminal — and fires this so
+     * the executor aborts instead of running further side effects. */
+    onRevoked?: () => void
+    revokeCheckMs?: number
+  },
 ): TurnEventPublisher {
   const coalesceMs = opts?.coalesceMs ?? 350
   const maxDeltaChars = opts?.maxDeltaChars ?? 2000
   const retryDelaysMs = opts?.retryDelaysMs ?? DEFAULT_DURABLE_RETRY_DELAYS_MS
+  const onRevoked = opts?.onRevoked
+  const revokeCheckMs = opts?.revokeCheckMs ?? 10_000
+  let lastRevokeCheck = Date.now()
+  let revoked = false
+
+  /** Throttled row-status lease check. Only active when onRevoked is wired. */
+  async function leaseRevoked(): Promise<boolean> {
+    if (revoked) return true
+    if (!onRevoked) return false
+    const nowMs = Date.now()
+    if (nowMs - lastRevokeCheck < revokeCheckMs) return false
+    lastRevokeCheck = nowMs
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const row = await (prisma as any).agentTurn.findUnique({ where: { id: turnId }, select: { status: true } })
+      if (row && row.status !== 'running') {
+        revoked = true
+        try { onRevoked() } catch { /* abort callback must not break the chain */ }
+      }
+    } catch { /* lease check is best-effort — the run continues */ }
+    return revoked
+  }
   let seq = -1
   let holes = 0
   /** A `done`/`error` whose durable write failed every attempt (type kept for the repair). */
@@ -208,6 +241,9 @@ export function createTurnEventPublisher(
     seq += 1
     const mySeq = seq
     chain = chain.then(async () => {
+      // Revoked lease: another writer (reopen revive / watchdog) owns the
+      // terminal now — nothing more may be stored or published after it.
+      if (await leaseRevoked()) return
       // Reliability epic R-3 (handoff F-09): durable FIRST; an event that could
       // not be stored is neither published nor counted in lastSeq — the live
       // tail and the replay log must never disagree about what happened.

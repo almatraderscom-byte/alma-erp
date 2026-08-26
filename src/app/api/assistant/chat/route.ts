@@ -1357,7 +1357,13 @@ export async function POST(req: NextRequest) {
   // (agent_turn_events + Redis live channel + AgentTurn.lastSeq), so a client that
   // reconnects mid-turn replays from its cursor instead of waiting for polls.
   // Internal (worker-driven) calls skip it: the worker mirrors events itself.
-  const durable = !isInternalCall && turnId ? createTurnEventPublisher(turnId) : null
+  // The publisher doubles as the execution-revocation lease (Codex P1 #859
+  // r4): if the reopen revive or the watchdog claims this turn away, the next
+  // durable write detects it and this abort stops the generator + tools
+  // instead of letting side effects run twice behind a foreign terminal.
+  const durable = !isInternalCall && turnId
+    ? createTurnEventPublisher(turnId, { onRevoked: () => turnAbort.abort() })
+    : null
   const stream = new ReadableStream({
     async start(controller) {
       // CRITICAL (owner bug 2026-07-12, "app close = kaj theme jay"): once the

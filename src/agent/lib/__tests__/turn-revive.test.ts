@@ -88,6 +88,15 @@ describe('reviveStalledInlineTurn', () => {
     expect(prismaMock.agentTurnEvent.findFirst).not.toHaveBeenCalled()
   })
 
+  it('a NULL execution mode is not inline — worker-bound continuations are bound without a stamp (Codex P1 r4)', async () => {
+    prismaMock.agentTurn.findUnique.mockResolvedValue(runningTurn({ executionMode: null }))
+
+    const res = await reviveStalledInlineTurn({ turnId: 'turn-1', conversationId: 'conv-1', now: NOW })
+
+    expect(res.revived).toBe(false)
+    expect(prismaMock.agentTurnEvent.findFirst).not.toHaveBeenCalled()
+  })
+
   it('losing the claim CAS means the real executor settled — nothing is queued or written', async () => {
     prismaMock.agentTurn.findUnique.mockResolvedValue(runningTurn())
     prismaMock.agentTurnEvent.findFirst.mockResolvedValue({ seq: 51, createdAt: SILENT })
