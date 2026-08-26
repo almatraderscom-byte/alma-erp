@@ -93,30 +93,46 @@ export async function reviveStalledInlineTurn(input: {
     // Claim-first CAS — identical semantics to the watchdog reap: losing the
     // claim means the real executor settled in the meantime, and its own
     // terminal (plus any continuation it scheduled) is the truth.
+    // Codex P1 #859: when a continuation WAS queued, the source must settle
+    // as 'done', not 'error' — buildSelfContinueBinding and the worker's
+    // claimContinuationExecution both revalidate the source status against
+    // running/done, so an 'error' source would reject the queued hop with
+    // continuation_source_status_mismatch and the work would never resume.
+    // This mirrors the deadline salvage, which also ends a continued turn
+    // 'done'. Only a dead end (no resume queued) settles as 'error'.
+    const settledStatus = continuationScheduled ? 'done' : 'error'
     const claimed = await db.agentTurn.updateMany({
       where: { id: turn.id, status: 'running' },
-      data: { status: 'error', finishedAt: now },
+      data: { status: settledStatus, finishedAt: now },
     })
     if (!claimed?.count) return NONE
 
     const seq = (newest ? Number(newest.seq) : -1) + 1
     const payload = { type: 'error', message: REVIVE_TERMINAL_MESSAGE }
-    for (let attempt = 0; attempt < 3; attempt++) {
+    let stored = false
+    for (let attempt = 0; attempt < 3 && !stored; attempt++) {
       try {
         await db.agentTurnEvent.create({ data: { turnId: turn.id, seq, type: 'error', payload } })
-        break
+        stored = true
       } catch (err) {
-        if ((err as { code?: string })?.code === 'P2002') break // racing writer took the seq
+        if ((err as { code?: string })?.code === 'P2002') {
+          // Codex P2 #859: a seq collision means the executor wrote MORE
+          // events after our silence read — never stamp lastSeq backwards or
+          // publish an event that is not in the durable log. The status
+          // claim above already settles pollers; tails settle status-only.
+          console.warn(`[turn-revive] seq collision on ${turn.id} — executor wrote after silence read; skipping stamp/publish`)
+          return { revived: true, continuationScheduled }
+        }
         if (attempt === 2) {
           console.warn(`[turn-revive] terminal event store failed for ${turn.id}:`, err instanceof Error ? err.message : err)
-          break
+          return { revived: true, continuationScheduled }
         }
         await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))
       }
     }
     await db.agentTurn.updateMany({ where: { id: turn.id }, data: { lastSeq: seq } }).catch(() => {})
     await publishTurnTerminal(turn.id, seq, payload)
-    console.warn(`[turn-revive] settled silent inline turn ${turn.id} (last activity ${lastActivity.toISOString()}, continuation=${continuationScheduled})`)
+    console.warn(`[turn-revive] settled silent inline turn ${turn.id} as ${settledStatus} (last activity ${lastActivity.toISOString()}, continuation=${continuationScheduled})`)
     return { revived: true, continuationScheduled }
   } catch (err) {
     console.warn('[turn-revive] revive failed:', err instanceof Error ? err.message : err)

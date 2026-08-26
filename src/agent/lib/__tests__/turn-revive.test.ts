@@ -50,6 +50,11 @@ describe('reviveStalledInlineTurn', () => {
 
     expect(res).toEqual({ revived: true, continuationScheduled: true })
     expect(selfContinue.scheduleSelfContinue).toHaveBeenCalledWith({ conversationId: 'conv-1', sourceTurnId: 'turn-1' })
+    // Codex P1 #859: a queued continuation revalidates the SOURCE status as
+    // running/done — settling 'error' would reject the hop, so it ends 'done'.
+    expect(prismaMock.agentTurn.updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      data: expect.objectContaining({ status: 'done' }),
+    }))
     // schedule happened BEFORE the status flip (binding requires running/done)
     const scheduleOrder = selfContinue.scheduleSelfContinue.mock.invocationCallOrder[0]
     const claimOrder = prismaMock.agentTurn.updateMany.mock.invocationCallOrder[0]
@@ -100,6 +105,24 @@ describe('reviveStalledInlineTurn', () => {
 
     expect(res).toEqual({ revived: true, continuationScheduled: false })
     expect(prismaMock.agentTurnEvent.create).toHaveBeenCalled()
+    // No resume queued: a dead end settles honestly as an error.
+    expect(prismaMock.agentTurn.updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      data: expect.objectContaining({ status: 'error' }),
+    }))
+  })
+
+  it('a seq collision (executor woke after the silence read) skips the stamp and publish', async () => {
+    prismaMock.agentTurn.findUnique.mockResolvedValue(runningTurn())
+    prismaMock.agentTurnEvent.findFirst.mockResolvedValue({ seq: 51, createdAt: SILENT })
+    prismaMock.agentTurnEvent.create.mockRejectedValue(Object.assign(new Error('unique'), { code: 'P2002' }))
+
+    const res = await reviveStalledInlineTurn({ turnId: 'turn-1', conversationId: 'conv-1', now: NOW })
+
+    expect(res.revived).toBe(true)
+    // Only the claim CAS touched the row — lastSeq was never stamped backwards,
+    // and nothing was published that is not in the durable log (Codex P2 #859).
+    expect(prismaMock.agentTurn.updateMany).toHaveBeenCalledTimes(1)
+    expect(watchdog.publishTurnTerminal).not.toHaveBeenCalled()
   })
 
   it('a conversation mismatch never touches the turn', async () => {
