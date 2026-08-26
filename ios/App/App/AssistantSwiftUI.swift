@@ -3840,9 +3840,18 @@ final class AssistantVM {
     /// conversation therefore cannot truthfully execute in parallel; serialize
     /// them until the first exact progress turn is terminal.
     private var approvalExecutionOwnerByConversation: [String: String] = [:]
-    /// Transport lost while the server turn (presumably) still runs — drives the
-    /// truthful "কাজ চলছে — সংযোগ ফিরছে…" label instead of an error (Phase 1.1).
-    var reconnecting = false
+    /// Transport lost while the server turn (presumably) still runs. The inline
+    /// sync row (bounded by the 12s ceiling) is the visible face of this state
+    /// (owner 2026-08-26); past the ceiling the stall-retry ladder text in the
+    /// thinking row is what keeps the state truthful.
+    var reconnecting = false {
+        didSet {
+            // Codex P2 #859 r3: the row renders from reopenSyncPending ONLY —
+            // a transport drop routes through the same bounded begin/resolve
+            // arc instead of an unbounded (isStreaming && reconnecting) gate.
+            if reconnecting && !oldValue { beginReopenSyncIfActive() }
+        }
+    }
     /// Reopen-sync performance (owner spec 2026-08-26, web parity): coming back
     /// to a RUNNING conversation shows the ONE session loader while recovery
     /// re-syncs with the server, then dismisses the moment fresh truth lands.
@@ -27243,7 +27252,7 @@ struct AssistantScreen: View {
                         // Reopen-over-a-running-turn sync: Claude-style inline
                         // ghost row at the thread tail while server truth
                         // arrives; resolve (or the VM's 12s ceiling) removes it.
-                        if vm.reopenSyncPending || (vm.isStreaming && vm.reconnecting) {
+                        if vm.reopenSyncPending {
                             AgentReopenSyncInlineRow(pal: pal)
                                 .id("ALMA_REOPEN_SYNC")
                         }
