@@ -358,10 +358,10 @@ export async function finalizeTurnIfRunning(
   turnId: string | null,
   status: Exclude<TurnStatus, 'running'>,
   options: { continuationNeeded?: boolean } = {},
-): Promise<void> {
-  if (!turnId) return
+): Promise<boolean> {
+  if (!turnId) return false
   try {
-    await db().agentTurn.updateMany({
+    const updated = await db().agentTurn.updateMany({
       where: { id: turnId, status: 'running' },
       data: {
         status,
@@ -369,8 +369,12 @@ export async function finalizeTurnIfRunning(
         continuationNeeded: status === 'done' && options.continuationNeeded === true,
       },
     })
+    // True only when THIS caller settled the row — a lost CAS means another
+    // writer (reopen revive, watchdog) owns the terminal (Codex P1 #859 r8).
+    return Number(updated?.count ?? 0) > 0
   } catch (err) {
     console.warn('[turn-status] finalizeTurnIfRunning failed:', err instanceof Error ? err.message : err)
+    return false
   }
 }
 

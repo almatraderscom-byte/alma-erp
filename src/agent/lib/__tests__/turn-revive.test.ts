@@ -59,7 +59,7 @@ describe('reviveStalledInlineTurn', () => {
     // The CAS pins the observed activity too (Codex P1 r6): status AND
     // lastSeq must both be unmoved for the claim to win.
     expect(prismaMock.agentTurn.updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      where: { id: 'turn-1', status: 'running', lastSeq: 51 },
+      where: { id: 'turn-1', status: 'running', lastSeq: 51, cancelRequested: false },
       data: expect.objectContaining({ status: 'done' }),
     }))
     // Codex P2 #859 r2: a continued turn's terminal agrees with the 'done'

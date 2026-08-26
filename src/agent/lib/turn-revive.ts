@@ -100,7 +100,10 @@ export async function reviveStalledInlineTurn(input: {
     // lease + atomic append close the stamp-lag remainder from the other
     // side.)
     const claimed = await db.agentTurn.updateMany({
-      where: { id: turn.id, status: 'running', lastSeq: turn.lastSeq },
+      // cancelRequested is pinned IN the CAS (Codex P2 #859 r8): a Stop that
+      // lands between the read above and this claim parks the turn with the
+      // cancellation drain, and the claim must lose to it atomically.
+      where: { id: turn.id, status: 'running', lastSeq: turn.lastSeq, cancelRequested: false },
       data: { status: 'done', finishedAt: now },
     })
     if (!claimed?.count) return NONE

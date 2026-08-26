@@ -141,11 +141,17 @@ export interface TurnEventPublisher {
   finish(): Promise<number>
   /** Events that could not be stored durably (and were therefore not published). */
   durabilityHoles(): number
-  /** End the revocation lease because THIS executor is settling normally —
-   * called before finalizeTurnIfRunning so the lease poll cannot mistake our
-   * own terminal status for a foreign claim and drop the still-pending
-   * durable tail (Codex P2 #859 r6). Idempotent. */
+  /** End the revocation lease because THIS executor WON its settle CAS —
+   * after this the lease poll cannot mistake our own terminal status for a
+   * foreign claim and drop the still-pending durable tail (Codex P2 #859
+   * r6). Only call once terminal ownership is won (Codex P1 r8). Idempotent. */
   releaseLease(): void
+  /** Pause lease polling across the settle window: no reads, no revocations,
+   * no drops. The caller then finalizes and reports the outcome — a won CAS
+   * calls releaseLease(), a lost one calls revokeNow() (Codex P1 #859 r8). */
+  suspendLease(): void
+  /** A foreign writer owns the terminal — drop everything still pending. */
+  revokeNow(): void
 }
 
 const DEFAULT_DURABLE_RETRY_DELAYS_MS = [50, 200, 600]
@@ -173,6 +179,7 @@ export function createTurnEventPublisher(
   let lastRevokeCheck = Date.now()
   let revoked = false
   let leaseReleased = false
+  let leaseSuspended = false
   let leaseTimer: ReturnType<typeof setInterval> | null = null
 
   function markRevoked() {
@@ -188,7 +195,7 @@ export function createTurnEventPublisher(
 
   /** One row-status lease read. Shared by the timer and the write chain. */
   async function pollLeaseNow(): Promise<boolean> {
-    if (leaseReleased) return false
+    if (leaseReleased || leaseSuspended) return false
     if (revoked) return true
     lastRevokeCheck = Date.now()
     try {
@@ -211,7 +218,7 @@ export function createTurnEventPublisher(
   /** Throttled chain-side lease check (the timer does the steady polling). */
   async function leaseRevoked(): Promise<boolean> {
     if (revoked) return true
-    if (leaseReleased || !onRevoked) return false
+    if (leaseReleased || leaseSuspended || !onRevoked) return false
     if (Date.now() - lastRevokeCheck < revokeCheckMs) return false
     return pollLeaseNow()
   }
@@ -317,8 +324,10 @@ export function createTurnEventPublisher(
         console.warn(`[turn-events] live publish seq=${mySeq} failed:`, err instanceof Error ? err.message : err)
       }
       try {
+        // Monotonic guard (Codex P1 #859 r8): a late pre-terminal append must
+        // never move lastSeq backwards past a foreign terminal's stamp.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (prisma as any).agentTurn.updateMany({ where: { id: turnId }, data: { lastSeq: mySeq } })
+        await (prisma as any).agentTurn.updateMany({ where: { id: turnId, lastSeq: { lt: mySeq } }, data: { lastSeq: mySeq } })
       } catch {
         /* lastSeq is advisory — replay still works from the rows themselves */
       }
@@ -365,7 +374,16 @@ export function createTurnEventPublisher(
     },
     releaseLease() {
       leaseReleased = true
+      leaseSuspended = false
       stopLeaseTimer()
+    },
+    suspendLease() {
+      leaseSuspended = true
+      stopLeaseTimer()
+    },
+    revokeNow() {
+      leaseSuspended = false
+      markRevoked()
     },
     async finish() {
       leaseReleased = true
