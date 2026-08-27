@@ -477,3 +477,20 @@ describe('startEscalationLadder — abroad toggle picks the primary channel (own
     expect(mockNotify.notifyOwner).toHaveBeenCalled()
   })
 })
+
+describe('startEscalationLadder — claim defers the cron re-check', () => {
+  it('the claim itself pushes nextCheckAt forward so a cron tick mid-dial cannot double-ladder', async () => {
+    mockPrisma.agentCallEscalation.findUnique.mockResolvedValue({
+      id: 'esc-claim', trigger: 'manual', refId: 'claim-ref', title: 't', purpose: 'p',
+      status: 'queued', createdAt: new Date(), nextCheckAt: new Date(Date.now() - 1000),
+      appCallId: null, waCallId: null, pstnCallId: null, approvalActionId: null,
+    })
+    mockPrisma.agentCallEscalation.updateMany.mockResolvedValue({ count: 1 })
+    mockVoiceCall.placeOutboundCall.mockResolvedValue({ ok: true, callRecordId: 'call-wa' })
+    const before = Date.now()
+    await startEscalationLadder('esc-claim')
+    const claim = mockPrisma.agentCallEscalation.updateMany.mock.calls[0][0]
+    expect(claim.data.status).toBe('app_ringing')
+    expect(claim.data.nextCheckAt.getTime()).toBeGreaterThanOrEqual(before + 60_000)
+  })
+})

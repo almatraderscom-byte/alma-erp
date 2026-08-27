@@ -307,10 +307,15 @@ export async function startEscalationLadder(id: string, cfg?: ProactiveCallConfi
   const config = cfg ?? await getProactiveCallConfig()
   const row = await db.agentCallEscalation.findUnique({ where: { id } })
   if (!row) return { ok: false, error: 'not_found' }
-  // Claim so a racing cron tick / double tap can't double-dial.
+  // Claim so a racing cron tick / double tap can't double-dial. nextCheckAt is
+  // pushed forward IN the claim (review-bot P2): the row sits at 'app_ringing'
+  // with no appCallId while the (slow) provider dial below is in flight, and a
+  // cron tick landing then would read that as a failed app ring and start a
+  // second ladder. The dial paths overwrite nextCheckAt with their own stage
+  // timers; if this call crashes mid-dial, the cron recovers after the window.
   const claimed = await db.agentCallEscalation.updateMany({
     where: { id, status: { in: ['queued', 'awaiting_approval'] } },
-    data: { status: 'app_ringing', firstCallAt: new Date() },
+    data: { status: 'app_ringing', firstCallAt: new Date(), nextCheckAt: new Date(Date.now() + APP_RING_CHECK_MS) },
   })
   if (claimed.count !== 1) return { ok: false, error: 'already_started' }
 
