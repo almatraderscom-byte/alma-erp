@@ -314,7 +314,14 @@ export async function startEscalationLadder(id: string, cfg?: ProactiveCallConfi
   })
   if (claimed.count !== 1) return { ok: false, error: 'already_started' }
 
-  // Stage 0 (plan C3): ring the owner's own APP first — a WhatsApp-style CallKit
+  // Owner rule 2026-08-27: the abroad toggle picks the PRIMARY channel, not just
+  // a phone-leg block. In BD (toggle OFF) calls go to his number like before —
+  // WhatsApp → PSTN; the app ring is the abroad path.
+  const { isOwnerAbroadCallsOff } = await import('@/lib/owner-abroad')
+  const abroad = await isOwnerAbroadCallsOff().catch(() => false)
+  if (!abroad) return dialPhoneLegs(id, row, config, 'in-country: phone first')
+
+  // Stage 0 abroad (plan C3): ring the owner's own APP — a WhatsApp-style CallKit
   // ring that works anywhere with internet (incl. UAE where WhatsApp calls are
   // blocked) and costs nothing. Phone legs only when the app can't be rung.
   const { ringOwnerApp } = await import('@/agent/lib/agent-app-call')
@@ -346,8 +353,8 @@ export async function startEscalationLadder(id: string, cfg?: ProactiveCallConfi
 }
 
 /**
- * The legacy WhatsApp → PSTN legs (stage 1/2), shared by the start path (app
- * ring unavailable) and the app-ring timeout path. When the owner-abroad
+ * The WhatsApp → PSTN legs — the PRIMARY path when the owner is in BD, and the
+ * fallback for the abroad app-ring path (unavailable/timeout). When the owner-abroad
  * toggle is ON these legs are pointless — his BD number is unreachable — so
  * the ladder resolves straight to a push with an honest reason.
  */

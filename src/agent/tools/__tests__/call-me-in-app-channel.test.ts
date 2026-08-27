@@ -1,0 +1,84 @@
+/**
+ * Owner rule 2026-08-27: bare "কল দাও" follows the abroad toggle — in BD the
+ * boss's NUMBER rings (WhatsApp → PSTN ladder), abroad (or explicit app ask)
+ * the ALMA app rings. These tests pin the call_me_in_app routing contract.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+const mockPrisma = vi.hoisted(() => ({
+  agentKvSetting: { findUnique: vi.fn() },
+  agentCallEscalation: { findFirst: vi.fn() },
+}))
+vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
+
+vi.mock('@/agent/lib/urgent-rate-limit', () => ({ checkOutboundCallRateLimit: vi.fn().mockResolvedValue({ ok: true }) }))
+
+const mockAppCall = vi.hoisted(() => ({
+  ringOwnerApp: vi.fn(),
+  agentAppCallEnabled: vi.fn().mockReturnValue(true),
+}))
+vi.mock('@/agent/lib/agent-app-call', () => mockAppCall)
+
+const mockLadder = vi.hoisted(() => ({
+  queueCallEscalation: vi.fn(),
+  startEscalationLadder: vi.fn(),
+}))
+vi.mock('@/agent/lib/proactive-call', () => mockLadder)
+
+import { call_me_in_app } from '../personal-tools'
+
+const abroadKv = (on: boolean) =>
+  mockPrisma.agentKvSetting.findUnique.mockImplementation(({ where }: { where: { key: string } }) =>
+    Promise.resolve(where.key === 'owner_abroad_calls_off' && on ? { value: 'true' } : null),
+  )
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockAppCall.agentAppCallEnabled.mockReturnValue(true)
+  mockAppCall.ringOwnerApp.mockResolvedValue({ ok: true, callId: 'app-1' })
+  mockPrisma.agentCallEscalation.findFirst.mockResolvedValue(null)
+  mockLadder.queueCallEscalation.mockResolvedValue('esc-1')
+  mockLadder.startEscalationLadder.mockResolvedValue({ ok: true, stage: 'wa_calling' })
+})
+
+describe('call_me_in_app — channel follows the abroad toggle', () => {
+  it('in BD (toggle OFF) → dials his number via the ladder, app never rings', async () => {
+    abroadKv(false)
+    const res = await call_me_in_app.handler({ purpose: 'দরকারি কথা' })
+    expect(res.success).toBe(true)
+    expect((res.data as { status?: string }).status).toBe('phone_calling')
+    expect(mockLadder.queueCallEscalation).toHaveBeenCalledWith(
+      expect.objectContaining({ trigger: 'boss_callback' }),
+    )
+    expect(mockLadder.startEscalationLadder).toHaveBeenCalledWith('esc-1')
+    expect(mockAppCall.ringOwnerApp).not.toHaveBeenCalled()
+  })
+
+  it('abroad (toggle ON) → rings the app, no phone ladder', async () => {
+    abroadKv(true)
+    const res = await call_me_in_app.handler({ purpose: 'দরকারি কথা' })
+    expect(res.success).toBe(true)
+    expect((res.data as { status?: string }).status).toBe('ringing')
+    expect(mockAppCall.ringOwnerApp).toHaveBeenCalled()
+    expect(mockLadder.queueCallEscalation).not.toHaveBeenCalled()
+  })
+
+  it('in BD but boss explicitly asked for the app → app rings', async () => {
+    abroadKv(false)
+    const res = await call_me_in_app.handler({ purpose: 'দরকারি কথা', explicitApp: true })
+    expect(res.success).toBe(true)
+    expect((res.data as { status?: string }).status).toBe('ringing')
+    expect(mockAppCall.ringOwnerApp).toHaveBeenCalled()
+    expect(mockLadder.queueCallEscalation).not.toHaveBeenCalled()
+  })
+
+  it('in BD with a call already running → no second ladder', async () => {
+    abroadKv(false)
+    mockPrisma.agentCallEscalation.findFirst.mockResolvedValue({ id: 'esc-live' })
+    const res = await call_me_in_app.handler({ purpose: 'দরকারি কথা' })
+    expect(res.success).toBe(true)
+    expect((res.data as { status?: string }).status).toBe('already_calling')
+    expect(mockLadder.queueCallEscalation).not.toHaveBeenCalled()
+    expect(mockAppCall.ringOwnerApp).not.toHaveBeenCalled()
+  })
+})

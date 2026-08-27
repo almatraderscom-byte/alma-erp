@@ -334,8 +334,8 @@ export const call_boss_with_report: AgentTool = {
   description:
     'Boss-কে ফোন কল করে কাজের রিপোর্ট শোনায় (human-PA callback)। ব্যবহার করো ঠিক তখনই ' +
     'যখন Boss নিজে বলেছিলেন কাজ শেষে জানাতে/কল করতে ("শেষ হলে জানাবে", "কল করে জানিও", ' +
-    '"confirm দিবে") — এবং কাজটা এইমাত্র সত্যিই শেষ হয়েছে (tool-verified)। আগে Boss-এর নিজের ' +
-    'app-এ রিং যায় (বিদেশেও কাজ করে), না ধরলে WhatsApp, তারপর সরাসরি নম্বরে, তাও না ধরলে report push হয়। কোনো card লাগে না — Boss-এর ' +
+    '"confirm দিবে") — এবং কাজটা এইমাত্র সত্যিই শেষ হয়েছে (tool-verified)। Boss দেশে থাকলে তার ' +
+    'নম্বরে কল যায় (WhatsApp → সরাসরি নম্বর), দেশের বাইরে থাকলে app-এ রিং; তাও না ধরলে report push হয়। কোনো card লাগে না — Boss-এর ' +
     'অনুরোধটাই অনুমতি। report হবে ২-৪ বাক্যের পরিষ্কার বাংলা — কী করা হলো, ফলাফল কী, পরের ধাপ কী।',
   input_schema: {
     type: 'object' as const,
@@ -397,8 +397,8 @@ export const call_boss_with_report: AgentTool = {
           status: 'callback_queued',
           escalationId: id,
           message: delayMinutes > 0
-            ? `${delayMinutes} মিনিট পরে Boss-কে কল যাবে (আগে app-এ রিং, না ধরলে WhatsApp → সরাসরি নম্বর; তাও না ধরলে report push)।`
-            : 'Boss-কে কল যাচ্ছে (আগে app-এ রিং, না ধরলে WhatsApp → সরাসরি নম্বর; তাও না ধরলে report push)।',
+            ? `${delayMinutes} মিনিট পরে Boss-কে কল যাবে (দেশে থাকলে নম্বরে, বিদেশে app-এ; না ধরলে report push)।`
+            : 'Boss-কে কল যাচ্ছে (দেশে থাকলে নম্বরে, বিদেশে app-এ; না ধরলে report push)।',
         },
       }
     } catch (err) {
@@ -416,9 +416,11 @@ export const call_boss_with_report: AgentTool = {
 export const call_me_in_app: AgentTool = {
   name: 'call_me_in_app',
   description:
-    'Boss-কে ALMA app-এর ভেতরে সরাসরি লাইভ দুইমুখী কল দেয় (WhatsApp-এর মতো full-screen incoming call, ' +
-    'ইন্টারনেট দিয়ে — দেশের বাইরেও কাজ করে)। ব্যবহার করো যখন Boss বলেন "app-এ কল দাও", "app দিয়ে কল করো", ' +
-    '"নাম্বারে না, app-এ", অথবা শুধু "কল দাও/কল করে বলো" — অর্থাৎ ডিফল্ট কল মানেই এই tool। ' +
+    'Boss-কে কল দেওয়ার ডিফল্ট tool — Boss "কল দাও/আমাকে কল দাও/কল করে বলো" বললেই এটা চালাও। ' +
+    'transport server নিজে ঠিক করে (abroad toggle): Boss দেশে থাকলে তার নম্বরে কল যায় (WhatsApp, ' +
+    'না ধরলে সরাসরি নম্বর), দেশের বাইরে থাকলে ALMA app-এর ভেতরে লাইভ দুইমুখী কল (WhatsApp-এর মতো ' +
+    'full-screen incoming call, ইন্টারনেট দিয়ে)। Boss স্পষ্ট করে "app-এ কল দাও", "নাম্বারে না, app-এ" ' +
+    'বললে explicitApp:true দাও — তখন দেশে থাকলেও app-এই রিং যাবে। ' +
     'গুরুত্বপূর্ণ: app কল ≠ WhatsApp কল; app মানে এই tool, place_agent_call channel:"whatsapp" নয়। ' +
     'কোনো approval card লাগে না — Boss নিজেই কল চেয়েছেন। purpose-এ কেন কল করছ তা বাংলায় লেখো; ' +
     'Boss ধরলে agent ওই কারণ দিয়েই কথা শুরু করবে।',
@@ -429,6 +431,10 @@ export const call_me_in_app: AgentTool = {
         type: 'string',
         description: 'কেন কল করছ + কলে যা বলতে হবে (বাংলা, ২-৪ বাক্য)। Boss ধরলে agent এটাই বলে শুরু করবে।',
       },
+      explicitApp: {
+        type: 'boolean',
+        description: 'শুধু তখন true যখন Boss নিজের কথায় স্পষ্ট app-এ কল চেয়েছেন ("app-এ কল দাও", "নাম্বারে না — app-এ")। শুধু "কল দাও" বললে omit।',
+      },
     },
     required: ['purpose'],
   },
@@ -436,6 +442,43 @@ export const call_me_in_app: AgentTool = {
     try {
       const purpose = String(input.purpose ?? '').trim()
       if (!purpose) return { success: false, error: 'purpose (কেন কল করছ) লাগবে' }
+
+      // Owner rule 2026-08-27: bare "কল দাও" follows the abroad toggle — in BD
+      // his NUMBER rings (WhatsApp → PSTN ladder), abroad the app rings. Only an
+      // explicit app ask overrides while he is home.
+      const { isOwnerAbroadCallsOff } = await import('@/lib/owner-abroad')
+      const abroad = await isOwnerAbroadCallsOff().catch(() => false)
+      if (!abroad && input.explicitApp !== true) {
+        const { queueCallEscalation, startEscalationLadder } = await import('@/agent/lib/proactive-call')
+        const active = await db.agentCallEscalation.findFirst({
+          where: { trigger: 'boss_callback', status: { in: ['queued', 'awaiting_approval', 'app_ringing', 'wa_calling', 'pstn_calling'] } },
+          select: { id: true },
+        })
+        if (active) {
+          return {
+            success: true,
+            data: { status: 'already_calling', escalationId: active.id, message: 'Boss-কে একটা কল ইতিমধ্যে চলছে — নতুন কল দিলাম না।' },
+          }
+        }
+        const id = await queueCallEscalation({
+          trigger: 'boss_callback',
+          refId: `bosscall:${Date.now()}`,
+          title: 'Boss নিজে কল চেয়েছেন',
+          purpose,
+        })
+        if (!id) return { success: false, error: 'কল queue করা যায়নি (owner number config দেখুন)।' }
+        const started = await startEscalationLadder(id)
+        if (!started.ok) return { success: false, error: `নম্বরে কল দেওয়া যায়নি: ${started.error ?? 'unknown'}` }
+        return {
+          success: true,
+          data: {
+            status: 'phone_calling',
+            escalationId: id,
+            stage: started.stage,
+            message: 'আপনি দেশে — নম্বরে কল যাচ্ছে (WhatsApp-এ, না ধরলে সরাসরি নম্বরে)।',
+          },
+        }
+      }
 
       const { ringOwnerApp, agentAppCallEnabled } = await import('@/agent/lib/agent-app-call')
       if (!agentAppCallEnabled()) {

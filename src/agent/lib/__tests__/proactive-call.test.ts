@@ -49,6 +49,7 @@ import {
   getProactiveCallConfig,
   queueCallEscalation,
   processCallEscalations,
+  startEscalationLadder,
 } from '@/agent/lib/proactive-call'
 
 beforeEach(() => {
@@ -415,5 +416,64 @@ describe('processCallEscalations — call stages', () => {
     expect(mockNotify.notifyOwner).toHaveBeenCalledWith(
       expect.objectContaining({ tier: 2, telegramMode: 'always' }),
     )
+  })
+})
+
+describe('startEscalationLadder — abroad toggle picks the primary channel (owner rule 2026-08-27)', () => {
+  const queuedRow = {
+    id: 'esc-ch',
+    trigger: 'manual',
+    refId: 'ch-ref',
+    title: 'Channel test',
+    purpose: 'reach the boss',
+    status: 'queued',
+    createdAt: new Date(),
+    nextCheckAt: new Date(Date.now() - 1000),
+    appCallId: null,
+    waCallId: null,
+    pstnCallId: null,
+    approvalActionId: null,
+  }
+
+  beforeEach(() => {
+    mockPrisma.agentCallEscalation.findUnique.mockResolvedValue(queuedRow)
+    mockPrisma.agentCallEscalation.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.agentCallEscalation.update.mockResolvedValue({})
+  })
+
+  const abroadKv = (on: boolean) =>
+    mockPrisma.agentKvSetting.findUnique.mockImplementation(({ where }: { where: { key: string } }) =>
+      Promise.resolve(where.key === 'owner_abroad_calls_off' && on ? { value: 'true' } : null),
+    )
+
+  it('in BD (toggle OFF) → phone first, app never rung', async () => {
+    abroadKv(false)
+    mockVoiceCall.placeOutboundCall.mockResolvedValue({ ok: true, callRecordId: 'call-wa' })
+    const res = await startEscalationLadder('esc-ch')
+    expect(res).toEqual({ ok: true, stage: 'wa_calling' })
+    expect(mockAgentAppCall.ringOwnerApp).not.toHaveBeenCalled()
+    expect(mockVoiceCall.placeOutboundCall).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: 'whatsapp', callType: 'owner' }),
+    )
+  })
+
+  it('abroad (toggle ON) → app ring, phone legs untouched', async () => {
+    abroadKv(true)
+    mockAgentAppCall.ringOwnerApp.mockResolvedValue({ ok: true, callId: 'app-1' })
+    const res = await startEscalationLadder('esc-ch')
+    expect(res).toEqual({ ok: true, stage: 'app_ringing' })
+    expect(mockVoiceCall.placeOutboundCall).not.toHaveBeenCalled()
+    expect(mockPrisma.agentCallEscalation.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ appCallId: 'app-1' }) }),
+    )
+  })
+
+  it('abroad + app unavailable → resolves to push, never dials the BD number', async () => {
+    abroadKv(true)
+    mockAgentAppCall.ringOwnerApp.mockResolvedValue({ ok: false, error: 'no_devices' })
+    const res = await startEscalationLadder('esc-ch')
+    expect(res).toEqual({ ok: false, error: 'owner_abroad' })
+    expect(mockVoiceCall.placeOutboundCall).not.toHaveBeenCalled()
+    expect(mockNotify.notifyOwner).toHaveBeenCalled()
   })
 })

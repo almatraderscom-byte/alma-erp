@@ -338,8 +338,9 @@ function buildSalahCallBrief({ phase, name, jamaatLabel, endLabel, toneLine }) {
  * Place ONE two-way app call for a waqt, at most every 15 minutes.
  * Single choke point used by the escalation tick AND the post-snooze loop:
  *   confirmed → never; owner-call-lock/snooze → never; last call <15 min → skip.
- * App ring failing (no devices/offline) falls back to the old one-way PSTN call
- * ONLY when the owner is NOT abroad — the reminder must still reach him somehow.
+ * Channel follows the abroad toggle (owner rule 2026-08-27): in BD the proven
+ * one-way PSTN reminder is PRIMARY (his number, like before), with the app ring
+ * as emergency fallback; abroad the app ring is the only channel.
  */
 async function placeSalahTwoWayCall({ supabase, today, waqt, name, phase, schedule, toneLine }) {
   if (!supabase) return false
@@ -360,6 +361,24 @@ async function placeSalahTwoWayCall({ supabase, today, waqt, name, phase, schedu
   })
 
   await markSalahCallPlaced(supabase, today, waqt)
+
+  const abroad = await isOwnerAbroadCallsOff()
+  if (!abroad) {
+    // In BD his NUMBER is the primary channel (owner rule 2026-08-27) — the
+    // proven one-way PSTN reminder, like before the app-call era.
+    const msgs = salahChannelMessages({ tier: 3, waqt, waqtName: name, dateYmd: today, remindersSent: 4 })
+    const pstn = await makeTwilioCall(msgs.voice, {
+      force: true, salah: true, purpose: 'salah', skipAutoRetry: true,
+      salahDate: today, salahWaqt: waqt,
+    }).catch((err) => ({ ok: false, error: err.message }))
+    if (pstn.ok) {
+      console.log(`[salah] PSTN call placed for ${waqt} (${phase})`)
+      return true
+    }
+    console.warn(`[salah] PSTN call failed for ${waqt}:`, pstn.error)
+    // fall through: app ring as emergency fallback — the reminder must still reach him
+  }
+
   const { ringOwnerAppViaWeb } = await import('../notify/agent-app-call.mjs')
   const ring = await ringOwnerAppViaWeb(brief.slice(0, 1800), 'salah')
   if (ring.ok) {
@@ -373,17 +392,6 @@ async function placeSalahTwoWayCall({ supabase, today, waqt, name, phase, schedu
     return false
   }
   console.warn(`[salah] app ring failed for ${waqt}:`, ring.error)
-
-  if (!(await isOwnerAbroadCallsOff())) {
-    // Emergency fallback — the proven one-way PSTN reminder.
-    const msgs = salahChannelMessages({ tier: 3, waqt, waqtName: name, dateYmd: today, remindersSent: 4 })
-    const pstn = await makeTwilioCall(msgs.voice, {
-      force: true, salah: true, purpose: 'salah', skipAutoRetry: true,
-      salahDate: today, salahWaqt: waqt,
-    }).catch((err) => ({ ok: false, error: err.message }))
-    if (!pstn.ok) console.warn(`[salah] PSTN fallback failed for ${waqt}:`, pstn.error)
-    return pstn.ok
-  }
   return false
 }
 
