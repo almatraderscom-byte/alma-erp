@@ -487,8 +487,11 @@ async function stepEscalation(row: any, cfg: ProactiveCallConfig): Promise<strin
     // cap overflow the report still reaches him as a push.
     if (row.trigger === 'boss_callback') {
       const cbCap = kvNumber(await kvGet('proactive_callback_daily_cap'), 10, 1, 50)
+      // Only true report callbacks (refId 'callback:…') consume the PA-5R cap —
+      // boss-initiated "কল দাও" rows (refId 'bosscall:…') are his own asks and
+      // must not starve genuine work-completion callbacks (review-bot P2).
       const cbToday = await db.agentCallEscalation.count({
-        where: { trigger: 'boss_callback', firstCallAt: { gte: dhakaDayStart() } },
+        where: { trigger: 'boss_callback', refId: { startsWith: 'callback:' }, firstCallAt: { gte: dhakaDayStart() } },
       })
       if (cbToday >= cbCap) {
         await resolve(row.id, 'cancelled', { note: `callback daily cap ${cbCap} reached` })

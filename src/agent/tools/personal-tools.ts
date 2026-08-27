@@ -450,8 +450,11 @@ export const call_me_in_app: AgentTool = {
       const abroad = await isOwnerAbroadCallsOff().catch(() => false)
       if (!abroad && input.explicitApp !== true) {
         const { queueCallEscalation, startEscalationLadder } = await import('@/agent/lib/proactive-call')
+        // Only rows ACTIVELY dialing block a fresh "call me" — a report callback
+        // queued for later ("৫ মিনিট পরে জানাবে") must not swallow an immediate
+        // ask hours early (review-bot P2).
         const active = await db.agentCallEscalation.findFirst({
-          where: { trigger: 'boss_callback', status: { in: ['queued', 'awaiting_approval', 'app_ringing', 'wa_calling', 'pstn_calling'] } },
+          where: { trigger: 'boss_callback', status: { in: ['app_ringing', 'wa_calling', 'pstn_calling'] } },
           select: { id: true },
         })
         if (active) {

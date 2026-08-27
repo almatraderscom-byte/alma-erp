@@ -80,5 +80,12 @@ describe('call_me_in_app — channel follows the abroad toggle', () => {
     expect((res.data as { status?: string }).status).toBe('already_calling')
     expect(mockLadder.queueCallEscalation).not.toHaveBeenCalled()
     expect(mockAppCall.ringOwnerApp).not.toHaveBeenCalled()
+    // Only ACTIVELY dialing rows block — a report callback queued for later
+    // ("৫ মিনিট পরে জানাবে") must not swallow an immediate ask.
+    expect(mockPrisma.agentCallEscalation.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: { in: ['app_ringing', 'wa_calling', 'pstn_calling'] } }),
+      }),
+    )
   })
 })
