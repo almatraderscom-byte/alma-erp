@@ -381,6 +381,13 @@ async function placeSalahTwoWayCall({ supabase, today, waqt, name, phase, schedu
       console.log(`[salah] PSTN call placed for ${waqt} (${phase})`)
       return true
     }
+    // Terminal guards are hard stops, not delivery failures (review-bot P2):
+    // the owner confirmed the salah or engaged the call lock mid-flight —
+    // ringing the app would bypass exactly what he just asked for.
+    if (pstn.error === 'salah_confirmed' || pstn.error === 'owner_call_locked') {
+      console.log(`[salah] PSTN skipped for ${waqt} — ${pstn.error}; no app fallback`)
+      return false
+    }
     console.warn(`[salah] PSTN call failed for ${waqt}:`, pstn.error)
     // fall through: app ring as emergency fallback — the reminder must still reach him
   }
