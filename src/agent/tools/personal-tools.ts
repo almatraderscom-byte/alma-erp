@@ -368,7 +368,7 @@ export const call_boss_with_report: AgentTool = {
       // One report call at a time — a retry/self-correct round must not stack
       // multiple ladders that ring the boss back-to-back (live 2026-07-24: 3 rows).
       const activeCb = await db.agentCallEscalation.findFirst({
-        where: { trigger: 'boss_callback', status: { in: ['queued', 'awaiting_approval', 'wa_calling', 'pstn_calling'] } },
+        where: { trigger: 'boss_callback', status: { in: ['queued', 'awaiting_approval', 'app_ringing', 'wa_calling', 'pstn_calling'] } },
         select: { id: true },
       })
       if (activeCb) {
