@@ -470,6 +470,31 @@ export const call_me_in_app: AgentTool = {
           purpose,
         })
         if (!id) return { success: false, error: 'কল queue করা যায়নি (owner number config দেখুন)।' }
+        // Duplicate-slot tiebreak (review-bot P2): two overlapping "কল দাও"
+        // executions can both pass the pre-check. After creating our row, the
+        // OLDEST surviving row wins — a newer row cancels itself before dialing.
+        const mine = await db.agentCallEscalation.findUnique({ where: { id }, select: { createdAt: true } })
+        const rival = mine && await db.agentCallEscalation.findFirst({
+          where: {
+            trigger: 'boss_callback',
+            id: { not: id },
+            OR: [
+              { status: { in: ['app_ringing', 'wa_calling', 'pstn_calling'] } },
+              { status: 'queued', refId: { startsWith: 'bosscall:' }, createdAt: { lt: mine.createdAt } },
+            ],
+          },
+          select: { id: true },
+        })
+        if (rival) {
+          await db.agentCallEscalation.update({
+            where: { id },
+            data: { status: 'cancelled', resolvedAt: new Date(), note: 'duplicate manual call (raced)' },
+          })
+          return {
+            success: true,
+            data: { status: 'already_calling', escalationId: rival.id, message: 'Boss-কে একটা কল ইতিমধ্যে চলছে — নতুন কল দিলাম না।' },
+          }
+        }
         const started = await startEscalationLadder(id)
         if (!started.ok) return { success: false, error: `নম্বরে কল দেওয়া যায়নি: ${started.error ?? 'unknown'}` }
         return {

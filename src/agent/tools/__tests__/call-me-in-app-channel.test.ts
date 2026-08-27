@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const mockPrisma = vi.hoisted(() => ({
   agentKvSetting: { findUnique: vi.fn() },
-  agentCallEscalation: { findFirst: vi.fn() },
+  agentCallEscalation: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
 }))
 vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
 
@@ -37,6 +37,8 @@ beforeEach(() => {
   mockAppCall.agentAppCallEnabled.mockReturnValue(true)
   mockAppCall.ringOwnerApp.mockResolvedValue({ ok: true, callId: 'app-1' })
   mockPrisma.agentCallEscalation.findFirst.mockResolvedValue(null)
+  mockPrisma.agentCallEscalation.findUnique.mockResolvedValue({ createdAt: new Date() })
+  mockPrisma.agentCallEscalation.update.mockResolvedValue({})
   mockLadder.queueCallEscalation.mockResolvedValue('esc-1')
   mockLadder.startEscalationLadder.mockResolvedValue({ ok: true, stage: 'wa_calling' })
 })
@@ -85,6 +87,26 @@ describe('call_me_in_app — channel follows the abroad toggle', () => {
     expect(mockPrisma.agentCallEscalation.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ status: { in: ['app_ringing', 'wa_calling', 'pstn_calling'] } }),
+      }),
+    )
+  })
+})
+
+describe('call_me_in_app — duplicate-slot tiebreak (raced executions)', () => {
+  it('a rival row created earlier wins — our row cancels itself before dialing', async () => {
+    abroadKv(false)
+    // pre-check clean, but the post-create rival check finds an older row
+    mockPrisma.agentCallEscalation.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'esc-older' })
+    const res = await call_me_in_app.handler({ purpose: 'দরকারি কথা' })
+    expect(res.success).toBe(true)
+    expect((res.data as { status?: string }).status).toBe('already_calling')
+    expect(mockLadder.startEscalationLadder).not.toHaveBeenCalled()
+    expect(mockPrisma.agentCallEscalation.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'esc-1' },
+        data: expect.objectContaining({ status: 'cancelled' }),
       }),
     )
   })

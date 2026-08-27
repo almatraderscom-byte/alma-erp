@@ -366,8 +366,14 @@ async function placeSalahTwoWayCall({ supabase, today, waqt, name, phase, schedu
   if (!abroad) {
     // In BD his NUMBER is the primary channel (owner rule 2026-08-27) — the
     // proven one-way PSTN reminder, like before the app-call era.
-    const msgs = salahChannelMessages({ tier: 3, waqt, waqtName: name, dateYmd: today, remindersSent: 4 })
-    const pstn = await makeTwilioCall(msgs.voice, {
+    // Phase-aware copy (review-bot P1): 'pre' is a gentle 15-minute heads-up,
+    // 'due' speaks the caller's tier-appropriate toneLine; the fixed tier-3
+    // "ওয়াক্ত প্রায় শেষ" line is only the last-resort fallback.
+    const jamaatLabel = w?.prayerLabel ? ` জামাত ${w.prayerLabel}।` : ''
+    const voiceText = phase === 'pre'
+      ? `আসসালামু আলাইকুম Boss। ${name} নামাজের আর পনেরো মিনিট বাকি।${jamaatLabel} প্রস্তুতি নিয়ে নিন।`
+      : (toneLine || salahChannelMessages({ tier: 3, waqt, waqtName: name, dateYmd: today, remindersSent: 4 }).voice)
+    const pstn = await makeTwilioCall(voiceText, {
       force: true, salah: true, purpose: 'salah', skipAutoRetry: true,
       salahDate: today, salahWaqt: waqt,
     }).catch((err) => ({ ok: false, error: err.message }))
