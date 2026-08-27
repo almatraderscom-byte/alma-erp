@@ -508,17 +508,20 @@ async function stepEscalation(row: any, cfg: ProactiveCallConfig): Promise<strin
     // that IS the consent, so no permission card. Own (higher) daily cap; on
     // cap overflow the report still reaches him as a push.
     if (row.trigger === 'boss_callback') {
-      const cbCap = kvNumber(await kvGet('proactive_callback_daily_cap'), 10, 1, 50)
-      // Only true report callbacks (refId 'callback:…') consume the PA-5R cap —
-      // boss-initiated "কল দাও" rows (refId 'bosscall:…') are his own asks and
-      // must not starve genuine work-completion callbacks (review-bot P2).
-      const cbToday = await db.agentCallEscalation.count({
-        where: { trigger: 'boss_callback', refId: { startsWith: 'callback:' }, firstCallAt: { gte: dhakaDayStart() } },
-      })
-      if (cbToday >= cbCap) {
-        await resolve(row.id, 'cancelled', { note: `callback daily cap ${cbCap} reached` })
-        await pushUnreachedSummary(row, 'আজকের callback-কল লিমিট শেষ — রিপোর্টটা এখানে')
-        return 'cancelled_daily_cap'
+      // Only true report callbacks (refId 'callback:…') consume OR are gated by
+      // the PA-5R cap — a boss-initiated "কল দাও" row (refId 'bosscall:…',
+      // requeued here by a busy defer) is his own explicit ask and must never
+      // be cancelled by earlier report callbacks (review-bot P2 ×2).
+      if (!String(row.refId ?? '').startsWith('bosscall:')) {
+        const cbCap = kvNumber(await kvGet('proactive_callback_daily_cap'), 10, 1, 50)
+        const cbToday = await db.agentCallEscalation.count({
+          where: { trigger: 'boss_callback', refId: { startsWith: 'callback:' }, firstCallAt: { gte: dhakaDayStart() } },
+        })
+        if (cbToday >= cbCap) {
+          await resolve(row.id, 'cancelled', { note: `callback daily cap ${cbCap} reached` })
+          await pushUnreachedSummary(row, 'আজকের callback-কল লিমিট শেষ — রিপোর্টটা এখানে')
+          return 'cancelled_daily_cap'
+        }
       }
       const started = await startEscalationLadder(row.id, cfg)
       return started.ok ? `dialed_${started.stage}` : `dial_failed: ${started.error}`

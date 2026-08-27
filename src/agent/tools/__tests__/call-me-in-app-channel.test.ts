@@ -111,3 +111,13 @@ describe('call_me_in_app — duplicate-slot tiebreak (raced executions)', () => 
     )
   })
 })
+
+describe('call_me_in_app — busy defer reported honestly', () => {
+  it('deferred_busy → says queued, not ringing', async () => {
+    abroadKv(false)
+    mockLadder.startEscalationLadder.mockResolvedValue({ ok: true, stage: 'deferred_busy' })
+    const res = await call_me_in_app.handler({ purpose: 'দরকারি কথা' })
+    expect(res.success).toBe(true)
+    expect((res.data as { status?: string }).status).toBe('queued_busy')
+  })
+})

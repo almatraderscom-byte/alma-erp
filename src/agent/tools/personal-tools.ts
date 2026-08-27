@@ -497,6 +497,18 @@ export const call_me_in_app: AgentTool = {
         }
         const started = await startEscalationLadder(id)
         if (!started.ok) return { success: false, error: `নম্বরে কল দেওয়া যায়নি: ${started.error ?? 'unknown'}` }
+        // Busy defer (review-bot P2): another owner ladder is mid-call — nothing
+        // was dialed yet, so say "queued", not "ringing".
+        if (started.stage === 'deferred_busy') {
+          return {
+            success: true,
+            data: {
+              status: 'queued_busy',
+              escalationId: id,
+              message: 'আরেকটা কল এই মুহূর্তে চলছে — সেটা শেষ হলে কয়েক মিনিটের মধ্যে আপনার নম্বরে কল যাবে।',
+            },
+          }
+        }
         return {
           success: true,
           data: {

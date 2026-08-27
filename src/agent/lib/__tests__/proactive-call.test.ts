@@ -519,3 +519,24 @@ describe('startEscalationLadder — one live owner ladder at a time (in-country)
     )
   })
 })
+
+describe('stepEscalation — manual boss asks exempt from the callback cap', () => {
+  it('a requeued bosscall row dials even when the report-callback cap is spent', async () => {
+    mockPrisma.agentKvSetting.findUnique.mockImplementation(({ where }: { where: { key: string } }) =>
+      Promise.resolve(where.key === 'proactive_callback_daily_cap' ? { value: '10' } : null))
+    const bossAskRow = {
+      id: 'esc-ask', trigger: 'boss_callback', refId: 'bosscall:123', title: 'Boss নিজে কল চেয়েছেন',
+      purpose: 'p', status: 'queued', createdAt: new Date(), nextCheckAt: new Date(Date.now() - 1000),
+      appCallId: null, waCallId: null, pstnCallId: null, approvalActionId: null,
+    }
+    mockPrisma.agentCallEscalation.findMany.mockResolvedValue([bossAskRow])
+    mockPrisma.agentCallEscalation.count.mockResolvedValue(10) // cap fully spent by report callbacks
+    mockPrisma.agentCallEscalation.findUnique.mockResolvedValue(bossAskRow)
+    mockPrisma.agentCallEscalation.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.agentCallEscalation.findFirst.mockResolvedValue(null)
+    mockVoiceCall.placeOutboundCall.mockResolvedValue({ ok: true, callRecordId: 'call-x' })
+    const res = await processCallEscalations()
+    expect(res).toEqual([{ id: 'esc-ask', outcome: 'dialed_wa_calling' }])
+    expect(mockVoiceCall.placeOutboundCall).toHaveBeenCalled()
+  })
+})
