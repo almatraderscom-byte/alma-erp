@@ -96,7 +96,7 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     // without this the head only ever saw the one-way tool and (correctly) said it
     // had "no two-way call tool" when asked to talk + listen.
     place_agent_call,
-    // In-app live call to Boss — "app-এ কল দাও" (never the whatsapp channel).
+    // Default "Boss-কে কল" tool — abroad toggle picks app vs number (never the whatsapp channel for "app").
     call_me_in_app,
     // PA-5R: boss-requested completion callback (no card; ladder-enforced owner-only).
     call_boss_with_report,

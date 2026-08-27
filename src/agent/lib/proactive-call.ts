@@ -307,14 +307,43 @@ export async function startEscalationLadder(id: string, cfg?: ProactiveCallConfi
   const config = cfg ?? await getProactiveCallConfig()
   const row = await db.agentCallEscalation.findUnique({ where: { id } })
   if (!row) return { ok: false, error: 'not_found' }
-  // Claim so a racing cron tick / double tap can't double-dial.
+  // Claim so a racing cron tick / double tap can't double-dial. nextCheckAt is
+  // pushed forward IN the claim (review-bot P2): the row sits at 'app_ringing'
+  // with no appCallId while the (slow) provider dial below is in flight, and a
+  // cron tick landing then would read that as a failed app ring and start a
+  // second ladder. The dial paths overwrite nextCheckAt with their own stage
+  // timers; if this call crashes mid-dial, the cron recovers after the window.
   const claimed = await db.agentCallEscalation.updateMany({
     where: { id, status: { in: ['queued', 'awaiting_approval'] } },
-    data: { status: 'app_ringing', firstCallAt: new Date() },
+    data: { status: 'app_ringing', firstCallAt: new Date(), nextCheckAt: new Date(Date.now() + APP_RING_CHECK_MS) },
   })
   if (claimed.count !== 1) return { ok: false, error: 'already_started' }
 
-  // Stage 0 (plan C3): ring the owner's own APP first — a WhatsApp-style CallKit
+  // Owner rule 2026-08-27: the abroad toggle picks the PRIMARY channel, not just
+  // a phone-leg block. In BD (toggle OFF) calls go to his number like before —
+  // WhatsApp → PSTN; the app ring is the abroad path.
+  const { isOwnerAbroadCallsOff } = await import('@/lib/owner-abroad')
+  const abroad = await isOwnerAbroadCallsOff().catch(() => false)
+  if (!abroad) {
+    // One live owner ladder at a time (review-bot P1): several rows due in one
+    // cron batch must not dial concurrently. The app path serializes through
+    // ringOwnerApp's single-active-call constraint; the phone path mirrors the
+    // same busy-defer — requeue without consuming the cap, retry shortly.
+    const live = await db.agentCallEscalation.findFirst({
+      where: { id: { not: id }, status: { in: ['app_ringing', 'wa_calling', 'pstn_calling'] } },
+      select: { id: true },
+    })
+    if (live) {
+      await db.agentCallEscalation.update({
+        where: { id },
+        data: { status: 'queued', firstCallAt: null, nextCheckAt: new Date(Date.now() + 2 * 60_000) },
+      })
+      return { ok: true, stage: 'deferred_busy' }
+    }
+    return dialPhoneLegs(id, row, config, 'in-country: phone first')
+  }
+
+  // Stage 0 abroad (plan C3): ring the owner's own APP — a WhatsApp-style CallKit
   // ring that works anywhere with internet (incl. UAE where WhatsApp calls are
   // blocked) and costs nothing. Phone legs only when the app can't be rung.
   const { ringOwnerApp } = await import('@/agent/lib/agent-app-call')
@@ -346,8 +375,8 @@ export async function startEscalationLadder(id: string, cfg?: ProactiveCallConfi
 }
 
 /**
- * The legacy WhatsApp → PSTN legs (stage 1/2), shared by the start path (app
- * ring unavailable) and the app-ring timeout path. When the owner-abroad
+ * The WhatsApp → PSTN legs — the PRIMARY path when the owner is in BD, and the
+ * fallback for the abroad app-ring path (unavailable/timeout). When the owner-abroad
  * toggle is ON these legs are pointless — his BD number is unreachable — so
  * the ladder resolves straight to a push with an honest reason.
  */
@@ -479,14 +508,20 @@ async function stepEscalation(row: any, cfg: ProactiveCallConfig): Promise<strin
     // that IS the consent, so no permission card. Own (higher) daily cap; on
     // cap overflow the report still reaches him as a push.
     if (row.trigger === 'boss_callback') {
-      const cbCap = kvNumber(await kvGet('proactive_callback_daily_cap'), 10, 1, 50)
-      const cbToday = await db.agentCallEscalation.count({
-        where: { trigger: 'boss_callback', firstCallAt: { gte: dhakaDayStart() } },
-      })
-      if (cbToday >= cbCap) {
-        await resolve(row.id, 'cancelled', { note: `callback daily cap ${cbCap} reached` })
-        await pushUnreachedSummary(row, 'আজকের callback-কল লিমিট শেষ — রিপোর্টটা এখানে')
-        return 'cancelled_daily_cap'
+      // Only true report callbacks (refId 'callback:…') consume OR are gated by
+      // the PA-5R cap — a boss-initiated "কল দাও" row (refId 'bosscall:…',
+      // requeued here by a busy defer) is his own explicit ask and must never
+      // be cancelled by earlier report callbacks (review-bot P2 ×2).
+      if (!String(row.refId ?? '').startsWith('bosscall:')) {
+        const cbCap = kvNumber(await kvGet('proactive_callback_daily_cap'), 10, 1, 50)
+        const cbToday = await db.agentCallEscalation.count({
+          where: { trigger: 'boss_callback', refId: { startsWith: 'callback:' }, firstCallAt: { gte: dhakaDayStart() } },
+        })
+        if (cbToday >= cbCap) {
+          await resolve(row.id, 'cancelled', { note: `callback daily cap ${cbCap} reached` })
+          await pushUnreachedSummary(row, 'আজকের callback-কল লিমিট শেষ — রিপোর্টটা এখানে')
+          return 'cancelled_daily_cap'
+        }
       }
       const started = await startEscalationLadder(row.id, cfg)
       return started.ok ? `dialed_${started.stage}` : `dial_failed: ${started.error}`

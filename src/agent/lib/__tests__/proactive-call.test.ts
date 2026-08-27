@@ -49,6 +49,7 @@ import {
   getProactiveCallConfig,
   queueCallEscalation,
   processCallEscalations,
+  startEscalationLadder,
 } from '@/agent/lib/proactive-call'
 
 beforeEach(() => {
@@ -415,5 +416,127 @@ describe('processCallEscalations — call stages', () => {
     expect(mockNotify.notifyOwner).toHaveBeenCalledWith(
       expect.objectContaining({ tier: 2, telegramMode: 'always' }),
     )
+  })
+})
+
+describe('startEscalationLadder — abroad toggle picks the primary channel (owner rule 2026-08-27)', () => {
+  const queuedRow = {
+    id: 'esc-ch',
+    trigger: 'manual',
+    refId: 'ch-ref',
+    title: 'Channel test',
+    purpose: 'reach the boss',
+    status: 'queued',
+    createdAt: new Date(),
+    nextCheckAt: new Date(Date.now() - 1000),
+    appCallId: null,
+    waCallId: null,
+    pstnCallId: null,
+    approvalActionId: null,
+  }
+
+  beforeEach(() => {
+    mockPrisma.agentCallEscalation.findUnique.mockResolvedValue(queuedRow)
+    mockPrisma.agentCallEscalation.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.agentCallEscalation.update.mockResolvedValue({})
+    mockPrisma.agentCallEscalation.findFirst.mockResolvedValue(null)
+  })
+
+  const abroadKv = (on: boolean) =>
+    mockPrisma.agentKvSetting.findUnique.mockImplementation(({ where }: { where: { key: string } }) =>
+      Promise.resolve(where.key === 'owner_abroad_calls_off' && on ? { value: 'true' } : null),
+    )
+
+  it('in BD (toggle OFF) → phone first, app never rung', async () => {
+    abroadKv(false)
+    mockVoiceCall.placeOutboundCall.mockResolvedValue({ ok: true, callRecordId: 'call-wa' })
+    const res = await startEscalationLadder('esc-ch')
+    expect(res).toEqual({ ok: true, stage: 'wa_calling' })
+    expect(mockAgentAppCall.ringOwnerApp).not.toHaveBeenCalled()
+    expect(mockVoiceCall.placeOutboundCall).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: 'whatsapp', callType: 'owner' }),
+    )
+  })
+
+  it('abroad (toggle ON) → app ring, phone legs untouched', async () => {
+    abroadKv(true)
+    mockAgentAppCall.ringOwnerApp.mockResolvedValue({ ok: true, callId: 'app-1' })
+    const res = await startEscalationLadder('esc-ch')
+    expect(res).toEqual({ ok: true, stage: 'app_ringing' })
+    expect(mockVoiceCall.placeOutboundCall).not.toHaveBeenCalled()
+    expect(mockPrisma.agentCallEscalation.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ appCallId: 'app-1' }) }),
+    )
+  })
+
+  it('abroad + app unavailable → resolves to push, never dials the BD number', async () => {
+    abroadKv(true)
+    mockAgentAppCall.ringOwnerApp.mockResolvedValue({ ok: false, error: 'no_devices' })
+    const res = await startEscalationLadder('esc-ch')
+    expect(res).toEqual({ ok: false, error: 'owner_abroad' })
+    expect(mockVoiceCall.placeOutboundCall).not.toHaveBeenCalled()
+    expect(mockNotify.notifyOwner).toHaveBeenCalled()
+  })
+})
+
+describe('startEscalationLadder — claim defers the cron re-check', () => {
+  it('the claim itself pushes nextCheckAt forward so a cron tick mid-dial cannot double-ladder', async () => {
+    mockPrisma.agentCallEscalation.findUnique.mockResolvedValue({
+      id: 'esc-claim', trigger: 'manual', refId: 'claim-ref', title: 't', purpose: 'p',
+      status: 'queued', createdAt: new Date(), nextCheckAt: new Date(Date.now() - 1000),
+      appCallId: null, waCallId: null, pstnCallId: null, approvalActionId: null,
+    })
+    mockPrisma.agentCallEscalation.updateMany.mockResolvedValue({ count: 1 })
+    mockVoiceCall.placeOutboundCall.mockResolvedValue({ ok: true, callRecordId: 'call-wa' })
+    const before = Date.now()
+    await startEscalationLadder('esc-claim')
+    const claim = mockPrisma.agentCallEscalation.updateMany.mock.calls[0][0]
+    expect(claim.data.status).toBe('app_ringing')
+    expect(claim.data.nextCheckAt.getTime()).toBeGreaterThanOrEqual(before + 60_000)
+  })
+})
+
+describe('startEscalationLadder — one live owner ladder at a time (in-country)', () => {
+  it('a second due row defers instead of dialing concurrently', async () => {
+    mockPrisma.agentCallEscalation.findUnique.mockResolvedValue({
+      id: 'esc-b', trigger: 'staff_task_stuck', refId: 'b', title: 't', purpose: 'p',
+      status: 'queued', createdAt: new Date(), nextCheckAt: new Date(Date.now() - 1000),
+      appCallId: null, waCallId: null, pstnCallId: null, approvalActionId: null,
+    })
+    mockPrisma.agentCallEscalation.updateMany.mockResolvedValue({ count: 1 })
+    // another ladder is mid-call on the owner right now
+    mockPrisma.agentCallEscalation.findFirst.mockResolvedValue({ id: 'esc-a' })
+    const res = await startEscalationLadder('esc-b')
+    expect(res).toEqual({ ok: true, stage: 'deferred_busy' })
+    expect(mockVoiceCall.placeOutboundCall).not.toHaveBeenCalled()
+    expect(mockAgentAppCall.ringOwnerApp).not.toHaveBeenCalled()
+    // requeued without consuming the daily cap
+    expect(mockPrisma.agentCallEscalation.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'esc-b' },
+        data: expect.objectContaining({ status: 'queued', firstCallAt: null }),
+      }),
+    )
+  })
+})
+
+describe('stepEscalation — manual boss asks exempt from the callback cap', () => {
+  it('a requeued bosscall row dials even when the report-callback cap is spent', async () => {
+    mockPrisma.agentKvSetting.findUnique.mockImplementation(({ where }: { where: { key: string } }) =>
+      Promise.resolve(where.key === 'proactive_callback_daily_cap' ? { value: '10' } : null))
+    const bossAskRow = {
+      id: 'esc-ask', trigger: 'boss_callback', refId: 'bosscall:123', title: 'Boss নিজে কল চেয়েছেন',
+      purpose: 'p', status: 'queued', createdAt: new Date(), nextCheckAt: new Date(Date.now() - 1000),
+      appCallId: null, waCallId: null, pstnCallId: null, approvalActionId: null,
+    }
+    mockPrisma.agentCallEscalation.findMany.mockResolvedValue([bossAskRow])
+    mockPrisma.agentCallEscalation.count.mockResolvedValue(10) // cap fully spent by report callbacks
+    mockPrisma.agentCallEscalation.findUnique.mockResolvedValue(bossAskRow)
+    mockPrisma.agentCallEscalation.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.agentCallEscalation.findFirst.mockResolvedValue(null)
+    mockVoiceCall.placeOutboundCall.mockResolvedValue({ ok: true, callRecordId: 'call-x' })
+    const res = await processCallEscalations()
+    expect(res).toEqual([{ id: 'esc-ask', outcome: 'dialed_wa_calling' }])
+    expect(mockVoiceCall.placeOutboundCall).toHaveBeenCalled()
   })
 })
