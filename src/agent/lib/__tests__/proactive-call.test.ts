@@ -439,6 +439,7 @@ describe('startEscalationLadder — abroad toggle picks the primary channel (own
     mockPrisma.agentCallEscalation.findUnique.mockResolvedValue(queuedRow)
     mockPrisma.agentCallEscalation.updateMany.mockResolvedValue({ count: 1 })
     mockPrisma.agentCallEscalation.update.mockResolvedValue({})
+    mockPrisma.agentCallEscalation.findFirst.mockResolvedValue(null)
   })
 
   const abroadKv = (on: boolean) =>
@@ -492,5 +493,29 @@ describe('startEscalationLadder — claim defers the cron re-check', () => {
     const claim = mockPrisma.agentCallEscalation.updateMany.mock.calls[0][0]
     expect(claim.data.status).toBe('app_ringing')
     expect(claim.data.nextCheckAt.getTime()).toBeGreaterThanOrEqual(before + 60_000)
+  })
+})
+
+describe('startEscalationLadder — one live owner ladder at a time (in-country)', () => {
+  it('a second due row defers instead of dialing concurrently', async () => {
+    mockPrisma.agentCallEscalation.findUnique.mockResolvedValue({
+      id: 'esc-b', trigger: 'staff_task_stuck', refId: 'b', title: 't', purpose: 'p',
+      status: 'queued', createdAt: new Date(), nextCheckAt: new Date(Date.now() - 1000),
+      appCallId: null, waCallId: null, pstnCallId: null, approvalActionId: null,
+    })
+    mockPrisma.agentCallEscalation.updateMany.mockResolvedValue({ count: 1 })
+    // another ladder is mid-call on the owner right now
+    mockPrisma.agentCallEscalation.findFirst.mockResolvedValue({ id: 'esc-a' })
+    const res = await startEscalationLadder('esc-b')
+    expect(res).toEqual({ ok: true, stage: 'deferred_busy' })
+    expect(mockVoiceCall.placeOutboundCall).not.toHaveBeenCalled()
+    expect(mockAgentAppCall.ringOwnerApp).not.toHaveBeenCalled()
+    // requeued without consuming the daily cap
+    expect(mockPrisma.agentCallEscalation.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'esc-b' },
+        data: expect.objectContaining({ status: 'queued', firstCallAt: null }),
+      }),
+    )
   })
 })

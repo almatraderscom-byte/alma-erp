@@ -324,7 +324,24 @@ export async function startEscalationLadder(id: string, cfg?: ProactiveCallConfi
   // WhatsApp → PSTN; the app ring is the abroad path.
   const { isOwnerAbroadCallsOff } = await import('@/lib/owner-abroad')
   const abroad = await isOwnerAbroadCallsOff().catch(() => false)
-  if (!abroad) return dialPhoneLegs(id, row, config, 'in-country: phone first')
+  if (!abroad) {
+    // One live owner ladder at a time (review-bot P1): several rows due in one
+    // cron batch must not dial concurrently. The app path serializes through
+    // ringOwnerApp's single-active-call constraint; the phone path mirrors the
+    // same busy-defer — requeue without consuming the cap, retry shortly.
+    const live = await db.agentCallEscalation.findFirst({
+      where: { id: { not: id }, status: { in: ['app_ringing', 'wa_calling', 'pstn_calling'] } },
+      select: { id: true },
+    })
+    if (live) {
+      await db.agentCallEscalation.update({
+        where: { id },
+        data: { status: 'queued', firstCallAt: null, nextCheckAt: new Date(Date.now() + 2 * 60_000) },
+      })
+      return { ok: true, stage: 'deferred_busy' }
+    }
+    return dialPhoneLegs(id, row, config, 'in-country: phone first')
+  }
 
   // Stage 0 abroad (plan C3): ring the owner's own APP — a WhatsApp-style CallKit
   // ring that works anywhere with internet (incl. UAE where WhatsApp calls are
