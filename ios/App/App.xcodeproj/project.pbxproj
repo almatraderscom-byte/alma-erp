@@ -80,6 +80,7 @@
 		AC570000000000000000B001 /* AgentCallStatusOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC570000000000000000A001 /* AgentCallStatusOutbox.swift */; };
 		AC570000000000000000C001 /* AgentCallStatusOutboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC570000000000000000A002 /* AgentCallStatusOutboxTests.swift */; };
 		AGC1CA1100000000B0FEAGC1 /* AgentCallUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGC1CA1100000000A0FEAGC1 /* AgentCallUI.swift */; };
+		SA1AC0DE00000000B0FESALA /* SalahSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = SA1AC0DE00000000A0FESALA /* SalahSwiftUI.swift */; };
 		B10C00596905806603ADCDC1 /* DigitalInvoicesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 471B8BE931F61C7162672A60 /* DigitalInvoicesSwiftUI.swift */; };
 		B1AA2200000000000000B001 /* AlmaWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AA2200000000000000A003 /* AlmaWidgetBundle.swift */; };
 		B1AA2200000000000000B002 /* AlmaWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AA2200000000000000A004 /* AlmaWidget.swift */; };
@@ -312,6 +313,7 @@
 		AC570000000000000000A002 /* AgentCallStatusOutboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallStatusOutboxTests.swift; sourceTree = "<group>"; };
 		AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_App.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		AGC1CA1100000000A0FEAGC1 /* AgentCallUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallUI.swift; sourceTree = "<group>"; };
+		SA1AC0DE00000000A0FESALA /* SalahSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SalahSwiftUI.swift; sourceTree = "<group>"; };
 		B1AA2200000000000000A002 /* AlmaWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AlmaWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1AA2200000000000000A003 /* AlmaWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaWidgetBundle.swift; sourceTree = "<group>"; };
 		B1AA2200000000000000A004 /* AlmaWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaWidget.swift; sourceTree = "<group>"; };
@@ -567,6 +569,7 @@
 				CA11C17700000000A0FECA11 /* CallKitVoIP.swift */,
 				AC570000000000000000A001 /* AgentCallStatusOutbox.swift */,
 				AGC1CA1100000000A0FEAGC1 /* AgentCallUI.swift */,
+				SA1AC0DE00000000A0FESALA /* SalahSwiftUI.swift */,
 				F2AA7703000000000000A0FE /* IntercomUI.swift */,
 				F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */,
 				F2AA7705000000000000A0FE /* ConnectivityBeacon.swift */,
@@ -1120,6 +1123,7 @@
 				CA11C17700000000B0FECA11 /* CallKitVoIP.swift in Sources */,
 				AC570000000000000000B001 /* AgentCallStatusOutbox.swift in Sources */,
 				AGC1CA1100000000B0FEAGC1 /* AgentCallUI.swift in Sources */,
+				SA1AC0DE00000000B0FESALA /* SalahSwiftUI.swift in Sources */,
 				F2AA7703000000000000B0FE /* IntercomUI.swift in Sources */,
 				F2AA7704000000000000B0FE /* PortalStaffOfficeSwiftUI.swift in Sources */,
 				F2AA7705000000000000B0FE /* ConnectivityBeacon.swift in Sources */,

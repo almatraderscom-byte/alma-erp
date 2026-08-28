@@ -518,6 +518,9 @@ struct MoreMenuScreen: View {
         else if item.path == "native:agent-calls" {
             pushNative?("কল হিস্টরি", AnyView(AgentCallHistoryScreen()))
         }
+        else if item.path == "native:salah" {
+            pushNative?("নামাজ", AnyView(SalahScreen()))
+        }
         else { openPath(item.path, item.title) }
     }
 
