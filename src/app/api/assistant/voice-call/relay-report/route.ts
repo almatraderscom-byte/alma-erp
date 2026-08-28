@@ -85,7 +85,9 @@ export async function POST(req: NextRequest) {
     const row = await prisma.agentVoiceCall.findUnique({
       where: { id: callRecordId }, select: { purpose: true },
     })
-    const salahWaqt = row?.purpose?.match(/^\[salah:([a-z]+)\]/)?.[1]
+    const salahTag = row?.purpose?.match(/^\[salah:([a-z]+)(?::(\d{4}-\d{2}-\d{2}))?\]/)
+    const salahWaqt = salahTag?.[1]
+    const salahDate = salahTag?.[2]
     if (salahWaqt) {
       const CALLER_ROLES = new Set(['caller', 'user', 'boss', 'human'])
       const { isSpokenSalahDeclaration } = await import('@/agent/lib/salah-confirm-intent')
@@ -99,6 +101,9 @@ export async function POST(req: NextRequest) {
         const marked = await applySalahAutoMarkFromUserTexts(declarations, new Date(), {
           allowSettledCorrection: true,
           defaultWaqt: salahWaqt,
+          // The tag's date pins the CALL's day — a report landing after
+          // midnight (or delayed) must not drift to the report day (P1).
+          defaultDateYmd: salahDate,
         })
         if (marked.marked.length) console.log('[relay-report] salah auto-marked from call:', marked.marked)
       }

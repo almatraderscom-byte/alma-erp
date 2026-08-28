@@ -52,6 +52,10 @@ export async function POST(req: NextRequest) {
 
   const waqt = typeof body.waqt === 'string' ? body.waqt.slice(0, 20) : null
   const date = typeof body.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : null
+  // The date rides in the purpose tag too: the post-call auto-mark must target
+  // the day that TRIGGERED the call, not the day the report lands (midnight
+  // crossing / delayed durable report — review-bot P1).
+  const purposeTag = waqt ? (date ? `[salah:${waqt}:${date}] ` : `[salah:${waqt}] `) : ''
 
   // Terminal guards, re-checked at the last moment before the dial.
   const lock = await isOwnerCallLocked().catch(() => ({ locked: false }))
@@ -68,7 +72,7 @@ export async function POST(req: NextRequest) {
   const res = await placeOutboundCall({
     toNumber,
     recipientName: 'Boss',
-    purpose: waqt ? `[salah:${waqt}] ${brief}` : brief,
+    purpose: `${purposeTag}${brief}`,
     firstMessage: '',
     callType: 'owner',
     channel: 'phone',

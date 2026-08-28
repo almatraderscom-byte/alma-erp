@@ -24,12 +24,18 @@ export type AutoMarkOptions = {
   allowSettledCorrection?: boolean
   /**
    * Salah reminder call path only (PR #863): a generic "পড়েছি" spoken on a
-   * call that reminded a SPECIFIC waqt targets THAT waqt (today), not the
-   * first accountable record — an older pending prayer must not swallow the
+   * call that reminded a SPECIFIC waqt targets THAT waqt, not the first
+   * accountable record — an older pending prayer must not swallow the
    * confirmation of the one the call was about. An explicitly named waqt in
    * the owner's words still wins.
    */
   defaultWaqt?: string
+  /**
+   * The location-calendar day that TRIGGERED the reminder call (YYYY-MM-DD).
+   * A report landing after midnight (or delayed) must still mark the call's
+   * own day; defaults to today when absent.
+   */
+  defaultDateYmd?: string
 }
 
 async function loadDayRecords(dateYmd: string) {
@@ -104,6 +110,15 @@ export async function applySalahAutoMarkFromUserTexts(
     let targetWaqt: string | undefined = signal.waqt
     let dateYmd = signal.dateHint === 'yesterday' ? yesterdayYmd : todayYmd
 
+    if (!targetWaqt && opts.defaultWaqt) {
+      // Reminder-call binding WINS over the recent-correction heuristic
+      // (review-bot P1): on a call about a specific waqt, a generic "পড়েছি"
+      // means THAT waqt — a different waqt settled minutes earlier must not
+      // steal it. Same-waqt corrections still work via the settled-correction
+      // kind-change path below.
+      targetWaqt = opts.defaultWaqt
+      dateYmd = opts.defaultDateYmd ?? todayYmd
+    }
     if (!targetWaqt && opts.allowSettledCorrection) {
       // Implicit spoken correction (Codex P1 round 6): "no, I missed it"
       // seconds after a confirm names no waqt, and the just-settled record
@@ -125,10 +140,6 @@ export async function applySalahAutoMarkFromUserTexts(
           dateYmd = recent.d
         }
       }
-    }
-    if (!targetWaqt && opts.defaultWaqt) {
-      targetWaqt = opts.defaultWaqt
-      dateYmd = todayYmd
     }
     if (!targetWaqt) {
       const candidate = accountable.find((a) => {
