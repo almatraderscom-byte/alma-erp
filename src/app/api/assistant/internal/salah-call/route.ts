@@ -5,15 +5,22 @@
  * reminder). Rides the normal placeOutboundCall pipeline (self-hosted SIP live
  * bot, owner persona) with capExempt — salah has its own cadence guards.
  *
- * Body: { brief: string, waqt?: string }
- * Auth: Bearer AGENT_INTERNAL_TOKEN. Caller (VPS salah scheduler) has already
- * checked confirm/lock/gap; placeOutboundCall re-checks the abroad toggle.
+ * Body: { brief: string, waqt?: string, date?: string (YYYY-MM-DD) }
+ * Auth: Bearer AGENT_INTERNAL_TOKEN. The caller (VPS salah scheduler) checks
+ * confirm/lock/gap up front, but this route RE-CHECKS confirmation and the
+ * owner-call-lock immediately before dialing (review-bot P2): the owner may
+ * have confirmed or locked mid-flight, and ringing then bypasses exactly what
+ * he asked for. placeOutboundCall re-checks the abroad toggle.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { placeOutboundCall } from '@/agent/lib/voice-call'
 import { ownerPrimaryNumber } from '@/agent/lib/proactive-call'
+import { isOwnerCallLocked } from '@/lib/owner-call-lock'
+import { prisma } from '@/lib/prisma'
+
+const SETTLED = new Set(['prayed_on_time', 'prayed_late', 'qaza'])
 
 export const runtime = 'nodejs'
 
@@ -36,7 +43,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
-  const body = await req.json().catch(() => ({})) as { brief?: unknown; waqt?: unknown }
+  const body = await req.json().catch(() => ({})) as { brief?: unknown; waqt?: unknown; date?: unknown }
   const brief = typeof body.brief === 'string' ? body.brief.trim().slice(0, 2000) : ''
   if (!brief) return NextResponse.json({ ok: false, error: 'brief লাগবে' }, { status: 400 })
 
@@ -44,6 +51,20 @@ export async function POST(req: NextRequest) {
   if (!toNumber) return NextResponse.json({ ok: false, error: 'OWNER_PHONE_NUMBERS empty' }, { status: 400 })
 
   const waqt = typeof body.waqt === 'string' ? body.waqt.slice(0, 20) : null
+  const date = typeof body.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : null
+
+  // Terminal guards, re-checked at the last moment before the dial.
+  const lock = await isOwnerCallLocked().catch(() => ({ locked: false }))
+  if (lock.locked) return NextResponse.json({ ok: false, error: 'owner_call_locked' }, { status: 409 })
+  if (waqt && date) {
+    const rec = await prisma.agentSalahRecord.findUnique({
+      where: { date_waqt: { date: new Date(`${date}T00:00:00Z`), waqt } },
+      select: { status: true, confirmedAt: true },
+    }).catch(() => null)
+    if (rec && (SETTLED.has(rec.status) || rec.confirmedAt)) {
+      return NextResponse.json({ ok: false, error: 'salah_confirmed' }, { status: 409 })
+    }
+  }
   const res = await placeOutboundCall({
     toNumber,
     recipientName: 'Boss',

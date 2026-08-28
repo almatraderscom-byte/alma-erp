@@ -253,9 +253,13 @@ const OUTBOUND_ONLY = {
  * `dialedAt` is set only once a provider has accepted the call and it is ringing, which makes
  * it the honest measure of what we spent.
  */
+/** Cap-exempt salah reminder calls (purpose '[salah:…') stay OUT of both cap
+ * counters — they must neither be blocked by the budget nor consume it. */
+const CAP_COUNTED_ONLY = { NOT: { purpose: { startsWith: '[salah:' } } }
+
 export async function callsPlacedToday(): Promise<number> {
   return db.agentVoiceCall.count({
-    where: { createdAt: { gte: dhakaDayStart() }, dialedAt: { not: null }, ...OUTBOUND_ONLY },
+    where: { createdAt: { gte: dhakaDayStart() }, dialedAt: { not: null }, ...OUTBOUND_ONLY, ...CAP_COUNTED_ONLY },
   })
 }
 
@@ -266,7 +270,7 @@ export async function callsPlacedToday(): Promise<number> {
  */
 export async function callAttemptsToday(): Promise<number> {
   return db.agentVoiceCall.count({
-    where: { createdAt: { gte: dhakaDayStart() }, ...OUTBOUND_ONLY },
+    where: { createdAt: { gte: dhakaDayStart() }, ...OUTBOUND_ONLY, ...CAP_COUNTED_ONLY },
   })
 }
 

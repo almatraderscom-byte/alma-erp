@@ -73,6 +73,29 @@ export async function POST(req: NextRequest) {
   })
   if (!stored) return Response.json({ error: 'call_not_found' }, { status: 404 })
 
+  // Salah reminder calls ([salah:<waqt>] purpose): the SIP live bot has no
+  // mark_salah tool, so the boss's spoken "পড়েছি" is honored HERE, from the
+  // post-call transcript, via the same deterministic parser Telegram uses.
+  try {
+    const { prisma } = await import('@/lib/prisma')
+    const row = await prisma.agentVoiceCall.findUnique({
+      where: { id: callRecordId }, select: { purpose: true },
+    })
+    if (row?.purpose?.startsWith('[salah:')) {
+      const userTexts = (body.transcript ?? [])
+        .filter((t) => t.role !== 'assistant' && t.role !== 'model')
+        .map((t) => String(t.message ?? '').trim())
+        .filter(Boolean)
+      if (userTexts.length) {
+        const { applySalahAutoMarkFromUserTexts } = await import('@/agent/lib/salah-auto-mark')
+        const marked = await applySalahAutoMarkFromUserTexts(userTexts)
+        if (marked.marked.length) console.log('[relay-report] salah auto-marked from call:', marked.marked)
+      }
+    }
+  } catch (err) {
+    console.warn('[relay-report] salah auto-mark failed:', err instanceof Error ? err.message : String(err))
+  }
+
   // Storage is the acknowledgement boundary. Owner-facing channels are independent,
   // durable outbox rows; try immediately for low latency, cron retries any failure.
   // Keep the worker ACK boundary short: Telegram is attempted immediately; push
