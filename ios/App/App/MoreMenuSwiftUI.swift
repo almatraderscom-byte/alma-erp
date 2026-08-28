@@ -358,7 +358,13 @@ struct MoreMenuScreen: View {
                                            tabHrefs: tabs, canSee: { s.canSee($0) })
             .map { g in
                 MenuGroup(header: g.header, icon: g.symbol,
-                          items: g.items.map { MenuItem(title: $0.title, icon: $0.symbol, path: $0.path) })
+                          items: g.items
+                            // নামাজ is the SYSTEM OWNER's personal section — every
+                            // salah endpoint 403s anyone else (a non-owner
+                            // SUPER_ADMIN passes the /agent gate but would only
+                            // get a broken screen + a spurious auth-expired flow).
+                            .filter { s.isOwner || $0.path != "native:salah" }
+                            .map { MenuItem(title: $0.title, icon: $0.symbol, path: $0.path) })
             }
     }
 

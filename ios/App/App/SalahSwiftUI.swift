@@ -754,6 +754,10 @@ struct SalahSettingsSheet: View {
             let r: TimesResp = try await AlmaAPI.shared.send("POST", "/api/agent/salah-times", body: Body(config: cfg))
             if let c = r.config { config = c }
             toast = "✓ নামাজের সময় সেভ হয়েছে"
+            // Manual time edits also rebuild today's records on the worker's
+            // next tick when the location is not Dhaka — the parent's delayed
+            // refreshes cover that window too (review-bot P2).
+            onLocationApplied?()
         } catch {
             toast = "সেভ হয়নি — আবার চেষ্টা করুন"
         }
