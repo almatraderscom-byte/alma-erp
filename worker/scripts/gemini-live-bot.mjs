@@ -512,9 +512,13 @@ class Call {
       // আপনার?") made ASKING_RE veto the goodbye spoken right after the boss
       // said "কেটে দাও" (live 2026-08-29 test call — hang-up needed a second
       // goodbye round). The in-one-breath question+goodbye guard still works:
-      // both halves then live in the SAME reply's outText. Audio path and the
-      // locked tuning values are untouched.
-      this.outText = ''
+      // both halves then live in the SAME reply's outText. OWNER calls only
+      // (review-bot P2): on those the boss's explicit end-ask already arms the
+      // hang-up, so losing a racing question fragment is harmless — while on
+      // staff/contact/inbound calls a delayed input fragment erasing the
+      // current reply's question could cut a caller off mid-question. Audio
+      // path and the locked tuning values are untouched.
+      if (this.isOwnerCall()) this.outText = ''
       this.accum('caller', sc.inputTranscription.text)
       process.stdout.write(`[glive ${this.id} HEARD] ${sc.inputTranscription.text}\n`)
     }
