@@ -226,7 +226,11 @@ struct SalahScreen: View {
             SalahDayDetailSheet(day: day, offsetMin: store.offsetMin, today: store.today)
                 .presentationDetents([.medium, .large])
         }
-        .sheet(isPresented: $settingsOpen) {
+        .sheet(isPresented: $settingsOpen, onDismiss: {
+            // Location / time edits change the calendar's day windows — drop the
+            // range cache and refetch so the grid reflects them immediately.
+            Task { await store.refresh() }
+        }) {
             SalahSettingsSheet()
         }
         .task {
@@ -524,7 +528,9 @@ struct SalahSettingsSheet: View {
 
     @State private var config: TimeConfig?
     @State private var locationLabel = ""
-    @State private var abroadOff = false
+    /// nil = the persisted value could not be loaded — never fabricate `false`.
+    @State private var abroadOff: Bool? = nil
+    @State private var abroadBusy = false
     @State private var loading = true
     @State private var busy = false
     @State private var toast: String?
@@ -581,13 +587,30 @@ struct SalahSettingsSheet: View {
 
     private var abroadSection: some View {
         Section(footer: Text("চালু করলে আপনার বাংলাদেশি নম্বরে কোনো কল যাবে না — সব কল app-এ আসবে। দেশে ফিরে বন্ধ করলেই আবার নম্বরে কল আসবে।")) {
-            Toggle(isOn: Binding(
-                get: { abroadOff },
-                set: { v in Task { await setAbroad(v) } }
-            )) {
-                Label("দেশের বাইরে আছি", systemImage: "airplane")
+            if let current = abroadOff {
+                Toggle(isOn: Binding(
+                    get: { current },
+                    set: { v in Task { await setAbroad(v) } }
+                )) {
+                    Label("দেশের বাইরে আছি", systemImage: "airplane")
+                }
+                .tint(AlmaSwiftTheme.coral)
+                .disabled(abroadBusy)
+            } else {
+                HStack {
+                    Label("দেশের বাইরে আছি", systemImage: "airplane")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("লোড হয়নি — আবার") {
+                        Task {
+                            if let a: AbroadResp = try? await AlmaAPI.shared.get("/api/assistant/salah/abroad-calls") {
+                                abroadOff = a.off
+                            }
+                        }
+                    }
+                    .font(.caption)
+                }
             }
-            .tint(AlmaSwiftTheme.coral)
         }
     }
 
@@ -675,6 +698,11 @@ struct SalahSettingsSheet: View {
     }
 
     private func setAbroad(_ v: Bool) async {
+        // One write at a time — the toggle is disabled while a POST is in
+        // flight, so a rapid on-off can't land out of order (Codex P2).
+        guard !abroadBusy else { return }
+        abroadBusy = true
+        defer { abroadBusy = false }
         let prev = abroadOff
         abroadOff = v
         struct Body: Encodable { let off: Bool }
