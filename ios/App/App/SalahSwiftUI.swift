@@ -36,6 +36,8 @@ struct SalahDay: Decodable, Identifiable {
 private struct SalahHistoryResp: Decodable {
     let today: String
     let offsetMin: Int
+    let from: String
+    let to: String
     let days: [SalahDay]
 }
 
@@ -135,8 +137,13 @@ final class SalahStore: ObservableObject {
 
     private var loadedRanges: [(String, String)] = []
 
-    func loadRange(from: String, to: String) async {
-        if loadedRanges.contains(where: { $0.0 <= from && to <= $0.1 }) { return }
+    /// nil bounds = let the SERVER pick today/from/to on the owner's current
+    /// location clock — the client's cached `today` can be a day off right
+    /// after a location change (review-bot P2). The cached range is recorded
+    /// from the response, which always carries the authoritative from/to.
+    func loadRange(from: String?, to: String?) async {
+        if let f = from, let t = to,
+           loadedRanges.contains(where: { $0.0 <= f && t <= $0.1 }) { return }
         loading = byDate.isEmpty
         error = nil
         do {
@@ -145,7 +152,7 @@ final class SalahStore: ObservableObject {
             today = r.today
             offsetMin = r.offsetMin
             for day in r.days { byDate[day.date] = day }
-            loadedRanges.append((from, to))
+            loadedRanges.append((r.from, r.to))
         } catch {
             self.error = "নামাজের হিসাব আনা যায়নি — নেটওয়ার্ক দেখুন।"
         }
@@ -155,12 +162,7 @@ final class SalahStore: ObservableObject {
     func refresh() async {
         loadedRanges = []
         byDate = [:]
-        let today = self.today.isEmpty
-            ? YmdCal.make(Calendar.current.component(.year, from: Date()),
-                          Calendar.current.component(.month, from: Date()),
-                          Calendar.current.component(.day, from: Date()))
-            : self.today
-        await loadRange(from: YmdCal.addDays(today, -41), to: today)
+        await loadRange(from: nil, to: nil)
     }
 }
 
@@ -234,12 +236,8 @@ struct SalahScreen: View {
             SalahSettingsSheet()
         }
         .task {
-            let now = Date()
-            var cal = Calendar(identifier: .gregorian)
-            cal.timeZone = TimeZone(identifier: "Asia/Dhaka") ?? .current
-            let y = cal.component(.year, from: now), m = cal.component(.month, from: now), d = cal.component(.day, from: now)
-            let today = YmdCal.make(y, m, d)
-            await store.loadRange(from: YmdCal.addDays(today, -41), to: today)
+            // Server picks the bounds on the owner's location clock.
+            await store.loadRange(from: nil, to: nil)
         }
         .refreshable { await store.refresh() }
     }
@@ -531,6 +529,7 @@ struct SalahSettingsSheet: View {
     /// nil = the persisted value could not be loaded — never fabricate `false`.
     @State private var abroadOff: Bool? = nil
     @State private var abroadBusy = false
+    @State private var locationLoadFailed = false
     @State private var loading = true
     @State private var busy = false
     @State private var toast: String?
@@ -545,6 +544,19 @@ struct SalahSettingsSheet: View {
                 if loading {
                     ProgressView().frame(maxWidth: .infinity)
                 } else {
+                    // A transient failure must not leave a dead sheet — surface
+                    // it with a retry instead of empty fields (review-bot P2).
+                    if config == nil || locationLoadFailed {
+                        Section {
+                            Button {
+                                Task { await load() }
+                            } label: {
+                                Label(config == nil ? "নামাজের সময় লোড হয়নি — আবার চেষ্টা" : "লোকেশন লোড হয়নি — আবার চেষ্টা",
+                                      systemImage: "arrow.clockwise")
+                                    .foregroundStyle(AlmaSwiftTheme.coral)
+                            }
+                        }
+                    }
                     locationSection
                     abroadSection
                     timesSection
@@ -678,7 +690,12 @@ struct SalahSettingsSheet: View {
     private func load() async {
         loading = true
         if let t: TimesResp = try? await AlmaAPI.shared.get("/api/agent/salah-times") { config = t.config }
-        if let l: LocResp = try? await AlmaAPI.shared.get("/api/assistant/salah/location") { locationLabel = l.label }
+        if let l: LocResp = try? await AlmaAPI.shared.get("/api/assistant/salah/location") {
+            locationLabel = l.label
+            locationLoadFailed = false
+        } else {
+            locationLoadFailed = true
+        }
         if let a: AbroadResp = try? await AlmaAPI.shared.get("/api/assistant/salah/abroad-calls") { abroadOff = a.off }
         loading = false
     }
