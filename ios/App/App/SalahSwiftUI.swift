@@ -633,11 +633,16 @@ struct SalahSettingsSheet: View {
                 Text(locationLabel.isEmpty ? "সেট নেই" : locationLabel)
                 Spacer()
             }
-            HStack(spacing: 10) {
-                presetButton("বাংলাদেশ (ঢাকা)", offsetMin: 360, city: "Dhaka",
-                             country: "Bangladesh", method: 1, school: 1)
-                presetButton("UAE (দুবাই)", offsetMin: 240, city: "Dubai",
-                             country: "United Arab Emirates", method: 8, school: 0)
+            VStack(spacing: 8) {
+                HStack(spacing: 10) {
+                    presetButton("বাংলাদেশ (ঢাকা)", offsetMin: 360, city: "Dhaka",
+                                 country: "Bangladesh", method: 1, school: 1)
+                    presetButton("UAE (দুবাই)", offsetMin: 240, city: "Dubai",
+                                 country: "United Arab Emirates", method: 8, school: 0)
+                }
+                // Saudi = Makkah, Umm Al-Qura (method 4) — owner travels there.
+                presetButton("সৌদি (মক্কা)", offsetMin: 180, city: "Makkah",
+                             country: "Saudi Arabia", method: 4, school: 0)
             }
         }
     }

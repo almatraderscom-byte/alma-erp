@@ -87,10 +87,12 @@ export default function AgentSalahTimesSettings() {
   }, [])
 
   // Presets: label · UTC offset (min) · AlAdhan city/country/method/school.
-  // school 1 = Hanafi asr (Bangladesh practice); 0 = standard (UAE).
+  // school 1 = Hanafi asr (Bangladesh practice); 0 = standard (UAE/Saudi).
+  // Saudi = Makkah on Umm Al-Qura (method 4) — the owner travels there (2026-08-29).
   const LOCATION_PRESETS = [
     { label: 'বাংলাদেশ (ঢাকা)', offsetMin: 360, city: 'Dhaka', country: 'Bangladesh', method: 1, school: 1 },
     { label: 'UAE (দুবাই)', offsetMin: 240, city: 'Dubai', country: 'United Arab Emirates', method: 8, school: 0 },
+    { label: 'সৌদি (মক্কা)', offsetMin: 180, city: 'Makkah', country: 'Saudi Arabia', method: 4, school: 0 },
   ] as const
 
   async function applyLocation(preset: (typeof LOCATION_PRESETS)[number]) {
