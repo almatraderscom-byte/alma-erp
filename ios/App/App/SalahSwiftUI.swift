@@ -799,7 +799,10 @@ struct SalahSettingsSheet: View {
             // The server may have SAVED the location but failed the AlAdhan
             // autofill (502 partial success) — reload the true server state and
             // say so honestly instead of claiming nothing was saved (Codex P1).
+            // The worker marker may already be invalidated, so the parent's
+            // delayed refreshes are needed on this path too (Codex P2).
             await load()
+            onLocationApplied?()
             toast = "লোকেশন সেভ হতে পারে কিন্তু সময় অটো আনা যায়নি — প্রিসেটটা আবার চাপুন"
         }
     }
