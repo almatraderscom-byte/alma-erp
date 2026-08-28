@@ -102,14 +102,20 @@ export async function POST(req: NextRequest) {
         // not report delivery — a retried durable report must not turn an
         // on-time confirmation into prayed_late (review-bot P1).
         const spokenAt = row.endedAt ?? row.dialedAt ?? row.createdAt ?? new Date()
-        const marked = await applySalahAutoMarkFromUserTexts(declarations, spokenAt, {
-          allowSettledCorrection: true,
-          defaultWaqt: salahWaqt,
-          // The tag's date pins the CALL's day — a report landing after
-          // midnight (or delayed) must not drift to the report day (P1).
-          defaultDateYmd: salahDate,
-        })
-        if (marked.marked.length) console.log('[relay-report] salah auto-marked from call:', marked.marked)
+        // ONE declaration per invocation, in transcript order — exactly how the
+        // native confirm-spoken path serializes turns. A single batched call
+        // would let markedKeys swallow a LATER correction ("পড়েছি" → "না,
+        // কাযা হয়েছে") of the same waqt (review-bot P1).
+        for (const declaration of declarations) {
+          const marked = await applySalahAutoMarkFromUserTexts([declaration], spokenAt, {
+            allowSettledCorrection: true,
+            defaultWaqt: salahWaqt,
+            // The tag's date pins the CALL's day — a report landing after
+            // midnight (or delayed) must not drift to the report day (P1).
+            defaultDateYmd: salahDate,
+          })
+          if (marked.marked.length) console.log('[relay-report] salah auto-marked from call:', marked.marked)
+        }
       }
     }
   } catch (err) {

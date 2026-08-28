@@ -24,10 +24,53 @@
  */
 
 import http from 'http'
+import path from 'path'
+import { fileURLToPath } from 'url'
+import { mkdirSync, writeFileSync, readdirSync, readFileSync, unlinkSync, statSync } from 'fs'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { WebSocketServer, WebSocket } from 'ws'
 import { GoogleGenAI } from '@google/genai'
 import { logCost } from '../cost-log.mjs'
+
+// ── Durable relay-report spool (review-bot P1, PR #863) ──────────────────────
+// The in-memory double attempt loses a call's transcript — and with it a spoken
+// salah confirmation — if the app is briefly unreachable. Failed report bodies
+// are spooled to disk and re-posted every minute until they land (the endpoint
+// is idempotent); files older than 24h are dropped as a junk backstop.
+const REPORT_SPOOL_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../.relay-report-spool')
+
+function spoolReport(callRecordId, body) {
+  try {
+    mkdirSync(REPORT_SPOOL_DIR, { recursive: true })
+    writeFileSync(path.join(REPORT_SPOOL_DIR, `${callRecordId}.json`), body)
+    console.warn(`[voice-relay] report spooled for retry: ${callRecordId}`)
+  } catch (err) {
+    console.warn('[voice-relay] report spool write failed:', err?.message ?? err)
+  }
+}
+
+async function drainReportSpool() {
+  const appUrl = (process.env.APP_URL ?? '').replace(/\/$/, '')
+  const token = process.env.AGENT_INTERNAL_TOKEN ?? ''
+  if (!appUrl || !token) return
+  let files = []
+  try { files = readdirSync(REPORT_SPOOL_DIR).filter((f) => f.endsWith('.json')) } catch { return }
+  for (const f of files) {
+    const full = path.join(REPORT_SPOOL_DIR, f)
+    try {
+      if (Date.now() - statSync(full).mtimeMs > 24 * 3600_000) { unlinkSync(full); continue }
+      const res = await fetch(`${appUrl}/api/assistant/voice-call/relay-report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: readFileSync(full, 'utf8'),
+        signal: AbortSignal.timeout(20_000),
+      })
+      // 404 = call row gone — retrying forever is pointless.
+      if (res.ok || res.status === 404) unlinkSync(full)
+    } catch { /* next drain retries */ }
+  }
+}
+setInterval(() => { drainReportSpool().catch(() => {}) }, 60_000).unref?.()
 import { isUnintelligibleTranscript, endSignalFromCaller, isHangupConfirmation } from './transcript-guard.mjs'
 import { handleSarvamMediaUpgrade } from './sarvam-media.mjs'
 
@@ -442,7 +485,8 @@ class RelaySession {
       durationSecs,
       status: this.history.length ? 'completed' : 'no_answer',
     })
-    // One retry — the owner's post-call summary must survive a transient blip.
+    // One retry inline — then the durable spool takes over so a longer app
+    // outage cannot lose the transcript (and any salah confirmation in it).
     let lastErr
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -459,6 +503,7 @@ class RelaySession {
       }
       await new Promise((r) => setTimeout(r, 2000))
     }
+    spoolReport(this.callRecordId, body)
     throw lastErr
   }
 }
