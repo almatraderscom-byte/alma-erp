@@ -3,7 +3,7 @@
  * prayer times the whole salah system follows.
  *
  * GET  → { offsetMin, label }
- * POST { offsetMin, label, autofill?: { city, country, method? } }
+ * POST { offsetMin, label, autofill?: { city, country, method?, school? } }
  *   - saves the location KV (worker reads it every tick, 60s cache)
  *   - with `autofill`, pulls the location's prayer times from AlAdhan and fills
  *     the ৩×৫ time config deterministically (azan = API time, jamaat = azan+15,
@@ -64,10 +64,13 @@ function cleanHm(v: unknown): string | null {
   return m ? m[1] : null
 }
 
-async function autofillTimes(city: string, country: string, method: number) {
+async function autofillTimes(city: string, country: string, method: number, school: number) {
+  // school: AlAdhan asr juristic setting — 1 = Hanafi (Bangladesh practice,
+  // asr ~1.5h later), 0 = Shafi'i/standard. Omitting it defaulted to 0, which
+  // put asr at 15:28 and made every asr call feel "UAE-time" early.
   const url =
     `https://api.aladhan.com/v1/timingsByCity?city=${encodeURIComponent(city)}` +
-    `&country=${encodeURIComponent(country)}&method=${method}`
+    `&country=${encodeURIComponent(country)}&method=${method}&school=${school}`
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
   if (!res.ok) throw new Error(`aladhan HTTP ${res.status}`)
   const data = (await res.json()) as { data?: { timings?: Record<string, string> } }
@@ -101,7 +104,7 @@ export async function POST(req: NextRequest) {
   let body: {
     offsetMin?: unknown
     label?: unknown
-    autofill?: { city?: unknown; country?: unknown; method?: unknown } | null
+    autofill?: { city?: unknown; country?: unknown; method?: unknown; school?: unknown } | null
   }
   try {
     body = await req.json()
@@ -137,10 +140,12 @@ export async function POST(req: NextRequest) {
   if (body.autofill && typeof body.autofill.city === 'string' && typeof body.autofill.country === 'string') {
     try {
       const method = Number(body.autofill.method)
+      const school = Number(body.autofill.school)
       config = await autofillTimes(
         body.autofill.city,
         body.autofill.country,
         Number.isFinite(method) && method >= 0 && method <= 23 ? method : 3,
+        school === 1 ? 1 : 0,
       )
     } catch (err) {
       return Response.json(

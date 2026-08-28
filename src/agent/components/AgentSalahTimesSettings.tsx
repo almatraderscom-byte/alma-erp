@@ -86,10 +86,11 @@ export default function AgentSalahTimesSettings() {
     }
   }, [])
 
-  // Presets: label · UTC offset (min) · AlAdhan city/country/method.
+  // Presets: label · UTC offset (min) · AlAdhan city/country/method/school.
+  // school 1 = Hanafi asr (Bangladesh practice); 0 = standard (UAE).
   const LOCATION_PRESETS = [
-    { label: 'বাংলাদেশ (ঢাকা)', offsetMin: 360, city: 'Dhaka', country: 'Bangladesh', method: 1 },
-    { label: 'UAE (দুবাই)', offsetMin: 240, city: 'Dubai', country: 'United Arab Emirates', method: 8 },
+    { label: 'বাংলাদেশ (ঢাকা)', offsetMin: 360, city: 'Dhaka', country: 'Bangladesh', method: 1, school: 1 },
+    { label: 'UAE (দুবাই)', offsetMin: 240, city: 'Dubai', country: 'United Arab Emirates', method: 8, school: 0 },
   ] as const
 
   async function applyLocation(preset: (typeof LOCATION_PRESETS)[number]) {
@@ -102,7 +103,7 @@ export default function AgentSalahTimesSettings() {
         body: JSON.stringify({
           offsetMin: preset.offsetMin,
           label: preset.label,
-          autofill: { city: preset.city, country: preset.country, method: preset.method },
+          autofill: { city: preset.city, country: preset.country, method: preset.method, school: preset.school },
         }),
       })
       const data = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; config?: SalahTimeConfig }
