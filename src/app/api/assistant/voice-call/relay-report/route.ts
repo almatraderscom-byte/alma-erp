@@ -115,6 +115,9 @@ export async function POST(req: NextRequest) {
             // The tag's date pins the CALL's day — a report landing after
             // midnight (or delayed) must not drift to the report day (P1).
             defaultDateYmd: salahDate,
+            // Pre-jamaat call crossing the window start: the confirmation is
+            // honored at the boundary instead of discarded (review-bot P2).
+            callEndAt: row.endedAt ?? undefined,
           })
           if (marked.marked.length) console.log('[relay-report] salah auto-marked from call:', marked.marked)
         }

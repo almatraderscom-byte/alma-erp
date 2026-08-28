@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { placeOutboundCall } from '@/agent/lib/voice-call'
+import { placeOutboundCall, getVoiceCallConfig } from '@/agent/lib/voice-call'
 import { ownerPrimaryNumber } from '@/agent/lib/proactive-call'
 import { isOwnerCallLocked } from '@/lib/owner-call-lock'
 import { prisma } from '@/lib/prisma'
@@ -49,6 +49,16 @@ export async function POST(req: NextRequest) {
 
   const toNumber = ownerPrimaryNumber()
   if (!toNumber) return NextResponse.json({ ok: false, error: 'OWNER_PHONE_NUMBERS empty' }, { status: 400 })
+
+  // Only providers that report their transcript to relay-report can honor a
+  // spoken "পড়েছি" (the auto-mark lives there). ElevenLabs reports to the
+  // legacy webhook with no salah hook — refusing here makes the scheduler
+  // fall back to the one-way reminder instead of silently losing
+  // confirmations (review-bot P1).
+  const provider = getVoiceCallConfig().provider
+  if (provider === 'elevenlabs') {
+    return NextResponse.json({ ok: false, error: 'provider_unsupported_for_salah' }, { status: 400 })
+  }
 
   const waqt = typeof body.waqt === 'string' ? body.waqt.slice(0, 20) : null
   const date = typeof body.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : null
