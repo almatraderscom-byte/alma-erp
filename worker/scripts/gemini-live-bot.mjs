@@ -517,7 +517,11 @@ class Call {
     }
     if (sc?.inputTranscription?.text) {
       this.callerSpoke = true
-      const endNow = CALLER_END_RE.test(sc.inputTranscription.text)
+      // Negated end phrase ("রাখো না, কথা আছে" = keep talking) must not read
+      // as an end request (review-bot P2).
+      const NEG_END_RE = /(রাখো|রাখেন|রাখিস|কেটো|কাটো|কাটিস|শেষ\s*কর)\s*না\b|কাটবে\s*না|রাখবে\s*না/
+      const utter = sc.inputTranscription.text
+      const endNow = CALLER_END_RE.test(utter) && !NEG_END_RE.test(utter)
       if (endNow) this.callerWantsEnd = true
       // Late-arriving owner end-ask + a goodbye we just discarded (≤10s ago):
       // hang up now instead of waiting a whole extra goodbye round. Gated on
