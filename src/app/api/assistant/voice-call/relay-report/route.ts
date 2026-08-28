@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
   try {
     const { prisma } = await import('@/lib/prisma')
     const row = await prisma.agentVoiceCall.findUnique({
-      where: { id: callRecordId }, select: { purpose: true },
+      where: { id: callRecordId }, select: { purpose: true, endedAt: true, dialedAt: true, createdAt: true },
     })
     const salahTag = row?.purpose?.match(/^\[salah:([a-z]+)(?::(\d{4}-\d{2}-\d{2}))?\]/)
     const salahWaqt = salahTag?.[1]
@@ -98,7 +98,11 @@ export async function POST(req: NextRequest) {
         .map((t) => t.slice(0, 500))
       if (declarations.length) {
         const { applySalahAutoMarkFromUserTexts } = await import('@/agent/lib/salah-auto-mark')
-        const marked = await applySalahAutoMarkFromUserTexts(declarations, new Date(), {
+        // Timestamp = the CALL's own clock (end, else dial, else row create),
+        // not report delivery — a retried durable report must not turn an
+        // on-time confirmation into prayed_late (review-bot P1).
+        const spokenAt = row.endedAt ?? row.dialedAt ?? row.createdAt ?? new Date()
+        const marked = await applySalahAutoMarkFromUserTexts(declarations, spokenAt, {
           allowSettledCorrection: true,
           defaultWaqt: salahWaqt,
           // The tag's date pins the CALL's day — a report landing after
