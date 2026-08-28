@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
     const salahTag = row?.purpose?.match(/^\[salah:([a-z]+)(?::(\d{4}-\d{2}-\d{2}))?\]/)
     const salahWaqt = salahTag?.[1]
     const salahDate = salahTag?.[2]
-    if (salahWaqt) {
+    if (row && salahWaqt) {
       const CALLER_ROLES = new Set(['caller', 'user', 'boss', 'human'])
       const { isSpokenSalahDeclaration } = await import('@/agent/lib/salah-confirm-intent')
       const declarations = (body.transcript ?? [])
