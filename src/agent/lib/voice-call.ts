@@ -254,8 +254,13 @@ const OUTBOUND_ONLY = {
  * it the honest measure of what we spent.
  */
 /** Cap-exempt salah reminder calls (purpose '[salah:…') stay OUT of both cap
- * counters — they must neither be blocked by the budget nor consume it. */
-const CAP_COUNTED_ONLY = { NOT: { purpose: { startsWith: '[salah:' } } }
+ * counters — they must neither be blocked by the budget nor consume it.
+ * null purposes stay IN: a negated startsWith never matches SQL NULL, and
+ * OUTBOUND_ONLY classifies null-purpose rows as ours (review-bot P2). The
+ * AND wrapper keeps this OR from clobbering OUTBOUND_ONLY's OR on spread. */
+const CAP_COUNTED_ONLY = {
+  AND: [{ OR: [{ purpose: null }, { NOT: { purpose: { startsWith: '[salah:' } } }] }],
+}
 
 export async function callsPlacedToday(): Promise<number> {
   return db.agentVoiceCall.count({

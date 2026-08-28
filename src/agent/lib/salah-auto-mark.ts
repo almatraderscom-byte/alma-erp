@@ -22,6 +22,14 @@ export type AutoMarkOptions = {
    * keeps the default (false) — there the head + mark_salah own corrections.
    */
   allowSettledCorrection?: boolean
+  /**
+   * Salah reminder call path only (PR #863): a generic "পড়েছি" spoken on a
+   * call that reminded a SPECIFIC waqt targets THAT waqt (today), not the
+   * first accountable record — an older pending prayer must not swallow the
+   * confirmation of the one the call was about. An explicitly named waqt in
+   * the owner's words still wins.
+   */
+  defaultWaqt?: string
 }
 
 async function loadDayRecords(dateYmd: string) {
@@ -117,6 +125,10 @@ export async function applySalahAutoMarkFromUserTexts(
           dateYmd = recent.d
         }
       }
+    }
+    if (!targetWaqt && opts.defaultWaqt) {
+      targetWaqt = opts.defaultWaqt
+      dateYmd = todayYmd
     }
     if (!targetWaqt) {
       const candidate = accountable.find((a) => {

@@ -75,20 +75,31 @@ export async function POST(req: NextRequest) {
 
   // Salah reminder calls ([salah:<waqt>] purpose): the SIP live bot has no
   // mark_salah tool, so the boss's spoken "পড়েছি" is honored HERE, from the
-  // post-call transcript, via the same deterministic parser Telegram uses.
+  // post-call transcript. Mirrors the native confirm-spoken route exactly:
+  // caller-side turns ONLY (SIP transcripts use agent/caller roles — an
+  // allowlist keeps the bot's own speech out), each gated by the strict
+  // spoken-declaration predicate, and a generic confirmation binds to the
+  // waqt THIS call reminded (review-bot P1 ×2).
   try {
     const { prisma } = await import('@/lib/prisma')
     const row = await prisma.agentVoiceCall.findUnique({
       where: { id: callRecordId }, select: { purpose: true },
     })
-    if (row?.purpose?.startsWith('[salah:')) {
-      const userTexts = (body.transcript ?? [])
-        .filter((t) => t.role !== 'assistant' && t.role !== 'model')
+    const salahWaqt = row?.purpose?.match(/^\[salah:([a-z]+)\]/)?.[1]
+    if (salahWaqt) {
+      const CALLER_ROLES = new Set(['caller', 'user', 'boss', 'human'])
+      const { isSpokenSalahDeclaration } = await import('@/agent/lib/salah-confirm-intent')
+      const declarations = (body.transcript ?? [])
+        .filter((t) => CALLER_ROLES.has(String(t.role ?? '').toLowerCase()))
         .map((t) => String(t.message ?? '').trim())
-        .filter(Boolean)
-      if (userTexts.length) {
+        .filter((t) => t && isSpokenSalahDeclaration(t))
+        .map((t) => t.slice(0, 500))
+      if (declarations.length) {
         const { applySalahAutoMarkFromUserTexts } = await import('@/agent/lib/salah-auto-mark')
-        const marked = await applySalahAutoMarkFromUserTexts(userTexts)
+        const marked = await applySalahAutoMarkFromUserTexts(declarations, new Date(), {
+          allowSettledCorrection: true,
+          defaultWaqt: salahWaqt,
+        })
         if (marked.marked.length) console.log('[relay-report] salah auto-marked from call:', marked.marked)
       }
     }
