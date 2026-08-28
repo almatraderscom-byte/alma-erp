@@ -517,10 +517,13 @@ class Call {
     }
     if (sc?.inputTranscription?.text) {
       this.callerSpoke = true
-      if (CALLER_END_RE.test(sc.inputTranscription.text)) this.callerWantsEnd = true
+      const endNow = CALLER_END_RE.test(sc.inputTranscription.text)
+      if (endNow) this.callerWantsEnd = true
       // Late-arriving owner end-ask + a goodbye we just discarded (≤10s ago):
-      // hang up now instead of waiting a whole extra goodbye round.
-      if (this.isOwnerCall() && this.callerWantsEnd && !this.hangingUp
+      // hang up now instead of waiting a whole extra goodbye round. Gated on
+      // THIS utterance being an end phrase (review-bot P2) — callerWantsEnd is
+      // sticky, and "না, কথা আছে" after a genuine "রাখব কি?" must keep talking.
+      if (this.isOwnerCall() && endNow && !this.hangingUp
           && this.pendingGoodbyeAt && Date.now() - this.pendingGoodbyeAt < 10_000) {
         console.log(`[glive] ${this.id} hang-up (late end-ask honors the discarded goodbye)`)
         this.hangingUp = true
