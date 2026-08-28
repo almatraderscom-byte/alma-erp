@@ -54,6 +54,7 @@ private enum SalahL10n {
         case "prayed_late": return "দেরিতে পড়েছেন"
         case "qaza": return "কাযা করেছেন"
         case "missed": return "পড়া হয়নি"
+        case "skipped": return "হিসাবের বাইরে"
         default: return "বাকি"
         }
     }
@@ -246,7 +247,9 @@ struct SalahScreen: View {
         var d = from
         while d <= to {
             if let day = store.byDate[d] {
-                for w in day.waqts where w.status != "pending" {
+                // 'skipped' = window reconciled away after a time change — no
+                // prayer outcome, so it must not depress the ratio (Codex P2).
+                for w in day.waqts where w.status != "pending" && w.status != "skipped" {
                     total += 1
                     if w.status == "prayed_on_time" || w.status == "prayed_late" || w.status == "qaza" { done += 1 }
                 }
@@ -702,7 +705,11 @@ struct SalahSettingsSheet: View {
             locationLabel = label
             toast = "✓ \(label) — নামাজের সময় অটো বসেছে"
         } catch {
-            toast = "লোকেশন সেভ হয়নি — আবার চেষ্টা করুন"
+            // The server may have SAVED the location but failed the AlAdhan
+            // autofill (502 partial success) — reload the true server state and
+            // say so honestly instead of claiming nothing was saved (Codex P1).
+            await load()
+            toast = "লোকেশন সেভ হতে পারে কিন্তু সময় অটো আনা যায়নি — প্রিসেটটা আবার চাপুন"
         }
     }
 }
