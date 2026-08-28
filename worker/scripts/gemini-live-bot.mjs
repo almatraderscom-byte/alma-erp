@@ -357,6 +357,7 @@ class Call {
     this.spoken = ''             // longer rolling transcript (for a tool call read aloud)
     this._spokenToolFired = false
     this.hangingUp = false
+    this.pendingGoodbyeAt = 0     // owner call: a goodbye discarded while un-armed (late end-ask race)
     this.callerSpoke = false     // arm the goodbye→hangup only after the caller has spoken once
     this.callerWantsEnd = false  // the OTHER side asked to finish — see CALLER_END_RE
     this.startedAt = 0
@@ -494,19 +495,59 @@ class Call {
         // Asking and saying goodbye in one breath — wait for the answer, whoever is on the line.
         if (ASKING_RE.test(this.outText)) {
           console.log(`[glive] ${this.id} goodbye inside a question — IGNORED (waiting for the answer)`)
+          // Owner call: remember this goodbye too (review-bot P2) — with a
+          // stale "?" AND a late-arriving "কেটে দাও" both races stack, and the
+          // boss's answer to a real "রাখব কি?" is itself the end-ask that
+          // should honor the farewell.
+          if (this.isOwnerCall()) this.pendingGoodbyeAt = Date.now()
           this.outText = ''
         } else if (armed) {
           this.hangingUp = true
           this.outText = ''
         } else {
           console.log(`[glive] ${this.id} goodbye — IGNORED (${this.isOwnerCall() ? 'boss has not asked to finish' : "caller hasn't spoken yet"})`)
+          // Owner call: the boss's "কেটে দাও" transcription can arrive AFTER
+          // this goodbye fragment (Gemini streams the two independently —
+          // review-bot P2). Remember the discarded goodbye briefly so the
+          // late-arriving end-ask can still honor it.
+          if (this.isOwnerCall()) this.pendingGoodbyeAt = Date.now()
           this.outText = ''
         }
       }
     }
     if (sc?.inputTranscription?.text) {
       this.callerSpoke = true
-      if (CALLER_END_RE.test(sc.inputTranscription.text)) this.callerWantsEnd = true
+      // Negated end phrase ("রাখো না, কথা আছে" = keep talking) must not read
+      // as an end request (review-bot P2).
+      // NB: no \b — JS word boundaries are ASCII-only and never match around
+      // Bengali letters (review-bot P2). "না" must simply not be the start of
+      // a longer Bengali word (e.g. "নামাজ").
+      const NEG_END_RE = /(রাখো|রাখেন|রাখিস|কেটো|কাটো|কাটিস|শেষ\s*কর)\s*না(?![ঀ-৿])|(কাটবে|রাখবে)\s*না(?![ঀ-৿])/
+      const utter = sc.inputTranscription.text
+      const endNow = CALLER_END_RE.test(utter) && !NEG_END_RE.test(utter)
+      if (endNow) this.callerWantsEnd = true
+      // Late-arriving owner end-ask + a goodbye we just discarded (≤10s ago):
+      // hang up now instead of waiting a whole extra goodbye round. Gated on
+      // THIS utterance being an end phrase (review-bot P2) — callerWantsEnd is
+      // sticky, and "না, কথা আছে" after a genuine "রাখব কি?" must keep talking.
+      if (this.isOwnerCall() && endNow && !this.hangingUp
+          && this.pendingGoodbyeAt && Date.now() - this.pendingGoodbyeAt < 10_000) {
+        console.log(`[glive] ${this.id} hang-up (late end-ask honors the discarded goodbye)`)
+        this.hangingUp = true
+        this.pendingGoodbyeAt = 0
+      }
+      // Fresh slate for the model's NEXT reply: outText is a rolling 80-char
+      // tail, and a "?" left over from the PREVIOUS reply ("আর কিছু দরকার
+      // আপনার?") made ASKING_RE veto the goodbye spoken right after the boss
+      // said "কেটে দাও" (live 2026-08-29 test call — hang-up needed a second
+      // goodbye round). The in-one-breath question+goodbye guard still works:
+      // both halves then live in the SAME reply's outText. OWNER calls only
+      // (review-bot P2): on those the boss's explicit end-ask already arms the
+      // hang-up, so losing a racing question fragment is harmless — while on
+      // staff/contact/inbound calls a delayed input fragment erasing the
+      // current reply's question could cut a caller off mid-question. Audio
+      // path and the locked tuning values are untouched.
+      if (this.isOwnerCall()) this.outText = ''
       this.accum('caller', sc.inputTranscription.text)
       process.stdout.write(`[glive ${this.id} HEARD] ${sc.inputTranscription.text}\n`)
     }
