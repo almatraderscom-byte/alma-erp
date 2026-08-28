@@ -357,6 +357,7 @@ class Call {
     this.spoken = ''             // longer rolling transcript (for a tool call read aloud)
     this._spokenToolFired = false
     this.hangingUp = false
+    this.pendingGoodbyeAt = 0     // owner call: a goodbye discarded while un-armed (late end-ask race)
     this.callerSpoke = false     // arm the goodbye→hangup only after the caller has spoken once
     this.callerWantsEnd = false  // the OTHER side asked to finish — see CALLER_END_RE
     this.startedAt = 0
@@ -500,6 +501,11 @@ class Call {
           this.outText = ''
         } else {
           console.log(`[glive] ${this.id} goodbye — IGNORED (${this.isOwnerCall() ? 'boss has not asked to finish' : "caller hasn't spoken yet"})`)
+          // Owner call: the boss's "কেটে দাও" transcription can arrive AFTER
+          // this goodbye fragment (Gemini streams the two independently —
+          // review-bot P2). Remember the discarded goodbye briefly so the
+          // late-arriving end-ask can still honor it.
+          if (this.isOwnerCall()) this.pendingGoodbyeAt = Date.now()
           this.outText = ''
         }
       }
@@ -507,6 +513,14 @@ class Call {
     if (sc?.inputTranscription?.text) {
       this.callerSpoke = true
       if (CALLER_END_RE.test(sc.inputTranscription.text)) this.callerWantsEnd = true
+      // Late-arriving owner end-ask + a goodbye we just discarded (≤10s ago):
+      // hang up now instead of waiting a whole extra goodbye round.
+      if (this.isOwnerCall() && this.callerWantsEnd && !this.hangingUp
+          && this.pendingGoodbyeAt && Date.now() - this.pendingGoodbyeAt < 10_000) {
+        console.log(`[glive] ${this.id} hang-up (late end-ask honors the discarded goodbye)`)
+        this.hangingUp = true
+        this.pendingGoodbyeAt = 0
+      }
       // Fresh slate for the model's NEXT reply: outText is a rolling 80-char
       // tail, and a "?" left over from the PREVIOUS reply ("আর কিছু দরকার
       // আপনার?") made ASKING_RE veto the goodbye spoken right after the boss
