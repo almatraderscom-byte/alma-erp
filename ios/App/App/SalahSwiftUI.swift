@@ -232,7 +232,7 @@ struct SalahScreen: View {
         .sheet(isPresented: $settingsOpen, onDismiss: {
             // Location / time edits change the calendar's day windows — drop the
             // range cache and refetch so the grid reflects them immediately.
-            Task { await store.refresh() }
+            Task { await reloadAll() }
         }) {
             SalahSettingsSheet()
         }
@@ -248,7 +248,20 @@ struct SalahScreen: View {
                 Task { await store.loadRange(from: nil, to: nil) }
             }
         }
-        .refreshable { await store.refresh() }
+        .refreshable { await reloadAll() }
+    }
+
+    /// Full refresh that also re-pulls the month the user is LOOKING at — the
+    /// month grid's .task(id:) won't rerun for an unchanged month, so a bare
+    /// store.refresh() would leave it empty when it sits outside the default
+    /// server range (review-bot P2).
+    private func reloadAll() async {
+        await store.refresh()
+        if mode == 1 {
+            let a = currentAnchor
+            await store.loadRange(from: YmdCal.make(a.y, a.m, 1),
+                                  to: YmdCal.make(a.y, a.m, YmdCal.daysInMonth(a.y, a.m)))
+        }
     }
 
     // ── Summary (this week / this month) ──
