@@ -57,18 +57,23 @@ export async function POST(req: NextRequest) {
   // crossing / delayed durable report — review-bot P1).
   const purposeTag = waqt ? (date ? `[salah:${waqt}:${date}] ` : `[salah:${waqt}] `) : ''
 
-  // Terminal guards, re-checked at the last moment before the dial.
-  const lock = await isOwnerCallLocked().catch(() => ({ locked: false }))
-  if (lock.locked) return NextResponse.json({ ok: false, error: 'owner_call_locked' }, { status: 409 })
-  if (waqt && date) {
-    const rec = await prisma.agentSalahRecord.findUnique({
-      where: { date_waqt: { date: new Date(`${date}T00:00:00Z`), waqt } },
-      select: { status: true, confirmedAt: true },
-    }).catch(() => null)
-    if (rec && (SETTLED.has(rec.status) || rec.confirmedAt)) {
-      return NextResponse.json({ ok: false, error: 'salah_confirmed' }, { status: 409 })
+  // Terminal guards: checked here (fast fail, no row created) AND re-run by
+  // placeOutboundCall as a preDialCheck right before the gateway fetch — the
+  // owner may confirm or lock during the slow prep work (review-bot P2).
+  const terminalVeto = async (): Promise<string | null> => {
+    const lock = await isOwnerCallLocked().catch(() => ({ locked: false }))
+    if (lock.locked) return 'owner_call_locked'
+    if (waqt && date) {
+      const rec = await prisma.agentSalahRecord.findUnique({
+        where: { date_waqt: { date: new Date(`${date}T00:00:00Z`), waqt } },
+        select: { status: true, confirmedAt: true },
+      }).catch(() => null)
+      if (rec && (SETTLED.has(rec.status) || rec.confirmedAt)) return 'salah_confirmed'
     }
+    return null
   }
+  const early = await terminalVeto()
+  if (early) return NextResponse.json({ ok: false, error: early }, { status: 409 })
   const res = await placeOutboundCall({
     toNumber,
     recipientName: 'Boss',
@@ -77,6 +82,7 @@ export async function POST(req: NextRequest) {
     callType: 'owner',
     channel: 'phone',
     capExempt: true,
+    preDialCheck: terminalVeto,
   })
   return NextResponse.json(res, { status: res.ok ? 200 : 502 })
 }

@@ -110,6 +110,14 @@ export async function applySalahAutoMarkFromUserTexts(
     let targetWaqt: string | undefined = signal.waqt
     let dateYmd = signal.dateHint === 'yesterday' ? yesterdayYmd : todayYmd
 
+    // "ইশা পড়েছি" on the Isha reminder call names the SAME waqt the call was
+    // about — the call's own day still wins over the report day (midnight
+    // crossing / delayed report, review-bot P1). An explicit "গতকালের…"
+    // (dateHint) keeps overriding.
+    if (targetWaqt && targetWaqt === opts.defaultWaqt && opts.defaultDateYmd && signal.dateHint !== 'yesterday') {
+      dateYmd = opts.defaultDateYmd
+    }
+
     if (!targetWaqt && opts.defaultWaqt) {
       // Reminder-call binding WINS over the recent-correction heuristic
       // (review-bot P1): on a call about a specific waqt, a generic "পড়েছি"

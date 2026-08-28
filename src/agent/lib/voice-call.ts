@@ -334,6 +334,13 @@ export interface PlaceCallInput {
    * calls spent the budget, and salah retries must not eat that budget either.
    */
   capExempt?: boolean
+  /**
+   * Last-moment veto, re-run as close to the provider dial as possible (for the
+   * SIP path: after buildOwnerCallFacts, right before the gateway fetch). Return
+   * an error code to abort — the call row is marked failed with it — or null to
+   * proceed. Used by the salah route to re-check confirm/lock (review-bot P2).
+   */
+  preDialCheck?: () => Promise<string | null>
 }
 
 export interface PlaceCallResult {
@@ -465,7 +472,13 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
   }
 
   if (config.provider === 'sip') {
-    return placeSipLiveCall(config, record.id, toNumber, purpose, input.recipientName, input.voiceGender, effectiveCallType)
+    return placeSipLiveCall(config, record.id, toNumber, purpose, input.recipientName, input.voiceGender, effectiveCallType, input.preDialCheck)
+  }
+
+  if (input.preDialCheck) {
+    // Non-SIP providers: the closest practical point to the dial.
+    const veto = await input.preDialCheck().catch(() => null)
+    if (veto) return failCallRecord(record.id, veto)
   }
 
   if (config.provider === 'ngs') {
@@ -968,6 +981,7 @@ async function placeSipLiveCall(
   recipientName: string | undefined,
   voiceGender: 'male' | 'female' | undefined,
   callType: 'owner' | 'staff' | 'contact' | undefined,
+  preDialCheck?: () => Promise<string | null>,
 ): Promise<PlaceCallResult> {
   try {
     const exp = Date.now() + 15 * 60_000
@@ -980,6 +994,12 @@ async function placeSipLiveCall(
     const facts = (callType ?? 'owner') === 'owner'
       ? await buildOwnerCallFacts().catch(() => '')
       : ''
+    if (preDialCheck) {
+      // Last-moment veto AFTER the slow prep work, right before the gateway
+      // fetch — the terminal state may have changed mid-prep (review-bot P2).
+      const veto = await preDialCheck().catch(() => null)
+      if (veto) return failCallRecord(callRecordId, veto)
+    }
     // The gateway normalises to the local 01XXXXXXXXX form itself; pass +E.164 as-is.
     const body = JSON.stringify({
       to: toNumber,
