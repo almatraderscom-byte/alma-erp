@@ -495,6 +495,11 @@ class Call {
         // Asking and saying goodbye in one breath — wait for the answer, whoever is on the line.
         if (ASKING_RE.test(this.outText)) {
           console.log(`[glive] ${this.id} goodbye inside a question — IGNORED (waiting for the answer)`)
+          // Owner call: remember this goodbye too (review-bot P2) — with a
+          // stale "?" AND a late-arriving "কেটে দাও" both races stack, and the
+          // boss's answer to a real "রাখব কি?" is itself the end-ask that
+          // should honor the farewell.
+          if (this.isOwnerCall()) this.pendingGoodbyeAt = Date.now()
           this.outText = ''
         } else if (armed) {
           this.hangingUp = true
