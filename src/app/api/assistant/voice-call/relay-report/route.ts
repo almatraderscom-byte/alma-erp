@@ -98,10 +98,12 @@ export async function POST(req: NextRequest) {
         .map((t) => t.slice(0, 500))
       if (declarations.length) {
         const { applySalahAutoMarkFromUserTexts } = await import('@/agent/lib/salah-auto-mark')
-        // Timestamp = the CALL's own clock (end, else dial, else row create),
-        // not report delivery — a retried durable report must not turn an
-        // on-time confirmation into prayed_late (review-bot P1).
-        const spokenAt = row.endedAt ?? row.dialedAt ?? row.createdAt ?? new Date()
+        // Timestamp = call START (dial), not call end or report delivery: the
+        // transcript carries no per-turn clock, and dialedAt errs EARLY — it
+        // can never flip an on-time confirmation to prayed_late. A call that
+        // straddles the window end was placed while the reminder was still
+        // due, so the boss gets the on-time benefit (review-bot P2).
+        const spokenAt = row.dialedAt ?? row.createdAt ?? row.endedAt ?? new Date()
         // ONE declaration per invocation, in transcript order — exactly how the
         // native confirm-spoken path serializes turns. A single batched call
         // would let markedKeys swallow a LATER correction ("পড়েছি" → "না,
@@ -119,7 +121,13 @@ export async function POST(req: NextRequest) {
       }
     }
   } catch (err) {
-    console.warn('[relay-report] salah auto-mark failed:', err instanceof Error ? err.message : String(err))
+    // A transient failure HERE must not be acknowledged as delivered — the
+    // durable senders delete their payload on 200 and nothing would ever
+    // replay the transcript, silently losing the spoken confirmation
+    // (review-bot P1). 503 keeps the sender's spool retrying; the report
+    // persist above is authoritative-idempotent, so the replay is safe.
+    console.warn('[relay-report] salah auto-mark failed; asking sender to retry:', err instanceof Error ? err.message : String(err))
+    return Response.json({ error: 'salah_automark_failed' }, { status: 503 })
   }
 
   // Storage is the acknowledgement boundary. Owner-facing channels are independent,
