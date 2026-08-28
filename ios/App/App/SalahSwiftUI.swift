@@ -176,6 +176,7 @@ struct SalahScreen: View {
     @State private var monthAnchor: (y: Int, m: Int)? = nil
     @State private var detailDay: SalahDay?
     @State private var settingsOpen = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ScrollView {
@@ -238,6 +239,14 @@ struct SalahScreen: View {
         .task {
             // Server picks the bounds on the owner's location clock.
             await store.loadRange(from: nil, to: nil)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Foregrounding after midnight: re-ask the server for its current
+            // day so today's row/marker roll over (review-bot P2). nil bounds
+            // bypass the range cache, so this always refetches fresh.
+            if phase == .active {
+                Task { await store.loadRange(from: nil, to: nil) }
+            }
         }
         .refreshable { await store.refresh() }
     }
