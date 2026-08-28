@@ -240,7 +240,7 @@ struct SalahScreen: View {
             // Server picks the bounds on the owner's location clock.
             await store.loadRange(from: nil, to: nil)
         }
-        .onChange(of: scenePhase) { _, phase in
+        .onChange(of: scenePhase) { phase in
             // Foregrounding after midnight: re-ask the server for its current
             // day so today's row/marker roll over (review-bot P2). nil bounds
             // bypass the range cache, so this always refetches fresh.
