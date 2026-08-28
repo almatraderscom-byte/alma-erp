@@ -176,6 +176,7 @@ struct SalahScreen: View {
     @State private var monthAnchor: (y: Int, m: Int)? = nil
     @State private var detailDay: SalahDay?
     @State private var settingsOpen = false
+    @State private var locationChanged = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -232,9 +233,22 @@ struct SalahScreen: View {
         .sheet(isPresented: $settingsOpen, onDismiss: {
             // Location / time edits change the calendar's day windows — drop the
             // range cache and refetch so the grid reflects them immediately.
-            Task { await reloadAll() }
+            // After a LOCATION change the worker rebuilds today's records only
+            // on its next 5-minute tick — schedule follow-up refreshes so the
+            // new windows appear without a manual pull (review-bot P2).
+            let followUp = locationChanged
+            locationChanged = false
+            Task {
+                await reloadAll()
+                if followUp {
+                    try? await Task.sleep(nanoseconds: 90 * 1_000_000_000)
+                    await reloadAll()
+                    try? await Task.sleep(nanoseconds: 240 * 1_000_000_000)
+                    await reloadAll()
+                }
+            }
         }) {
-            SalahSettingsSheet()
+            SalahSettingsSheet(onLocationApplied: { locationChanged = true })
         }
         .task {
             // Server picks the bounds on the owner's location clock.
@@ -541,6 +555,9 @@ struct SalahDayDetailSheet: View {
 // MARK: - Settings sheet (full web-card parity)
 
 struct SalahSettingsSheet: View {
+    /// Parent hook: a location preset was successfully applied (the worker will
+    /// rebuild today's records on its next tick — parent schedules re-reads).
+    var onLocationApplied: (() -> Void)? = nil
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
 
@@ -777,6 +794,7 @@ struct SalahSettingsSheet: View {
             if let c = r.config { config = c }
             locationLabel = label
             toast = "✓ \(label) — নামাজের সময় অটো বসেছে"
+            onLocationApplied?()
         } catch {
             // The server may have SAVED the location but failed the AlAdhan
             // autofill (502 partial success) — reload the true server state and
