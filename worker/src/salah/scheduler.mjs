@@ -317,7 +317,7 @@ async function deliverSalahAlert({
  * The agent's spoken mission for one salah call. Delivered as the live-session
  * brief, so the agent OPENS the call with this and then converses two-way.
  */
-function buildSalahCallBrief({ phase, name, jamaatLabel, endLabel, toneLine }) {
+function buildSalahCallBrief({ phase, name, jamaatLabel, endLabel, toneLine, viaNumber = false }) {
   const timing = [
     jamaatLabel ? `জামাত ${jamaatLabel}` : null,
     endLabel ? `ওয়াক্ত শেষ ${endLabel}` : null,
@@ -325,10 +325,16 @@ function buildSalahCallBrief({ phase, name, jamaatLabel, endLabel, toneLine }) {
   const opening = phase === 'pre'
     ? `${name} নামাজের আর ১৫ মিনিট বাকি${timing ? ` (${timing})` : ''} — Boss-কে স্বাভাবিক, উষ্ণভাবে প্রস্তুতির কথা মনে করিয়ে দাও।`
     : `${name}-এর ওয়াক্ত চলছে${timing ? ` (${timing})` : ''}, Boss এখনো নামাজ পড়া নিশ্চিত করেননি — নামাজের গুরুত্ব মনে করিয়ে দাও।`
+  // The NUMBER call runs on the SIP live bot, which has no mark_salah tool —
+  // marking happens server-side from the post-call transcript (relay-report),
+  // so the brief must not promise an in-call tool round (review-bot P1).
+  const confirmRule = viaNumber
+    ? `(১) Boss "পড়েছি/পড়ে নিয়েছি" বললে আলহামদুলিল্লাহ বলে ছোট্ট দোয়া করে কল শেষ করো — mark পরে নিজে-নিজেই হয়ে যাবে, কল ধরে রাখার দরকার নেই। `
+    : `(১) Boss "পড়েছি/পড়ে নিয়েছি" বললে run_agent_turn দিয়ে ${name}-এর নামাজ mark করাও (mark_salah), tool-এর ফল দেখে তবেই আলহামদুলিল্লাহ বলে দোয়া করে কল শেষ করো। `
   return (
     `এটা নামাজ-তাগাদার কল। ${opening} ` +
     (toneLine ? `প্রাসঙ্গিক কথা: ${toneLine} ` : '') +
-    `নিয়ম: (১) Boss "পড়েছি/পড়ে নিয়েছি" বললে run_agent_turn দিয়ে ${name}-এর নামাজ mark করাও (mark_salah), tool-এর ফল দেখে তবেই আলহামদুলিল্লাহ বলে দোয়া করে কল শেষ করো। ` +
+    `নিয়ম: ` + confirmRule +
     `(২) "পরে পড়ব" বললে ছোট্ট করে ইসলামিকভাবে (এক-দুই বাক্যে হাদিস/উৎসাহ) বুঝাও — চাপাচাপি নয়; Boss রাখতে বললে সালাম দিয়ে রেখে দাও (১৫ মিনিট পরে এমনিতেই আবার মনে করানো হবে, সেটা বলার দরকার নেই)। ` +
     `(৩) Boss ফোন কেটে দিলে সেটাই স্বাভাবিক — কোনো অনুশোচনা বার্তা পাঠিও না।`
   )
@@ -338,10 +344,37 @@ function buildSalahCallBrief({ phase, name, jamaatLabel, endLabel, toneLine }) {
  * Place ONE two-way app call for a waqt, at most every 15 minutes.
  * Single choke point used by the escalation tick AND the post-snooze loop:
  *   confirmed → never; owner-call-lock/snooze → never; last call <15 min → skip.
- * Channel follows the abroad toggle (owner rule 2026-08-27): in BD the proven
- * one-way PSTN reminder is PRIMARY (his number, like before), with the app ring
- * as emergency fallback; abroad the app ring is the only channel.
+ * Channel follows the abroad toggle (owner rule 2026-08-27, refined 2026-08-28):
+ * in BD the call goes to his NUMBER as a live TWO-WAY agent call (internal
+ * salah-call route → placeOutboundCall, SIP live bot); the one-way TTS reminder
+ * is only the fallback when the two-way leg can't be placed, and the app ring
+ * the emergency fallback after that. Abroad the app ring is the only channel.
  */
+/**
+ * Two-way live agent call to the owner's NUMBER via the web's outbound-call
+ * pipeline (internal salah-call route → placeOutboundCall → SIP live bot).
+ */
+async function placeSalahTwoWayNumberCall(brief, waqt, date) {
+  try {
+    const base = getAppUrl()
+    if (!base) return { ok: false, error: 'app url unset' }
+    // Timeout must EXCEED the route's own work (30s gateway fetch + db/facts) —
+    // a premature abort here while the dial still succeeds would ring the boss
+    // twice (two-way + one-way fallback) at once (review-bot P2).
+    const res = await fetch(`${base}/api/assistant/internal/salah-call`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
+      body: JSON.stringify({ brief: brief.slice(0, 1800), waqt, date }),
+      signal: AbortSignal.timeout(75_000),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (res.ok && data.ok) return { ok: true, callRecordId: data.callRecordId }
+    return { ok: false, error: data.error ?? `HTTP ${res.status}` }
+  } catch (err) {
+    return { ok: false, error: err?.message ?? String(err) }
+  }
+}
+
 async function placeSalahTwoWayCall({ supabase, today, waqt, name, phase, schedule, toneLine }) {
   if (!supabase) return false
   if (await isSalahWaqtConfirmed(today, waqt)) return false
@@ -364,11 +397,28 @@ async function placeSalahTwoWayCall({ supabase, today, waqt, name, phase, schedu
 
   const abroad = await isOwnerAbroadCallsOff()
   if (!abroad) {
-    // In BD his NUMBER is the primary channel (owner rule 2026-08-27) — the
-    // proven one-way PSTN reminder, like before the app-call era.
-    // Phase-aware copy (review-bot P1): 'pre' is a gentle 15-minute heads-up,
-    // 'due' speaks the caller's tier-appropriate toneLine; the fixed tier-3
-    // "ওয়াক্ত প্রায় শেষ" line is only the last-resort fallback.
+    // In BD his NUMBER is the primary channel — as a live TWO-WAY agent call
+    // (owner rule 2026-08-28: two-way even on the number, not the TTS message).
+    // Number-variant brief: the SIP bot has no mark tool — no in-call mark promise.
+    const numberBrief = buildSalahCallBrief({
+      phase, name, jamaatLabel: w?.prayerLabel ?? null, endLabel: null, toneLine, viaNumber: true,
+    })
+    const twoWay = await placeSalahTwoWayNumberCall(numberBrief, waqt, today)
+    if (twoWay.ok) {
+      console.log(`[salah] two-way NUMBER call placed for ${waqt} (${phase})`)
+      return true
+    }
+    // Terminal guards from the route's last-moment re-check — hard stops, not
+    // delivery failures: no one-way fallback, no app ring.
+    if (twoWay.error === 'salah_confirmed' || twoWay.error === 'owner_call_locked') {
+      console.log(`[salah] two-way call skipped for ${waqt} — ${twoWay.error}; no fallback`)
+      return false
+    }
+    console.warn(`[salah] two-way number call failed for ${waqt}:`, twoWay.error)
+
+    // Fallback 1: the proven one-way PSTN reminder. Phase-aware copy
+    // (review-bot P1): 'pre' is a gentle 15-minute heads-up, 'due' speaks the
+    // caller's tier-appropriate toneLine; fixed tier-3 line as last resort.
     const jamaatLabel = w?.prayerLabel ? ` জামাত ${w.prayerLabel}।` : ''
     const voiceText = phase === 'pre'
       ? `আসসালামু আলাইকুম Boss। ${name} নামাজের আর পনেরো মিনিট বাকি।${jamaatLabel} প্রস্তুতি নিয়ে নিন।`

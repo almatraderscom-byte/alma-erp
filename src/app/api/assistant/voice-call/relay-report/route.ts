@@ -73,6 +73,66 @@ export async function POST(req: NextRequest) {
   })
   if (!stored) return Response.json({ error: 'call_not_found' }, { status: 404 })
 
+  // Salah reminder calls ([salah:<waqt>] purpose): the SIP live bot has no
+  // mark_salah tool, so the boss's spoken "পড়েছি" is honored HERE, from the
+  // post-call transcript. Mirrors the native confirm-spoken route exactly:
+  // caller-side turns ONLY (SIP transcripts use agent/caller roles — an
+  // allowlist keeps the bot's own speech out), each gated by the strict
+  // spoken-declaration predicate, and a generic confirmation binds to the
+  // waqt THIS call reminded (review-bot P1 ×2).
+  try {
+    const { prisma } = await import('@/lib/prisma')
+    const row = await prisma.agentVoiceCall.findUnique({
+      where: { id: callRecordId }, select: { purpose: true, endedAt: true, dialedAt: true, createdAt: true },
+    })
+    const salahTag = row?.purpose?.match(/^\[salah:([a-z]+)(?::(\d{4}-\d{2}-\d{2}))?\]/)
+    const salahWaqt = salahTag?.[1]
+    const salahDate = salahTag?.[2]
+    if (row && salahWaqt) {
+      const CALLER_ROLES = new Set(['caller', 'user', 'boss', 'human'])
+      const { isSpokenSalahDeclaration } = await import('@/agent/lib/salah-confirm-intent')
+      const declarations = (body.transcript ?? [])
+        .filter((t) => CALLER_ROLES.has(String(t.role ?? '').toLowerCase()))
+        .map((t) => String(t.message ?? '').trim())
+        .filter((t) => t && isSpokenSalahDeclaration(t))
+        .map((t) => t.slice(0, 500))
+      if (declarations.length) {
+        const { applySalahAutoMarkFromUserTexts } = await import('@/agent/lib/salah-auto-mark')
+        // Timestamp = call START (dial), not call end or report delivery: the
+        // transcript carries no per-turn clock, and dialedAt errs EARLY — it
+        // can never flip an on-time confirmation to prayed_late. A call that
+        // straddles the window end was placed while the reminder was still
+        // due, so the boss gets the on-time benefit (review-bot P2).
+        const spokenAt = row.dialedAt ?? row.createdAt ?? row.endedAt ?? new Date()
+        // ONE declaration per invocation, in transcript order — exactly how the
+        // native confirm-spoken path serializes turns. A single batched call
+        // would let markedKeys swallow a LATER correction ("পড়েছি" → "না,
+        // কাযা হয়েছে") of the same waqt (review-bot P1).
+        for (const declaration of declarations) {
+          const marked = await applySalahAutoMarkFromUserTexts([declaration], spokenAt, {
+            allowSettledCorrection: true,
+            defaultWaqt: salahWaqt,
+            // The tag's date pins the CALL's day — a report landing after
+            // midnight (or delayed) must not drift to the report day (P1).
+            defaultDateYmd: salahDate,
+            // Pre-jamaat call crossing the window start: the confirmation is
+            // honored at the boundary instead of discarded (review-bot P2).
+            callEndAt: row.endedAt ?? undefined,
+          })
+          if (marked.marked.length) console.log('[relay-report] salah auto-marked from call:', marked.marked)
+        }
+      }
+    }
+  } catch (err) {
+    // A transient failure HERE must not be acknowledged as delivered — the
+    // durable senders delete their payload on 200 and nothing would ever
+    // replay the transcript, silently losing the spoken confirmation
+    // (review-bot P1). 503 keeps the sender's spool retrying; the report
+    // persist above is authoritative-idempotent, so the replay is safe.
+    console.warn('[relay-report] salah auto-mark failed; asking sender to retry:', err instanceof Error ? err.message : String(err))
+    return Response.json({ error: 'salah_automark_failed' }, { status: 503 })
+  }
+
   // Storage is the acknowledgement boundary. Owner-facing channels are independent,
   // durable outbox rows; try immediately for low latency, cron retries any failure.
   // Keep the worker ACK boundary short: Telegram is attempted immediately; push

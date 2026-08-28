@@ -253,9 +253,18 @@ const OUTBOUND_ONLY = {
  * `dialedAt` is set only once a provider has accepted the call and it is ringing, which makes
  * it the honest measure of what we spent.
  */
+/** Cap-exempt salah reminder calls (purpose '[salah:…') stay OUT of both cap
+ * counters — they must neither be blocked by the budget nor consume it.
+ * null purposes stay IN: a negated startsWith never matches SQL NULL, and
+ * OUTBOUND_ONLY classifies null-purpose rows as ours (review-bot P2). The
+ * AND wrapper keeps this OR from clobbering OUTBOUND_ONLY's OR on spread. */
+const CAP_COUNTED_ONLY = {
+  AND: [{ OR: [{ purpose: null }, { NOT: { purpose: { startsWith: '[salah:' } } }] }],
+}
+
 export async function callsPlacedToday(): Promise<number> {
   return db.agentVoiceCall.count({
-    where: { createdAt: { gte: dhakaDayStart() }, dialedAt: { not: null }, ...OUTBOUND_ONLY },
+    where: { createdAt: { gte: dhakaDayStart() }, dialedAt: { not: null }, ...OUTBOUND_ONLY, ...CAP_COUNTED_ONLY },
   })
 }
 
@@ -266,7 +275,7 @@ export async function callsPlacedToday(): Promise<number> {
  */
 export async function callAttemptsToday(): Promise<number> {
   return db.agentVoiceCall.count({
-    where: { createdAt: { gte: dhakaDayStart() }, ...OUTBOUND_ONLY },
+    where: { createdAt: { gte: dhakaDayStart() }, ...OUTBOUND_ONLY, ...CAP_COUNTED_ONLY },
   })
 }
 
@@ -317,6 +326,21 @@ export interface PlaceCallInput {
    * anti-spam rules the recipient must have granted call permission.
    */
   channel?: 'phone' | 'whatsapp'
+  /**
+   * Salah reminder calls only (internal salah-call route): skip the daily cap +
+   * attempt ceiling. Salah has its OWN cadence guard (15-min gap, confirm check,
+   * owner-call-lock) and the old one-way PSTN salah path was cap-exempt too
+   * (makeTwilioCall force:true) — the reminder must not die because business
+   * calls spent the budget, and salah retries must not eat that budget either.
+   */
+  capExempt?: boolean
+  /**
+   * Last-moment veto, re-run as close to the provider dial as possible (for the
+   * SIP path: after buildOwnerCallFacts, right before the gateway fetch). Return
+   * an error code to abort — the call row is marked failed with it — or null to
+   * proceed. Used by the salah route to re-check confirm/lock (review-bot P2).
+   */
+  preDialCheck?: () => Promise<string | null>
 }
 
 export interface PlaceCallResult {
@@ -345,7 +369,7 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
   const dailyCap = await dailyCapFromSettings(config.dailyCap)
 
   const placedToday = await callsPlacedToday()
-  if (placedToday >= dailyCap) {
+  if (!input.capExempt && placedToday >= dailyCap) {
     return { ok: false, error: `আজকের কল লিমিট শেষ (${dailyCap}টি)। কাল আবার চেষ্টা করুন।` }
   }
 
@@ -354,7 +378,7 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
   // on a day when almost nothing connected is a misleading thing to read.
   const attemptsToday = await callAttemptsToday()
   const attemptCeiling = dailyCap * ATTEMPT_CEILING_MULTIPLIER
-  if (attemptsToday >= attemptCeiling) {
+  if (!input.capExempt && attemptsToday >= attemptCeiling) {
     return {
       ok: false,
       error: `আজ ${attemptsToday}বার কল করার চেষ্টা হয়েছে কিন্তু মাত্র ${placedToday}টি লাইনে পৌঁছেছে — লাইনে সমস্যা আছে, তাই আপাতত থামানো হলো।`,
@@ -448,7 +472,13 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
   }
 
   if (config.provider === 'sip') {
-    return placeSipLiveCall(config, record.id, toNumber, purpose, input.recipientName, input.voiceGender, effectiveCallType)
+    return placeSipLiveCall(config, record.id, toNumber, purpose, input.recipientName, input.voiceGender, effectiveCallType, input.preDialCheck)
+  }
+
+  if (input.preDialCheck) {
+    // Non-SIP providers: the closest practical point to the dial.
+    const veto = await input.preDialCheck().catch(() => null)
+    if (veto) return failCallRecord(record.id, veto)
   }
 
   if (config.provider === 'ngs') {
@@ -951,6 +981,7 @@ async function placeSipLiveCall(
   recipientName: string | undefined,
   voiceGender: 'male' | 'female' | undefined,
   callType: 'owner' | 'staff' | 'contact' | undefined,
+  preDialCheck?: () => Promise<string | null>,
 ): Promise<PlaceCallResult> {
   try {
     const exp = Date.now() + 15 * 60_000
@@ -963,6 +994,12 @@ async function placeSipLiveCall(
     const facts = (callType ?? 'owner') === 'owner'
       ? await buildOwnerCallFacts().catch(() => '')
       : ''
+    if (preDialCheck) {
+      // Last-moment veto AFTER the slow prep work, right before the gateway
+      // fetch — the terminal state may have changed mid-prep (review-bot P2).
+      const veto = await preDialCheck().catch(() => null)
+      if (veto) return failCallRecord(callRecordId, veto)
+    }
     // The gateway normalises to the local 01XXXXXXXXX form itself; pass +E.164 as-is.
     const body = JSON.stringify({
       to: toNumber,

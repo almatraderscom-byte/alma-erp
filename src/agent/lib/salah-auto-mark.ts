@@ -22,6 +22,27 @@ export type AutoMarkOptions = {
    * keeps the default (false) — there the head + mark_salah own corrections.
    */
   allowSettledCorrection?: boolean
+  /**
+   * Salah reminder call path only (PR #863): a generic "পড়েছি" spoken on a
+   * call that reminded a SPECIFIC waqt targets THAT waqt, not the first
+   * accountable record — an older pending prayer must not swallow the
+   * confirmation of the one the call was about. An explicitly named waqt in
+   * the owner's words still wins.
+   */
+  defaultWaqt?: string
+  /**
+   * The location-calendar day that TRIGGERED the reminder call (YYYY-MM-DD).
+   * A report landing after midnight (or delayed) must still mark the call's
+   * own day; defaults to today when absent.
+   */
+  defaultDateYmd?: string
+  /**
+   * Reminder-call path: when the call was DIALED before the waqt window opened
+   * (pre-jamaat reminder) but ended after it, a confirmation spoken on it is
+   * honored at the window start instead of being discarded by the
+   * future-window guard (review-bot P2).
+   */
+  callEndAt?: Date
 }
 
 async function loadDayRecords(dateYmd: string) {
@@ -96,6 +117,23 @@ export async function applySalahAutoMarkFromUserTexts(
     let targetWaqt: string | undefined = signal.waqt
     let dateYmd = signal.dateHint === 'yesterday' ? yesterdayYmd : todayYmd
 
+    // "ইশা পড়েছি" on the Isha reminder call names the SAME waqt the call was
+    // about — the call's own day still wins over the report day (midnight
+    // crossing / delayed report, review-bot P1). An explicit "গতকালের…"
+    // (dateHint) keeps overriding.
+    if (targetWaqt && targetWaqt === opts.defaultWaqt && opts.defaultDateYmd && signal.dateHint !== 'yesterday') {
+      dateYmd = opts.defaultDateYmd
+    }
+
+    if (!targetWaqt && opts.defaultWaqt) {
+      // Reminder-call binding WINS over the recent-correction heuristic
+      // (review-bot P1): on a call about a specific waqt, a generic "পড়েছি"
+      // means THAT waqt — a different waqt settled minutes earlier must not
+      // steal it. Same-waqt corrections still work via the settled-correction
+      // kind-change path below.
+      targetWaqt = opts.defaultWaqt
+      dateYmd = opts.defaultDateYmd ?? todayYmd
+    }
     if (!targetWaqt && opts.allowSettledCorrection) {
       // Implicit spoken correction (Codex P1 round 6): "no, I missed it"
       // seconds after a confirm names no waqt, and the just-settled record
@@ -151,14 +189,23 @@ export async function applySalahAutoMarkFromUserTexts(
       continue
     }
 
+    // Effective utterance time. A reminder call dialed BEFORE the window
+    // (pre-jamaat) that ended after it opened gets clamped to the window
+    // start — the confirmation was real, just spoken across the boundary.
+    let effNow = now
     if (existing && now < new Date(existing.windowStart)) {
-      continue
+      const windowStart = new Date(existing.windowStart)
+      if (targetWaqt === opts.defaultWaqt && opts.callEndAt && opts.callEndAt >= windowStart) {
+        effNow = windowStart
+      } else {
+        continue
+      }
     }
 
     let status: string
     if (mode === 'prayed') {
       status = existing?.windowEnd
-        ? resolvePrayedStatus(new Date(existing.windowEnd), now)
+        ? resolvePrayedStatus(new Date(existing.windowEnd), effNow)
         : 'prayed_on_time'
     } else {
       status = mode // 'qaza' | 'missed'
@@ -167,7 +214,14 @@ export async function applySalahAutoMarkFromUserTexts(
     // Correction mode: only touch a settled record when the KIND changes
     // (prayed-family ↔ qaza/missed). A repeated "পড়েছি" later in the call
     // must not churn confirmedAt or downgrade prayed_on_time to prayed_late.
+    // And a record confirmed AFTER this utterance (Telegram/app/a newer call)
+    // is newer information — a delayed call report must never overwrite it
+    // (review-bot P1).
     if (existing && isSalahSettled(existing.status)) {
+      if (existing.confirmedAt && new Date(existing.confirmedAt) > now) {
+        markedKeys.add(key)
+        continue
+      }
       const existingKind = existing.status.startsWith('prayed') ? 'prayed' : existing.status
       const newKind = mode === 'prayed' ? 'prayed' : mode
       if (existingKind === newKind) {
@@ -178,14 +232,14 @@ export async function applySalahAutoMarkFromUserTexts(
 
     await db.agentSalahRecord.upsert({
       where: { date_waqt: { date: dhakaMidnightUtc(dateYmd), waqt: targetWaqt } },
-      update: { status, confirmedAt: now },
+      update: { status, confirmedAt: effNow },
       create: {
         date: dhakaMidnightUtc(dateYmd),
         waqt: targetWaqt,
-        windowStart: existing?.windowStart ?? now,
-        windowEnd: existing?.windowEnd ?? now,
+        windowStart: existing?.windowStart ?? effNow,
+        windowEnd: existing?.windowEnd ?? effNow,
         status,
-        confirmedAt: now,
+        confirmedAt: effNow,
       },
     })
 
