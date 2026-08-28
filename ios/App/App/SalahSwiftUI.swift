@@ -590,7 +590,9 @@ struct SalahSettingsSheet: View {
             .navigationTitle("নামাজ সেটিংস")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("বন্ধ") { dismiss() } }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("বন্ধ") { dismiss() }.disabled(busy || abroadBusy)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(busy ? "সেভ হচ্ছে…" : "সেভ") { Task { await saveTimes() } }
                         .disabled(busy || config == nil)
@@ -598,6 +600,10 @@ struct SalahSettingsSheet: View {
                 }
             }
             .task { await load() }
+            // A dismissal mid-write would let the parent's reload race the
+            // mutation (preset autofill can take ~15s) — hold the sheet until
+            // the write lands (review-bot P2).
+            .interactiveDismissDisabled(busy || abroadBusy)
         }
     }
 
