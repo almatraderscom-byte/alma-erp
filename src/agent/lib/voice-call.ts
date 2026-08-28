@@ -317,6 +317,14 @@ export interface PlaceCallInput {
    * anti-spam rules the recipient must have granted call permission.
    */
   channel?: 'phone' | 'whatsapp'
+  /**
+   * Salah reminder calls only (internal salah-call route): skip the daily cap +
+   * attempt ceiling. Salah has its OWN cadence guard (15-min gap, confirm check,
+   * owner-call-lock) and the old one-way PSTN salah path was cap-exempt too
+   * (makeTwilioCall force:true) — the reminder must not die because business
+   * calls spent the budget, and salah retries must not eat that budget either.
+   */
+  capExempt?: boolean
 }
 
 export interface PlaceCallResult {
@@ -345,7 +353,7 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
   const dailyCap = await dailyCapFromSettings(config.dailyCap)
 
   const placedToday = await callsPlacedToday()
-  if (placedToday >= dailyCap) {
+  if (!input.capExempt && placedToday >= dailyCap) {
     return { ok: false, error: `আজকের কল লিমিট শেষ (${dailyCap}টি)। কাল আবার চেষ্টা করুন।` }
   }
 
@@ -354,7 +362,7 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
   // on a day when almost nothing connected is a misleading thing to read.
   const attemptsToday = await callAttemptsToday()
   const attemptCeiling = dailyCap * ATTEMPT_CEILING_MULTIPLIER
-  if (attemptsToday >= attemptCeiling) {
+  if (!input.capExempt && attemptsToday >= attemptCeiling) {
     return {
       ok: false,
       error: `আজ ${attemptsToday}বার কল করার চেষ্টা হয়েছে কিন্তু মাত্র ${placedToday}টি লাইনে পৌঁছেছে — লাইনে সমস্যা আছে, তাই আপাতত থামানো হলো।`,

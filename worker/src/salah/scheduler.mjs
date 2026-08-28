@@ -338,10 +338,34 @@ function buildSalahCallBrief({ phase, name, jamaatLabel, endLabel, toneLine }) {
  * Place ONE two-way app call for a waqt, at most every 15 minutes.
  * Single choke point used by the escalation tick AND the post-snooze loop:
  *   confirmed → never; owner-call-lock/snooze → never; last call <15 min → skip.
- * Channel follows the abroad toggle (owner rule 2026-08-27): in BD the proven
- * one-way PSTN reminder is PRIMARY (his number, like before), with the app ring
- * as emergency fallback; abroad the app ring is the only channel.
+ * Channel follows the abroad toggle (owner rule 2026-08-27, refined 2026-08-28):
+ * in BD the call goes to his NUMBER as a live TWO-WAY agent call (internal
+ * salah-call route → placeOutboundCall, SIP live bot); the one-way TTS reminder
+ * is only the fallback when the two-way leg can't be placed, and the app ring
+ * the emergency fallback after that. Abroad the app ring is the only channel.
  */
+/**
+ * Two-way live agent call to the owner's NUMBER via the web's outbound-call
+ * pipeline (internal salah-call route → placeOutboundCall → SIP live bot).
+ */
+async function placeSalahTwoWayNumberCall(brief, waqt) {
+  try {
+    const base = getAppUrl()
+    if (!base) return { ok: false, error: 'app url unset' }
+    const res = await fetch(`${base}/api/assistant/internal/salah-call`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getInternalToken()}` },
+      body: JSON.stringify({ brief: brief.slice(0, 1800), waqt }),
+      signal: AbortSignal.timeout(20_000),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (res.ok && data.ok) return { ok: true, callRecordId: data.callRecordId }
+    return { ok: false, error: data.error ?? `HTTP ${res.status}` }
+  } catch (err) {
+    return { ok: false, error: err?.message ?? String(err) }
+  }
+}
+
 async function placeSalahTwoWayCall({ supabase, today, waqt, name, phase, schedule, toneLine }) {
   if (!supabase) return false
   if (await isSalahWaqtConfirmed(today, waqt)) return false
@@ -364,11 +388,18 @@ async function placeSalahTwoWayCall({ supabase, today, waqt, name, phase, schedu
 
   const abroad = await isOwnerAbroadCallsOff()
   if (!abroad) {
-    // In BD his NUMBER is the primary channel (owner rule 2026-08-27) — the
-    // proven one-way PSTN reminder, like before the app-call era.
-    // Phase-aware copy (review-bot P1): 'pre' is a gentle 15-minute heads-up,
-    // 'due' speaks the caller's tier-appropriate toneLine; the fixed tier-3
-    // "ওয়াক্ত প্রায় শেষ" line is only the last-resort fallback.
+    // In BD his NUMBER is the primary channel — as a live TWO-WAY agent call
+    // (owner rule 2026-08-28: two-way even on the number, not the TTS message).
+    const twoWay = await placeSalahTwoWayNumberCall(brief, waqt)
+    if (twoWay.ok) {
+      console.log(`[salah] two-way NUMBER call placed for ${waqt} (${phase})`)
+      return true
+    }
+    console.warn(`[salah] two-way number call failed for ${waqt}:`, twoWay.error)
+
+    // Fallback 1: the proven one-way PSTN reminder. Phase-aware copy
+    // (review-bot P1): 'pre' is a gentle 15-minute heads-up, 'due' speaks the
+    // caller's tier-appropriate toneLine; fixed tier-3 line as last resort.
     const jamaatLabel = w?.prayerLabel ? ` জামাত ${w.prayerLabel}।` : ''
     const voiceText = phase === 'pre'
       ? `আসসালামু আলাইকুম Boss। ${name} নামাজের আর পনেরো মিনিট বাকি।${jamaatLabel} প্রস্তুতি নিয়ে নিন।`
