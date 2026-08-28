@@ -101,6 +101,7 @@ enum AlmaShellCatalog {
             MoreItem("Agent Hub", "square.grid.2x2.fill", "/agent/hub"),
             MoreItem("Phone Companion", "iphone.radiowaves.left.and.right", "native:companion", gate: "/agent"),
             MoreItem("কল হিস্টরি", "phone.badge.waveform.fill", "native:agent-calls", gate: "/agent"),
+            MoreItem("নামাজ", "moon.stars.fill", "native:salah", gate: "/agent"),
             MoreItem("Agent Loader", "sparkles.rectangle.stack.fill", "native:spinner-preview", gate: "/agent"),
         ]),
         MoreGroup(header: "Workspace", symbol: "square.grid.2x2", items: [
