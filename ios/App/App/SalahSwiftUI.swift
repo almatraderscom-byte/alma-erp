@@ -125,6 +125,42 @@ private enum YmdCal {
     }
 }
 
+// MARK: - Polish helpers (aurora + Liquid Glass, ALMA design system)
+
+/// The app's aurora ground — same recipe as Agent Hub, tinted coral/violet.
+private struct SalahAurora: View {
+    @Environment(\.colorScheme) private var scheme
+    var body: some View {
+        let dark = scheme == .dark
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.043, green: 0.039, blue: 0.070)
+                      : Color(red: 0.949, green: 0.941, blue: 0.972))
+                RadialGradient(colors: [Color(red: 0.655, green: 0.545, blue: 0.980).opacity(dark ? 0.22 : 0.12), .clear],
+                               center: .init(x: 0.15, y: -0.05), startRadius: 0, endRadius: geo.size.height * 0.75)
+                RadialGradient(colors: [Color(red: 0.878, green: 0.478, blue: 0.373).opacity(dark ? 0.24 : 0.13), .clear],
+                               center: .init(x: 0.85, y: 1.1), startRadius: 0, endRadius: geo.size.height * 0.85)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+}
+
+/// Frosted-glass card so the aurora glows through (iOS15-safe local twin of ordersGlass).
+private extension View {
+    func salahGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
+        self
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),
+                        in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+private func salahHaptic() { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
+
 // MARK: - Store
 
 @MainActor
@@ -184,12 +220,12 @@ struct SalahScreen: View {
             VStack(spacing: 14) {
                 summaryCard
                 HStack(spacing: 10) {
-                    Picker("", selection: $mode) {
+                    Picker("", selection: $mode.animation(.spring(response: 0.32, dampingFraction: 0.85))) {
                         Text("সপ্তাহ").tag(0)
                         Text("মাস").tag(1)
                     }
                     .pickerStyle(.segmented)
-                    Button { settingsOpen = true } label: {
+                    Button { salahHaptic(); settingsOpen = true } label: {
                         Image(systemName: "gearshape.fill")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(AlmaSwiftTheme.coral)
@@ -210,15 +246,19 @@ struct SalahScreen: View {
                     .padding(.top, 30)
                 } else if mode == 0 {
                     weekList
+                        .transition(.asymmetric(insertion: .move(edge: .leading).combined(with: .opacity),
+                                                removal: .move(edge: .leading).combined(with: .opacity)))
                 } else {
                     monthGrid
+                        .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                                                removal: .move(edge: .trailing).combined(with: .opacity)))
                 }
                 legend
             }
             .padding(.horizontal, AlmaSwiftTheme.margin)
             .padding(.vertical, 12)
         }
-        .background(AlmaSwiftTheme.rootBg(scheme).ignoresSafeArea())
+        .background(SalahAurora())
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { settingsOpen = true } label: {
@@ -229,6 +269,7 @@ struct SalahScreen: View {
         .sheet(item: $detailDay) { day in
             SalahDayDetailSheet(day: day, offsetMin: store.offsetMin, today: store.today)
                 .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $settingsOpen, onDismiss: {
             // Location / time edits change the calendar's day windows — drop the
@@ -322,9 +363,8 @@ struct SalahScreen: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AlmaSwiftTheme.cardBg(scheme),
-                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
-        .shadow(color: AlmaSwiftTheme.cardShadow(scheme), radius: 8, y: 2)
+        .salahGlass(scheme)
+        .shadow(color: .black.opacity(scheme == .dark ? 0.18 : 0.06), radius: 10, y: 3)
     }
 
     // ── Week view: last 7 days, one row per day ──
@@ -345,7 +385,7 @@ struct SalahScreen: View {
         let day = store.byDate[ymd]
         let isToday = ymd == store.today
         return Button {
-            if let day { detailDay = day }
+            if let day { salahHaptic(); detailDay = day }
         } label: {
             HStack(spacing: 12) {
                 VStack(spacing: 1) {
@@ -358,11 +398,12 @@ struct SalahScreen: View {
                 if let day {
                     HStack(spacing: 6) {
                         ForEach(day.waqts) { w in
+                            let settled = w.status != "pending" && w.status != "skipped"
                             Text(SalahL10n.waqtShort[w.waqt] ?? "?")
                                 .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(settled ? Color.white : Color.secondary)
                                 .frame(width: 26, height: 26)
-                                .background(salahStatusColor(w.status, scheme), in: Circle())
+                                .background(salahStatusColor(w.status, scheme).opacity(settled ? 1 : 0.45), in: Circle())
                         }
                     }
                 } else {
@@ -377,9 +418,8 @@ struct SalahScreen: View {
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
-            .background(AlmaSwiftTheme.cardBg(scheme),
-                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl + 4, style: .continuous))
-            .shadow(color: AlmaSwiftTheme.cardShadow(scheme), radius: 6, y: 2)
+            .salahGlass(scheme, corner: AlmaSwiftTheme.rControl + 4)
+            .shadow(color: .black.opacity(scheme == .dark ? 0.15 : 0.05), radius: 6, y: 2)
         }
         .buttonStyle(.plain)
     }
@@ -401,12 +441,18 @@ struct SalahScreen: View {
             + (1...nDays).map { YmdCal.make(a.y, a.m, $0) }
         return VStack(spacing: 10) {
             HStack {
-                Button { shiftMonth(-1) } label: { Image(systemName: "chevron.left") }
+                Button { salahHaptic(); shiftMonth(-1) } label: {
+                    Image(systemName: "chevron.left").frame(width: 32, height: 32).contentShape(Rectangle())
+                }
                 Spacer()
                 Text("\(SalahL10n.monthNames[a.m - 1]) \(String(a.y))")
                     .font(.system(size: 15, weight: .semibold))
+                    .id("\(a.y)-\(a.m)")
+                    .transition(.opacity)
                 Spacer()
-                Button { shiftMonth(1) } label: { Image(systemName: "chevron.right") }
+                Button { salahHaptic(); shiftMonth(1) } label: {
+                    Image(systemName: "chevron.right").frame(width: 32, height: 32).contentShape(Rectangle())
+                }
             }
             .foregroundStyle(AlmaSwiftTheme.coral)
             .padding(.horizontal, 6)
@@ -427,9 +473,17 @@ struct SalahScreen: View {
             }
         }
         .padding(12)
-        .background(AlmaSwiftTheme.cardBg(scheme),
-                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
-        .shadow(color: AlmaSwiftTheme.cardShadow(scheme), radius: 8, y: 2)
+        .salahGlass(scheme)
+        .shadow(color: .black.opacity(scheme == .dark ? 0.18 : 0.06), radius: 10, y: 3)
+        // iOS-native: swipe the grid to move between months.
+        .gesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { v in
+                    guard abs(v.translation.width) > abs(v.translation.height) else { return }
+                    salahHaptic()
+                    shiftMonth(v.translation.width < 0 ? 1 : -1)
+                }
+        )
         .task(id: first) {
             await store.loadRange(from: first, to: YmdCal.make(a.y, a.m, nDays))
         }
@@ -441,7 +495,7 @@ struct SalahScreen: View {
         let isToday = ymd == store.today
         let isFuture = !store.today.isEmpty && ymd > store.today
         return Button {
-            if let day { detailDay = day }
+            if let day { salahHaptic(); detailDay = day }
         } label: {
             VStack(spacing: 4) {
                 Text("\(d)")
@@ -479,7 +533,7 @@ struct SalahScreen: View {
         a.m += delta
         if a.m > 12 { a.m = 1; a.y += 1 }
         if a.m < 1 { a.m = 12; a.y -= 1 }
-        monthAnchor = a
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) { monthAnchor = a }
     }
 
     // ── Legend ──
