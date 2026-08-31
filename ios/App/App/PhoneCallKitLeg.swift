@@ -99,10 +99,13 @@ final class SipCallController: ObservableObject {
             return resp.error ?? "কল দেওয়া গেল না"
         }
         do {
+            NSLog("[alma-sip-leg] placeOutbound: starting CallKit for %@", callId)
             try await CallKitVoIP.shared.startOutgoingSip(
                 callId: callId, peer: display, mediaURL: mediaURL, token: token)
+            NSLog("[alma-sip-leg] placeOutbound: CallKit transaction accepted for %@", callId)
             return nil
         } catch {
+            NSLog("[alma-sip-leg] placeOutbound: startOutgoingSip threw: %@", String(describing: error))
             return "কল শুরু করা গেল না"
         }
     }
@@ -111,11 +114,12 @@ final class SipCallController: ObservableObject {
     /// (audio starts on didActivate). Returns false when a call is already active.
     func start(callId: String, mediaURL: URL, token: String,
                peer: String = "", outgoing: Bool = false) -> Bool {
-        guard current == nil else { return false }
+        guard current == nil else { NSLog("[alma-sip-leg] start: busy"); return false }
         guard var comps = URLComponents(url: mediaURL, resolvingAgainstBaseURL: false) else { return false }
         let existing = comps.queryItems ?? []
         comps.queryItems = existing + [URLQueryItem(name: "token", value: token)]
-        guard let url = comps.url, url.scheme == "wss" || url.scheme == "ws" else { return false }
+        guard let url = comps.url, url.scheme == "wss" || url.scheme == "ws" else { NSLog("[alma-sip-leg] start: bad url"); return false }
+        NSLog("[alma-sip-leg] start: opening media socket for %@", callId)
         let id = callId
         // An incoming answer is live the moment the socket opens; outgoing waits
         // for the gateway's `answered` event.
@@ -207,7 +211,8 @@ final class SipCallAudioEngine: NSObject {
         task?.receive { [weak self] result in
             guard let self else { return }
             switch result {
-            case .failure:
+            case .failure(let err):
+                NSLog("[alma-sip-leg] ws receive failed: %@", String(describing: err))
                 self.handleClosed()
             case .success(let message):
                 if case .string(let text) = message { self.handleFrame(text) }
@@ -252,6 +257,7 @@ final class SipCallAudioEngine: NSObject {
     private func handleClosed() {
         guard !closed else { return }
         closed = true
+        NSLog("[alma-sip-leg] media socket closed (call %@)", streamId)
         DispatchQueue.main.async { self.onClosed?() }
     }
 
@@ -281,10 +287,21 @@ final class SipCallAudioEngine: NSObject {
         }
         do {
             try audio.start()
-            player.play()
         } catch {
-            handleClosed()
+            // Voice processing regularly refuses to start on the Simulator (and on
+            // some route changes). A call without echo-cancel beats no call at all —
+            // retry once plain before giving up.
+            try? input.setVoiceProcessingEnabled(false)
+            sendConverter = AVAudioConverter(from: input.outputFormat(forBus: 0), to: wireFormat)
+            do {
+                try audio.start()
+            } catch {
+                NSLog("[alma-sip-leg] audio engine start failed twice: %@", String(describing: error))
+                handleClosed()
+                return
+            }
         }
+        player.play()
     }
 
     private func captured(_ buffer: AVAudioPCMBuffer) {
