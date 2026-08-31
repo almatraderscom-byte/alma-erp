@@ -104,7 +104,10 @@ function ariAuthHeader() {
 }
 async function ari(method, path, query) {
   const qs = query ? '?' + new URLSearchParams(query).toString() : ''
-  const res = await fetch(`${ARI_BASE}/ari${path}${qs}`, {
+  // Local channel halves are named "<id>;1"/"<id>;2" — a raw ';' in the URL path
+  // makes ARI 404 the channel (found live 2026-09-01 on the loopback self-test).
+  const safePath = path.replace(/;/g, '%3B')
+  const res = await fetch(`${ARI_BASE}/ari${safePath}${qs}`, {
     method,
     headers: { Authorization: ariAuthHeader() },
     signal: AbortSignal.timeout(15_000),
