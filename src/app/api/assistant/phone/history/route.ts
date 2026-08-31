@@ -18,6 +18,7 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { requireAgentEnabled } from '@/agent/lib/guards'
+import { resolvePhoneIdentity } from '@/agent/lib/phone-contacts'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -45,8 +46,16 @@ export async function GET() {
     const res = await fetch(`${base}/api/v1/webrtc/history?ext=${encodeURIComponent(mine.ext)}`, {
       headers, cache: 'no-store', signal: AbortSignal.timeout(20_000),
     })
-    const body = (await res.json()) as { rows?: unknown[]; error?: string }
-    return NextResponse.json({ ok: true, rows: (body.rows ?? []).slice(0, 20), error: body.error ?? null })
+    const body = (await res.json()) as { rows?: Array<{ other?: string }>; error?: string }
+    const rows = (body.rows ?? []).slice(0, 20)
+    // Name the numbers the way the rest of the phone does (phonebook → customer),
+    // so recents read like a handset's log, not a list of digits.
+    const named = await Promise.all(rows.map(async (r) => {
+      if (!r?.other) return r
+      const id = await resolvePhoneIdentity(String(r.other)).catch(() => null)
+      return id?.name ? { ...r, name: id.name } : r
+    }))
+    return NextResponse.json({ ok: true, rows: named, error: body.error ?? null })
   } catch (err) {
     return NextResponse.json({ ok: true, rows: [], error: err instanceof Error ? err.message : String(err) })
   }

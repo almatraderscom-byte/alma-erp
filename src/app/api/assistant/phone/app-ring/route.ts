@@ -23,13 +23,10 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
 import { getCallPushTargets } from '@/agent/lib/call-push'
 import { apnsVoipConfigured, sendVoipCall } from '@/agent/lib/apns-voip'
+import { callerRingDisplay } from '@/agent/lib/phone-contacts'
 
 export const runtime = 'nodejs'
 export const maxDuration = 20
-
-const db = prisma as never as {
-  lifestyleCustomer: { findFirst: (q: unknown) => Promise<{ name: string | null } | null> }
-}
 
 function secretOk(provided: string): boolean {
   const expected = process.env.SIP_INBOUND_SECRET ?? process.env.NGS_INBOUND_SECRET ?? ''
@@ -54,20 +51,8 @@ type Body = {
   reason?: string
 }
 
-/** The name staff see on the lock screen — the customer if we know them. */
-async function callerDisplay(caller: string): Promise<string> {
-  const digits = caller.replace(/\D/g, '')
-  const tail = digits.slice(-10)
-  if (tail.length < 9) return caller || 'অজানা নম্বর'
-  try {
-    const customer = await db.lifestyleCustomer.findFirst({
-      where: { phone: { endsWith: tail } },
-      select: { name: true },
-    })
-    if (customer?.name) return `${customer.name} (${caller})`
-  } catch { /* the number alone is fine */ }
-  return caller || 'অজানা নম্বর'
-}
+// Lock-screen caller identity: shared resolver (phonebook → customer + last order),
+// so the ring, the screen-pop and the recents all name a number the same way.
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -115,7 +100,7 @@ export async function POST(req: NextRequest) {
     const targets = await getCallPushTargets(staffIds)
     if (!targets.voip.length) return NextResponse.json({ ok: true, sent: 0 })
 
-    const display = await callerDisplay(String(body.caller ?? ''))
+    const display = await callerRingDisplay(String(body.caller ?? ''))
     const results = await sendVoipCall(targets.voip, {
       type: 'sip_call',
       broadcastId: callId,
