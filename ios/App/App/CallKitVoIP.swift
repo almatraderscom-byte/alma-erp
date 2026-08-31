@@ -680,7 +680,10 @@ final class CallKitVoIP: NSObject {
         }
         completeSystemPreemptionForCall(uuid: uuid)
         stopPreviewBeforeSystemCallReport()
-        let handle = CXHandle(type: .phoneNumber, value: peer)
+        // .generic, NOT .phoneNumber — the provider config only registers .generic,
+        // and CallKit silently drops a start action whose handle type is unsupported
+        // (cost a debugging round on 2026-09-01).
+        let handle = CXHandle(type: .generic, value: peer)
         let action = CXStartCallAction(call: uuid, handle: handle)
         action.isVideo = false
         let transaction = CXTransaction(action: action)
@@ -700,6 +703,11 @@ final class CallKitVoIP: NSObject {
                 }
             }
         }
+    }
+
+    /// Ids of every call the adapter currently tracks (start-watchdog cleanup).
+    func allCallIds() -> [String] {
+        withCallState { calls, _ in calls.values.map(\.broadcastId) }
     }
 
     func hasCall(callId: String) -> Bool {
@@ -1305,8 +1313,10 @@ extension CallKitVoIP: CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        NSLog("[alma-sip-leg] CXStartCallAction perform entered uuid=%@", action.callUUID.uuidString)
         guard let call = withCallState({ calls, _ in calls[action.callUUID] }),
               call.direction == .outgoing else {
+            NSLog("[alma-sip-leg] CXStartCallAction: no matching outgoing call — failing")
             action.fail(); return
         }
         guard let admissionToken = transitionCallAdmission(
@@ -1314,6 +1324,7 @@ extension CallKitVoIP: CXProviderDelegate {
             expectedCall: call,
             phase: .activating)
         else {
+            NSLog("[alma-sip-leg] CXStartCallAction: admission transition failed")
             let removed = withCallState { calls, _ in
                 calls.removeValue(forKey: action.callUUID)
             }
@@ -1332,6 +1343,7 @@ extension CallKitVoIP: CXProviderDelegate {
         }
         provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: Date())
         if call.kind == .sip {
+            NSLog("[alma-sip-leg] CXStartCallAction perform: sip branch for %@", call.broadcastId)
             Task { @MainActor in
                 SipCallController.shared.onRemoteEnded = { [weak self] id in
                     self?.finishReportedCall(callId: id, reason: .remoteEnded)
@@ -1345,6 +1357,10 @@ extension CallKitVoIP: CXProviderDelegate {
                           }) else { return }
                     self.provider.reportOutgoingCall(with: entry.key, connectedAt: Date())
                 }
+                NSLog("[alma-sip-leg] sip start task: owns=%d accepts=%d url=%d",
+                      self.stillOwnsCall(call, uuid: action.callUUID) ? 1 : 0,
+                      AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken) ? 1 : 0,
+                      call.sipMediaURL != nil ? 1 : 0)
                 guard self.stillOwnsCall(call, uuid: action.callUUID),
                       AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken),
                       let mediaURL = call.sipMediaURL, let token = call.sipMediaToken,
@@ -1352,6 +1368,7 @@ extension CallKitVoIP: CXProviderDelegate {
                         callId: call.broadcastId, mediaURL: mediaURL, token: token,
                         peer: call.peer, outgoing: true)
                 else {
+                    NSLog("[alma-sip-leg] sip start task: guard FAILED")
                     guard let removed = self.withCallState({ calls, _ in
                         calls.removeValue(forKey: action.callUUID)
                     }) else {

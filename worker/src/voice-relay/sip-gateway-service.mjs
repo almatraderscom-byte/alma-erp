@@ -104,7 +104,10 @@ function ariAuthHeader() {
 }
 async function ari(method, path, query) {
   const qs = query ? '?' + new URLSearchParams(query).toString() : ''
-  const res = await fetch(`${ARI_BASE}/ari${path}${qs}`, {
+  // Local channel halves are named "<id>;1"/"<id>;2" — a raw ';' in the URL path
+  // makes ARI 404 the channel (found live 2026-09-01 on the loopback self-test).
+  const safePath = path.replace(/;/g, '%3B')
+  const res = await fetch(`${ARI_BASE}/ari${safePath}${qs}`, {
     method,
     headers: { Authorization: ariAuthHeader() },
     signal: AbortSignal.timeout(15_000),
@@ -2523,13 +2526,19 @@ async function appClaimOutbound(call, ws) {
   ws.on('close', () => { if (!call.closed) void call.hangup('app leg closed') })
   ws.on('error', () => { /* close follows */ })
   const { to, internal, ext } = call._appOutbound
+  // Our own DID: the provider cannot route it back to us, so go through the staff
+  // dialplan's internal-loopback exten (a Local channel) — same place a hand-dialled
+  // own-DID call lands. This is also the app leg's no-cost self-test path.
+  const ownDid = !internal && to === STAFF_CALLER_ID
   try {
     await ari('POST', '/channels', {
-      endpoint: internal ? `PJSIP/${to}` : `PJSIP/${to}@${TRUNK_ENDPOINT}`,
+      endpoint: internal ? `PJSIP/${to}`
+        : ownDid ? `Local/${to}@from-staff`
+          : `PJSIP/${to}@${TRUNK_ENDPOINT}`,
       app: ARI_APP,
       channelId: call.channelId,
       timeout: RING_TIMEOUT,
-      callerId: internal ? `${ext}` : STAFF_CALLER_ID,
+      callerId: internal || ownDid ? `${ext}` : STAFF_CALLER_ID,
     })
     putCdr(call.channelId, { status: 'ringing' })
     log(call.channelId, `app-dial originate -> ${to}${internal ? ' (internal)' : ''}`)

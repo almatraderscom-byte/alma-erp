@@ -231,6 +231,22 @@ struct PhoneScreen: View {
                         } else {
                             dialError = err
                         }
+                        return
+                    }
+                    // CallKit accepted the transaction — but if no live call
+                    // materialises (Simulator quirk, or CallKit dying silently),
+                    // clean the zombie up and fall back so the user still gets
+                    // their call instead of a dead button.
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    if SipCallController.shared.current == nil {
+                        for id in CallKitVoIP.shared.allCallIds() {
+                            _ = await CallKitVoIP.shared.requestEnd(callId: id, reason: "start_watchdog")
+                        }
+                        if engine.state.status == "registered" {
+                            engine.dial(n)
+                        } else {
+                            dialError = "কল শুরু হয়নি — ফোন চালু করে আবার চেষ্টা করুন"
+                        }
                     }
                 }
             } label: {
