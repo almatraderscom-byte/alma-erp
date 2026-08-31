@@ -18,6 +18,7 @@
 import Foundation
 import AVFoundation
 import CryptoKit
+import Network
 
 // MARK: - G.711 μ-law codec (algorithmic, no tables to get wrong)
 
@@ -142,6 +143,22 @@ final class SipCallController: ObservableObject {
         }
         engine = eng
         eng.connect()
+        // ROOT CAUSE of build 120's dead-air call (device test 2026-09-01): CallKit
+        // only activates the audio session — and therefore only calls
+        // provider(_:didActivate:) — when the app has configured a call-capable
+        // category BEFORE the action is fulfilled. Every working call path in this
+        // app (Agora office, agent live voice) sets .playAndRecord/.voiceChat at
+        // call start; the sip leg never did, so didActivate never fired, startAudio
+        // never ran, and both directions were silence while the transport was
+        // perfect (gateway saw the caller's audio; app frames=0). setActive stays
+        // CallKit's job — category only here.
+        do {
+            try AVAudioSession.sharedInstance().setCategory(
+                .playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
+            NSLog("[alma-sip-leg] audio session category configured")
+        } catch {
+            NSLog("[alma-sip-leg] session category failed: %@", String(describing: error))
+        }
         return true
     }
 
@@ -160,6 +177,7 @@ final class SipCallController: ObservableObject {
 
     /// CallKit ended the call locally (user hung up / declined after answer path).
     func callKitEnded(callId: String) {
+        NSLog("[alma-sip-leg] callKitEnded(%@) active=%@", callId, activeCallId ?? "nil")
         guard activeCallId?.caseInsensitiveCompare(callId) == .orderedSame else { return }
         stopEngine()
     }
@@ -177,7 +195,8 @@ final class SipCallController: ObservableObject {
 final class SipCallAudioEngine: NSObject {
     private let url: URL
     private let streamId: String
-    private var task: URLSessionWebSocketTask?
+    private var conn: NWConnection?
+    private let sendQueue = DispatchQueue(label: "com.almatraders.erp.sip-leg-ws")
     private let audio = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var sendConverter: AVAudioConverter?
@@ -199,27 +218,68 @@ final class SipCallAudioEngine: NSObject {
     }
 
     // MARK: socket
+    //
+    // Network.framework, NOT URLSessionWebSocketTask — deliberately. The gateway's
+    // TLS front (Traefik) advertises h2 and `Alt-Svc: h3`; URLSession's WebSocket
+    // then intermittently attempts the newer protocols and HANGS the handshake with
+    // no callback at all (2 of the owner's 3 device dials never reached the gateway;
+    // the Simulator reproduced it every attempt after the first). NWConnection lets
+    // us pin ALPN to http/1.1, which is the only dialect a WebSocket upgrade
+    // actually needs, so the connect is deterministic.
 
     func connect() {
-        let t = URLSession.shared.webSocketTask(with: url)
-        task = t
-        t.resume()
-        receiveLoop()
+        guard let host = url.host else { handleClosed(); return }
+        let port = UInt16(url.port ?? (url.scheme == "wss" ? 443 : 80))
+        let tlsOptions = NWProtocolTLS.Options()
+        sec_protocol_options_add_tls_application_protocol(
+            tlsOptions.securityProtocolOptions, "http/1.1")
+        let tcpOptions = NWProtocolTCP.Options()
+        tcpOptions.noDelay = true
+        let params = url.scheme == "wss"
+            ? NWParameters(tls: tlsOptions, tcp: tcpOptions)
+            : NWParameters(tls: nil, tcp: tcpOptions)
+        let wsOptions = NWProtocolWebSocket.Options()
+        wsOptions.autoReplyPing = true
+        // NWProtocolWebSocket takes the path from the URL via the request handler —
+        // set it explicitly so the query (the one-time token) survives.
+        var path = url.path.isEmpty ? "/" : url.path
+        if let q = url.query { path += "?" + q }
+        wsOptions.setAdditionalHeaders([("Host", host)])
+        params.defaultProtocolStack.applicationProtocols.insert(wsOptions, at: 0)
+        let endpoint = NWEndpoint.url(URL(string: "\(url.scheme ?? "wss")://\(host):\(port)\(path)")!)
+        let c = NWConnection(to: endpoint, using: params)
+        conn = c
+        NSLog("[alma-sip-leg] ws dialing %@:%d path=%@", host, Int(port), path)
+        c.stateUpdateHandler = { [weak self] state in
+            NSLog("[alma-sip-leg] ws state: %@", String(describing: state))
+            switch state {
+            case .ready:
+                NSLog("[alma-sip-leg] ws connected (http/1.1 pinned)")
+                self?.receiveLoop()
+            case .failed(let err):
+                NSLog("[alma-sip-leg] ws failed: %@", String(describing: err))
+                self?.handleClosed()
+            case .cancelled:
+                self?.handleClosed()
+            default:
+                break
+            }
+        }
+        c.start(queue: sendQueue)
     }
 
     private func receiveLoop() {
-        task?.receive { [weak self] result in
+        conn?.receiveMessage { [weak self] data, _, _, error in
             guard let self else { return }
-            switch result {
-            case .failure(let err):
-                NSLog("[alma-sip-leg] ws receive failed: %@", String(describing: err))
+            if let error {
+                NSLog("[alma-sip-leg] ws receive failed: %@", String(describing: error))
                 self.handleClosed()
-            case .success(let message):
-                if case .string(let text) = message { self.handleFrame(text) }
-                else if case .data(let data) = message,
-                        let text = String(data: data, encoding: .utf8) { self.handleFrame(text) }
-                self.receiveLoop()
+                return
             }
+            if let data, let text = String(data: data, encoding: .utf8) {
+                self.handleFrame(text)
+            }
+            self.receiveLoop()
         }
     }
 
@@ -249,9 +309,12 @@ final class SipCallAudioEngine: NSObject {
     private func send(_ obj: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: obj),
               let text = String(data: data, encoding: .utf8) else { return }
-        task?.send(.string(text)) { [weak self] err in
+        let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
+        let context = NWConnection.ContentContext(identifier: "text", metadata: [metadata])
+        conn?.send(content: text.data(using: .utf8), contentContext: context,
+                   isComplete: true, completion: .contentProcessed { [weak self] err in
             if err != nil { self?.handleClosed() }
-        }
+        })
     }
 
     private func handleClosed() {
@@ -266,6 +329,7 @@ final class SipCallAudioEngine: NSObject {
     func startAudio() {
         guard !audioRunning else { return }
         audioRunning = true
+        NSLog("[alma-sip-leg] startAudio: beginning graph")
         let input = audio.inputNode
         // Echo cancellation: without it the caller hears themselves back from the
         // speakerphone path. Best-effort — a failure must not kill the call.
@@ -302,8 +366,11 @@ final class SipCallAudioEngine: NSObject {
             }
         }
         player.play()
+        NSLog("[alma-sip-leg] startAudio: engine running, input rate=%f", audio.inputNode.outputFormat(forBus: 0).sampleRate)
     }
 
+    private var sentFrames = 0
+    private var playedFrames = 0
     private func captured(_ buffer: AVAudioPCMBuffer) {
         guard !muted, let converter = sendConverter else { return }
         let ratio = wireFormat.sampleRate / buffer.format.sampleRate
@@ -320,6 +387,10 @@ final class SipCallAudioEngine: NSObject {
         guard convError == nil, out.frameLength > 0, let ch = out.int16ChannelData else { return }
         let samples = Array(UnsafeBufferPointer(start: ch[0], count: Int(out.frameLength)))
         let mu = AlmaMuLaw.encode(samples)
+        sentFrames += 1
+        if sentFrames == 1 || sentFrames % 100 == 0 {
+            NSLog("[alma-sip-leg] mic frames sent: %d", sentFrames)
+        }
         send(["event": "media", "streamId": streamId,
               "media": ["payload": mu.base64EncodedString()]])
     }
@@ -329,6 +400,10 @@ final class SipCallAudioEngine: NSObject {
               let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(samples.count))
         else { return }
         buf.frameLength = AVAudioFrameCount(samples.count)
+        playedFrames += 1
+        if playedFrames == 1 || playedFrames % 100 == 0 {
+            NSLog("[alma-sip-leg] play frames: %d (running=%d)", playedFrames, audioRunning ? 1 : 0)
+        }
         if let ch = buf.floatChannelData {
             for i in 0..<samples.count { ch[0][i] = Float(samples[i]) / 32768.0 }
         }
@@ -337,8 +412,8 @@ final class SipCallAudioEngine: NSObject {
 
     func stop() {
         closed = true
-        task?.cancel(with: .normalClosure, reason: nil)
-        task = nil
+        conn?.cancel()
+        conn = nil
         if audioRunning {
             audio.inputNode.removeTap(onBus: 0)
             player.stop()

@@ -1246,6 +1246,7 @@ extension CallKitVoIP: PKPushRegistryDelegate {
 @available(iOS 17.0, *)
 extension CallKitVoIP: CXProviderDelegate {
     func providerDidReset(_ provider: CXProvider) {
+        NSLog("[alma-sip-leg] providerDidReset")
         callStateLock.lock()
         let resetCalls = Array(calls.values)
         let resetAdmissionTokens = Set(
@@ -1813,6 +1814,9 @@ extension CallKitVoIP: CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+        let peekReason = withCallState { _, reasons in reasons[action.callUUID] }
+        NSLog("[alma-sip-leg] CXEndCallAction perform uuid=%@ requestedReason=%@",
+              action.callUUID.uuidString, peekReason ?? "SYSTEM/none")
         let (call, reason) = withCallState { calls, reasons in
             let call = calls.removeValue(forKey: action.callUUID)
             let reason = reasons.removeValue(forKey: action.callUUID)
@@ -1956,6 +1960,9 @@ extension CallKitVoIP: CXProviderDelegate {
         let candidate = withCallState { calls, _ in
             calls.count == 1 ? calls.first : nil
         }
+        NSLog("[alma-sip-leg] didActivate: calls=%d candidate=%@",
+              withCallState { calls, _ in calls.count },
+              candidate?.value.broadcastId ?? "nil")
         let sourceCall: ActivatedAudioOwner?
         if let candidate,
            let admissionToken = transitionCallAdmission(
@@ -1981,6 +1988,7 @@ extension CallKitVoIP: CXProviderDelegate {
         } else {
             sourceCall = nil
         }
+        NSLog("[alma-sip-leg] didActivate: sourceCall=%@", sourceCall?.call.broadcastId ?? "nil")
         AlmaVoiceAudioTrace.event(
             "callkit.didActivate",
             "category=\(audioSession.category.rawValue) mode=\(audioSession.mode.rawValue) "
@@ -1999,6 +2007,7 @@ extension CallKitVoIP: CXProviderDelegate {
             if sourceCall.call.kind == .agent, let lifecycleObservation {
                 AgentCallController.shared.audioSessionActivated(lifecycleObservation)
             } else if sourceCall.call.kind == .sip {
+                NSLog("[alma-sip-leg] didActivate: handing session to sip engine")
                 SipCallController.shared.audioSessionActivated()
             } else if sourceCall.call.kind == .office {
                 OfficeCallCoordinator.shared.audioSessionActivated()
