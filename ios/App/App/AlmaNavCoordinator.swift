@@ -53,7 +53,6 @@ enum AlmaNavCoordinator {
         // console, Mac control, media studio) — embedded web until native lands.
         "/agent/mac",
         "/agent/media",
-        "/agent/phone",
         "/agent/phone-console",
         "/agent/phone-console/calls",
         "/agent/phone-console/extensions",

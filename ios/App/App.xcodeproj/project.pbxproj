@@ -180,6 +180,8 @@
 		F2AA7700000000000000B1FD /* StaffMonitorSystemSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A1FD /* StaffMonitorSystemSwiftUI.swift */; };
 		F2AA7700000000000000B1FE /* StaffMonitorAgentsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A1FE /* StaffMonitorAgentsSwiftUI.swift */; };
 		F2AA7700000000000000B1FF /* AgentHubSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A1FF /* AgentHubSwiftUI.swift */; };
+		F2AA7700000000000000B7E1 /* PhoneSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A7E1 /* PhoneSwiftUI.swift */; };
+		F2AA7700000000000000B7E2 /* PhoneEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A7E2 /* PhoneEngine.swift */; };
 		F2AA7700000000000000B2AA /* CSLifestyleEditorSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A2AA /* CSLifestyleEditorSwiftUI.swift */; };
 		F2AA7700000000000000B9C1 /* MacRemoteControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A9C1 /* MacRemoteControl.swift */; };
 		F2AA7700000000000000B9F1 /* BrowserLiveSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A9F1 /* BrowserLiveSwiftUI.swift */; };
@@ -419,6 +421,8 @@
 		F2AA7700000000000000A1FD /* StaffMonitorSystemSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaffMonitorSystemSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A1FE /* StaffMonitorAgentsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaffMonitorAgentsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A1FF /* AgentHubSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHubSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A7E1 /* PhoneSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A7E2 /* PhoneEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneEngine.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A2AA /* CSLifestyleEditorSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSLifestyleEditorSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A9C1 /* MacRemoteControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRemoteControl.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A9F1 /* BrowserLiveSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLiveSwiftUI.swift; sourceTree = "<group>"; };
@@ -579,6 +583,8 @@
 				F2AA7700000000000000A101 /* CreditUsageSwiftUI.swift */,
 				F2AA7700000000000000A1AA /* WalletStatementSwiftUI.swift */,
 				F2AA7700000000000000A1FF /* AgentHubSwiftUI.swift */,
+				F2AA7700000000000000A7E1 /* PhoneSwiftUI.swift */,
+				F2AA7700000000000000A7E2 /* PhoneEngine.swift */,
 				F2AA7700000000000000A1FE /* StaffMonitorAgentsSwiftUI.swift */,
 				F2AA7700000000000000A1FD /* StaffMonitorSystemSwiftUI.swift */,
 				F2AA7700000000000000A1FC /* NativeAuthRecoverySwiftUI.swift */,
@@ -1133,6 +1139,8 @@
 				F2AA7700000000000000B101 /* CreditUsageSwiftUI.swift in Sources */,
 				F2AA7700000000000000B1AA /* WalletStatementSwiftUI.swift in Sources */,
 				F2AA7700000000000000B1FF /* AgentHubSwiftUI.swift in Sources */,
+				F2AA7700000000000000B7E1 /* PhoneSwiftUI.swift in Sources */,
+				F2AA7700000000000000B7E2 /* PhoneEngine.swift in Sources */,
 				F2AA7700000000000000B1FE /* StaffMonitorAgentsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B1FD /* StaffMonitorSystemSwiftUI.swift in Sources */,
 				F2AA7700000000000000B1FC /* NativeAuthRecoverySwiftUI.swift in Sources */,

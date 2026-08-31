@@ -316,6 +316,10 @@ enum AlmaAccess {
         if pathname.hasPrefix("/agent/catalog-images") {
             return role == .SUPER_ADMIN || role == .ADMIN
         }
+        // Browser phone: open to every staff member (mirrors the web carve-out in
+        // src/lib/roles.ts — answering customer calls is staff work). The phone
+        // CONSOLE stays owner-only via the /agent rule below.
+        if pathname == "/agent/phone" { return true }
         if pathname.hasPrefix("/agent") { return role == .SUPER_ADMIN }
         if pathname.hasPrefix("/api/business-archive") { return role == .SUPER_ADMIN }
 

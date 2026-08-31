@@ -6,6 +6,7 @@ import { isAgentEnabled } from '@/agent/config'
 import { isSystemOwner } from '@/lib/roles'
 import { AgentSubHeader } from '@/agent/components/AgentSubHeader'
 import SoftphonePanel from '@/agent/components/phone/SoftphonePanel'
+import SoftphoneHeadless from '@/agent/components/phone/SoftphoneHeadless'
 
 /**
  * The browser phone. Any logged-in staff member can take and place real calls here — the
@@ -15,12 +16,23 @@ import SoftphonePanel from '@/agent/components/phone/SoftphonePanel'
 
 export const metadata = { title: 'ALMA Agent — ফোন' }
 
-export default async function PhonePage() {
+export default async function PhonePage({
+  searchParams,
+}: {
+  // Next 16: searchParams is a Promise — never read it synchronously.
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
   if (!isAgentEnabled()) notFound()
 
   const session = await getServerSession(authOptions)
   if (!session?.user) redirect('/login')
   // Deliberately open to all staff, not owner-only: taking customer calls is their job.
+
+  // ?headless=1 — the iOS app's hidden audio-engine surface. The native dialler UI
+  // (PhoneScreen) drives this page through a JS bridge; it must render NOTHING visible,
+  // because its WKWebView sits invisibly behind the native screen.
+  const sp = await searchParams
+  if (sp.headless === '1') return <SoftphoneHeadless />
 
   return (
     <div className="h-full overflow-y-auto">

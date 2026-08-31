@@ -108,9 +108,28 @@ export function useSoftphone() {
     }, delay)
   }, [])
 
+  /**
+   * Keep the screen awake for the duration of a call. On a phone (the iOS/Android app
+   * WebViews included) the display sleeping mid-conversation suspends the page and with it
+   * the WebRTC session — the caller goes silent for no visible reason. Best-effort: the
+   * API is absent on older browsers and a denied request must never break the call.
+   */
+  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null)
+  const holdWakeLock = useCallback(async () => {
+    try {
+      const wl = (navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock
+      if (wl && !wakeLockRef.current) wakeLockRef.current = await wl.request('screen')
+    } catch { /* optional comfort, never a failure */ }
+  }, [])
+  const dropWakeLock = useCallback(() => {
+    void wakeLockRef.current?.release().catch(() => { /* already released */ })
+    wakeLockRef.current = null
+  }, [])
+
   const wireSession = useCallback((session: Session, peer: string, incoming: boolean) => {
     sessionRef.current = session
     patch({ peer, incoming, status: 'ringing', seconds: 0, error: null })
+    void holdWakeLock()
     session.stateChange.addListener((s) => {
       if (s === SessionState.Established) {
         answeredRef.current = true
@@ -122,6 +141,7 @@ export function useSoftphone() {
       }
       if (s === SessionState.Terminated) {
         stopTimer()
+        dropWakeLock()
         // Say WHY the call ended. Silence here is a real failure mode: dialling a colleague
         // whose tab is closed simply did nothing, with no way to tell that from a broken
         // phone (the owner hit exactly this — "1001 e test dilam kichui to ashlo na").
@@ -133,7 +153,7 @@ export function useSoftphone() {
         patch({ status: 'registered', peer: null, incoming: false, seconds: 0, error: reason, muted: false })
       }
     })
-  }, [attachRemoteAudio, patch, stopTimer])
+  }, [attachRemoteAudio, dropWakeLock, holdWakeLock, patch, stopTimer])
 
   /** Register the extension. Called on an explicit user action so mic permission is in context. */
   const connect = useCallback(async () => {
@@ -247,6 +267,7 @@ export function useSoftphone() {
 
   const disconnect = useCallback(async () => {
     stopTimer()
+    dropWakeLock()
     closingRef.current = true
     if (reconnectRef.current.timer) { clearTimeout(reconnectRef.current.timer); reconnectRef.current.timer = null }
     if (keepAliveRef.current) { clearInterval(keepAliveRef.current); keepAliveRef.current = null }
@@ -257,7 +278,7 @@ export function useSoftphone() {
     uaRef.current = null
     sessionRef.current = null
     patch({ status: 'idle', peer: null, incoming: false, extension: null, seconds: 0 })
-  }, [patch, stopTimer])
+  }, [dropWakeLock, patch, stopTimer])
 
   const answer = useCallback(async () => {
     const session = sessionRef.current

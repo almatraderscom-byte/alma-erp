@@ -99,6 +99,7 @@ enum AlmaShellCatalog {
     static let curatedGroups: [MoreGroup] = [
         MoreGroup(header: "Agent", symbol: "sparkles", items: [
             MoreItem("Agent Hub", "square.grid.2x2.fill", "/agent/hub"),
+            MoreItem("ব্রাউজার ফোন", "phone.circle.fill", "/agent/phone"),
             MoreItem("Phone Companion", "iphone.radiowaves.left.and.right", "native:companion", gate: "/agent"),
             MoreItem("কল হিস্টরি", "phone.badge.waveform.fill", "native:agent-calls", gate: "/agent"),
             MoreItem("নামাজ", "moon.stars.fill", "native:salah", gate: "/agent"),

@@ -69,10 +69,10 @@
     {
       "path": "/agent/phone",
       "pattern": "exact",
-      "classification": "temporary-web",
-      "nativeHandler": "web",
-      "notes": "The protected staff softphone intentionally keeps its WebRTC web surface pending a dedicated native parity decision.",
-      "gapPhase": "IOSP-7"
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "PhoneScreen",
+      "notes": "Native dialler UI; the SIP/WebRTC audio engine runs in a hidden headless WebView (PhoneEngine) loading /agent/phone?headless=1."
     },
     {
       "path": "/agent/catalog-images",
