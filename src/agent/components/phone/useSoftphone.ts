@@ -115,13 +115,23 @@ export function useSoftphone() {
    * API is absent on older browsers and a denied request must never break the call.
    */
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null)
+  // Generation guard: a call can END before the async request resolves (an
+  // instantly-rejected dial). Without it the late-resolving lock would be stored
+  // with nothing left to release it, leaving Auto-Lock disabled on a page that —
+  // under the native app — stays mounted for the life of the singleton engine.
+  const wakeGenRef = useRef(0)
   const holdWakeLock = useCallback(async () => {
     try {
       const wl = (navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock
-      if (wl && !wakeLockRef.current) wakeLockRef.current = await wl.request('screen')
+      if (!wl || wakeLockRef.current) return
+      const gen = wakeGenRef.current
+      const lock = await wl.request('screen')
+      if (gen !== wakeGenRef.current) { void lock.release().catch(() => { /* */ }); return }
+      wakeLockRef.current = lock
     } catch { /* optional comfort, never a failure */ }
   }, [])
   const dropWakeLock = useCallback(() => {
+    wakeGenRef.current += 1
     void wakeLockRef.current?.release().catch(() => { /* already released */ })
     wakeLockRef.current = null
   }, [])

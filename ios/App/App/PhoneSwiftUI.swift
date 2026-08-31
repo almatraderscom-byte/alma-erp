@@ -90,6 +90,9 @@ struct PhoneScreen: View {
         .onAppear {
             engine.ensureLoaded()
             Task { await loadLists() }
+            // A call may already be ringing when the user navigates here — the
+            // .onChange below never fires for a peer set before appearance.
+            Task { await fetchCaller(engine.state.peer) }
         }
         .onChange(of: engine.state.peer) { _, peer in
             Task { await fetchCaller(peer) }
@@ -518,7 +521,12 @@ struct PhoneScreen: View {
         callerFetchedFor = peer
         let c: PhoneCallerContext? = try? await AlmaAPI.shared.get(
             "/api/assistant/phone/caller", query: ["number": peer])
-        await MainActor.run { caller = c }
+        await MainActor.run {
+            // A slow lookup must never dress a NEW caller in the previous
+            // customer's orders — assign only if this call is still the one live.
+            guard engine.state.peer == peer, engine.state.incoming else { return }
+            caller = c
+        }
     }
 }
 

@@ -100,9 +100,11 @@ export function isPathAllowedForRole(pathname: string, role: AlmaRole, businessI
 
   // The browser phone is for whoever answers customer calls — every staff member.
   // The page itself was always written that way ("deliberately open to all staff");
-  // this carve-out makes the proxy agree with it. The phone CONSOLE (routing,
+  // this carve-out makes the proxy agree with it. VIEWER stays out: that role is
+  // read-only by definition, and a dialler that can place real outbound calls is
+  // the opposite of read-only (Codex P1, PR #868). The phone CONSOLE (routing,
   // recordings, settings) stays owner-only via the /agent rule below.
-  if (pathname === '/agent/phone') return true
+  if (pathname === '/agent/phone') return role !== 'VIEWER'
 
   if (pathname.startsWith('/agent')) return role === 'SUPER_ADMIN'
 

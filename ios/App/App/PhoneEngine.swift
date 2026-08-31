@@ -116,8 +116,23 @@ final class PhoneEngine: NSObject, ObservableObject {
 
     @MainActor func connect() {
         ensureLoaded()
-        if ready { js("connect()") } else { pendingConnect = true }
+        if ready { js("connect()"); return }
+        pendingConnect = true
+        // Never a dead button: show progress at once, and say so honestly if the
+        // headless page cannot produce a bridge (old server, offline, login bounce).
+        state.status = "connecting"
+        state.error = nil
+        let generation = connectWaitGeneration &+ 1
+        connectWaitGeneration = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            guard let self, self.connectWaitGeneration == generation,
+                  self.pendingConnect, !self.ready else { return }
+            self.pendingConnect = false
+            self.state.status = "error"
+            self.state.error = "ফোন ইঞ্জিনে পৌঁছানো গেল না — একটু পরে আবার চেষ্টা করুন"
+        }
     }
+    private var connectWaitGeneration: UInt64 = 0
     @MainActor func disconnect() { js("disconnect()") }
     @MainActor func dial(_ number: String) {
         let digits = number.filter { "0123456789*#".contains($0) }
@@ -180,6 +195,17 @@ extension PhoneEngine: WKUIDelegate, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         DispatchQueue.main.async { self.pageError = error.localizedDescription }
+    }
+    /// A login bounce is a SUCCESSFUL navigation to /login — no didFail fires, yet
+    /// no bridge can ever appear. Flag it so ensureLoaded() rebuilds next tap and
+    /// the user sees an honest message instead of a silent dead button.
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let path = webView.url?.path ?? ""
+        if !path.hasPrefix("/agent/phone") {
+            DispatchQueue.main.async {
+                if !self.ready { self.pageError = "লগইন সেশন পাওয়া যায়নি — অ্যাপে আবার লগইন করুন" }
+            }
+        }
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         DispatchQueue.main.async { self.pageError = error.localizedDescription }
