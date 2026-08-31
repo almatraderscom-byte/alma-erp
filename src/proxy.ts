@@ -52,6 +52,8 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/assistant/voice-call/sip-confirm') return true
   if (pathname === '/api/assistant/voice-call/sip-cdr') return true
   if (pathname === '/api/assistant/voice-call/sip-voicemail') return true
+  // Staff-app incoming ring (VoIP push fan-out) — same VPS caller, ?k secret inside.
+  if (pathname === '/api/assistant/phone/app-ring') return true
   // ALMA Companion extension (the owner's own Chrome). These endpoints carry a DEVICE
   // token, not a session cookie: `pair` redeems a single-use, 10-minute, owner-issued
   // code, and `poll`/`authorize`/`result` present a bearer token stored only as a hash. Each

@@ -112,8 +112,10 @@ export function apnsJwt(): string | null {
 
 export type VoipCallPayload = {
   /** 'office_call' = staff↔owner Agora call; 'agent_call' = the AI agent ringing
-   *  the owner's app (answered into a Gemini Live session, no Agora). */
-  type: 'office_call' | 'agent_call'
+   *  the owner's app (answered into a Gemini Live session, no Agora);
+   *  'sip_call' = an inbound CUSTOMER call ringing the staff apps during the
+   *  staff-first window (answered into the gateway's /app-media WebSocket). */
+  type: 'office_call' | 'agent_call' | 'sip_call'
   broadcastId: string
   schemaVersion?: number
   callId?: string
@@ -134,6 +136,11 @@ export type VoipCallPayload = {
    *  brief landed). The post-answer fetch remains the full-length fallback.
    *  Additive; legacy clients ignore it. */
   purpose?: string
+  /** sip_call ring only: one-time token for the gateway's /app-media WebSocket —
+   *  presenting it IS the answer (first connection wins the call). */
+  mediaToken?: string
+  /** sip_call ring only: wss URL of the gateway's app media endpoint. */
+  mediaWsUrl?: string
 }
 
 export type ApnsVoipSendResult = {

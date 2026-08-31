@@ -74,7 +74,9 @@ final class CallKitVoIP: NSObject {
     private enum CallDirection: Equatable { case incoming, outgoing }
     /// 'office' = staff↔owner Agora call (OfficeCallCoordinator). 'agent' = the AI
     /// agent ringing the owner — answered into the Gemini Live voice console.
-    private enum CallKind: Equatable { case office, agent }
+    /// 'sip' = an inbound CUSTOMER call from the self-hosted PBX — answered into
+    /// the gateway's /app-media WebSocket (SipCallController).
+    private enum CallKind: Equatable { case office, agent, sip }
     /// CallKit is an OS adapter; OfficeCallCoordinator remains the sole source of
     /// call truth. This map only correlates CallKit action UUIDs to canonical IDs.
     private struct ActiveCall {
@@ -92,6 +94,10 @@ final class CallKitVoIP: NSObject {
         /// 2026-08-15: late brief made the model open generic, then re-greet).
         var agentPurpose: String? = nil
         var admissionToken: AlmaCallAudioAdmission.Token? = nil
+        /// sip only: where the answered call's media socket lives, and the
+        /// one-time token that claims it (never logged).
+        var sipMediaURL: URL? = nil
+        var sipMediaToken: String? = nil
         /// `answered` means the user initiated an answer and suppresses a
         /// multi-device cancel race. Only `answerFulfilled` is durable server
         /// truth and may make a terminal transition depend on `answered`.
@@ -171,7 +177,7 @@ final class CallKitVoIP: NSObject {
             let owner = AlmaCallAudioAdmission.Owner.callKit(
                 uuid: uuid,
                 callID: call.broadcastId.lowercased(),
-                kind: call.kind == .agent ? .agent : .office,
+                kind: call.kind == .agent ? .agent : (call.kind == .sip ? .sip : .office),
                 phase: phase)
             let admissionToken: AlmaCallAudioAdmission.Token?
             if let existingAdmissionToken {
@@ -516,8 +522,13 @@ final class CallKitVoIP: NSObject {
                                 kind: CallKind = .office,
                                 agentClaimReceipt: String? = nil,
                                 agentPurpose: String? = nil,
+                                sipMediaURL: URL? = nil,
+                                sipMediaToken: String? = nil,
                                 completion: @escaping () -> Void) {
-        guard let uuid = UUID(uuidString: broadcastId) else {
+        // sip call ids are Asterisk channel ids, not UUIDs — derive a deterministic
+        // CallKit UUID so a duplicate push still maps to the same system call.
+        guard let uuid = UUID(uuidString: broadcastId)
+            ?? (kind == .sip ? almaDeterministicCallUUID(broadcastId) : nil) else {
             reportPlaceholderAndEnd(caller: caller, completion: completion)
             return
         }
@@ -527,7 +538,9 @@ final class CallKitVoIP: NSObject {
                 broadcastId: broadcastId.lowercased(), channel: channel,
                 peer: caller, direction: .incoming, kind: kind,
                 agentClaimReceipt: kind == .agent ? agentClaimReceipt : nil,
-                agentPurpose: kind == .agent ? agentPurpose : nil))
+                agentPurpose: kind == .agent ? agentPurpose : nil,
+                sipMediaURL: kind == .sip ? sipMediaURL : nil,
+                sipMediaToken: kind == .sip ? sipMediaToken : nil))
         if insertion.duplicate {
             completion() // duplicate PushKit/poll delivery: one deterministic system call
             return
@@ -572,9 +585,10 @@ final class CallKitVoIP: NSObject {
                         return
                     }
                 }
-            } else if kind == .agent {
-                // No Agora reconcile for agent calls — the server row IS the truth
-                // and the ring window is enforced by expiresAt at parse time.
+            } else if kind == .agent || kind == .sip {
+                // No Agora reconcile for agent/sip calls — the ring window is
+                // enforced by expiresAt at parse time, and a stale sip ring is
+                // ended by the server's cancel push (or the missed-call timer).
             } else {
                 Task { @MainActor in
                     let valid = await OfficeCallCoordinator.shared.reconcileIncoming(
@@ -851,7 +865,7 @@ final class CallKitVoIP: NSObject {
                     to: .callKit(
                         uuid: uuid,
                         callID: expectedCall.broadcastId.lowercased(),
-                        kind: expectedCall.kind == .agent ? .agent : .office,
+                        kind: expectedCall.kind == .agent ? .agent : (expectedCall.kind == .sip ? .sip : .office),
                         phase: phase)),
                   AlmaCallAudioAdmission.shared.acceptsMediaMutation(token)
             else { return nil }
@@ -900,6 +914,8 @@ final class CallKitVoIP: NSObject {
         let stop: @MainActor () -> Void = {
             if call.kind == .agent {
                 AgentCallController.shared.callKitEnded(callId: call.broadcastId)
+            } else if call.kind == .sip {
+                SipCallController.shared.callKitEnded(callId: call.broadcastId)
             } else {
                 OfficeCallCoordinator.shared.remoteCallEndedLocally(
                     callId: call.broadcastId)
@@ -1084,6 +1100,60 @@ extension CallKitVoIP: PKPushRegistryDelegate {
                           })?.value
                       }),
                       call.kind == .agent, !call.answered else { return }
+                self.finishReportedCall(callId: callId, reason: .unanswered)
+            }
+            return
+        }
+
+        // Inbound CUSTOMER call from the self-hosted PBX (phone program step 2):
+        // ring as a native call; answering opens the gateway's media socket.
+        if (d["type"] as? String) == "sip_call" {
+            let schema = (d["schemaVersion"] as? NSNumber)?.intValue ?? (d["schemaVersion"] as? Int) ?? 0
+            if event == "cancel" {
+                if !broadcastId.isEmpty {
+                    let answeredHere = withCallState { calls, _ in
+                        calls.contains {
+                            $0.value.broadcastId.caseInsensitiveCompare(broadcastId) == .orderedSame
+                                && $0.value.answered
+                        }
+                    }
+                    if !answeredHere {
+                        finishReportedCall(callId: broadcastId, reason: .remoteEnded)
+                    }
+                }
+                reportPlaceholderAndEnd(caller: caller0, completion: completion)
+                return
+            }
+            let expiresAt = (d["expiresAt"] as? String).flatMap {
+                Self.isoFractional.date(from: $0) ?? Self.isoPlain.date(from: $0)
+            }
+            let mediaURL = (d["mediaWsUrl"] as? String).flatMap(URL.init(string:))
+            let mediaToken = ((d["mediaToken"] as? String) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard schema == 1, !broadcastId.isEmpty,
+                  let mediaURL, mediaURL.scheme == "wss" || mediaURL.scheme == "ws",
+                  !mediaToken.isEmpty,
+                  let expiresAt, expiresAt > Date()
+            else {
+                reportPlaceholderAndEnd(caller: caller0, completion: completion)
+                return
+            }
+            let callId = broadcastId
+            reportIncoming(broadcastId: callId, channel: "sip_\(callId)",
+                           caller: caller0, kind: .sip,
+                           sipMediaURL: mediaURL, sipMediaToken: mediaToken,
+                           completion: completion)
+            // Missed-call UX: past the ring window, close as UNANSWERED rather than
+            // waiting for the server's cancel push to race in.
+            let deadline = expiresAt.timeIntervalSinceNow + 2
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(5, deadline)) { [weak self] in
+                guard let self,
+                      let call = self.withCallState({ calls, _ in
+                          calls.first(where: {
+                              $0.value.broadcastId.caseInsensitiveCompare(callId) == .orderedSame
+                          })?.value
+                      }),
+                      call.kind == .sip, !call.answered else { return }
                 self.finishReportedCall(callId: callId, reason: .unanswered)
             }
             return
@@ -1327,6 +1397,38 @@ extension CallKitVoIP: CXProviderDelegate {
                 failActionUnlessProviderTimedOut(
                     action,
                     uuid: action.callUUID)
+            }
+            return
+        }
+        if call.kind == .sip {
+            // Customer call: answering = opening the gateway media socket. No server
+            // round-trip is needed before fulfil — presenting the one-time token IS
+            // the claim, and first connection wins on the gateway.
+            withCallState { calls, _ in calls[action.callUUID]?.answered = true }
+            Task { @MainActor in
+                SipCallController.shared.onRemoteEnded = { [weak self] id in
+                    self?.finishReportedCall(callId: id, reason: .remoteEnded)
+                }
+                guard self.stillOwnsCall(call, uuid: action.callUUID),
+                      AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken),
+                      let mediaURL = call.sipMediaURL, let token = call.sipMediaToken,
+                      SipCallController.shared.start(
+                        callId: call.broadcastId, mediaURL: mediaURL, token: token)
+                else {
+                    guard let removed = self.withCallState({ calls, _ in
+                        calls.removeValue(forKey: action.callUUID)
+                    }) else {
+                        self.failActionUnlessProviderTimedOut(action, uuid: action.callUUID)
+                        return
+                    }
+                    self.stopCallLocally(removed)
+                    self.retireAdmissionAfterLocalStop(removed, uuid: action.callUUID)
+                    action.fail()
+                    self.provider.reportCall(with: action.callUUID, endedAt: Date(), reason: .failed)
+                    return
+                }
+                self.withCallState { calls, _ in calls[action.callUUID]?.answerFulfilled = true }
+                action.fulfill()
             }
             return
         }
@@ -1617,6 +1719,17 @@ extension CallKitVoIP: CXProviderDelegate {
             let reason = reasons.removeValue(forKey: action.callUUID)
             return (call, reason)
         }
+        if let call, call.kind == .sip {
+            Task { @MainActor in
+                // Decline or hang-up: closing the media socket is the whole protocol —
+                // the gateway sees the close and tears the PSTN leg down (or, on an
+                // unanswered decline, the ring simply expires server-side).
+                SipCallController.shared.callKitEnded(callId: call.broadcastId)
+                self.retireAdmissionAfterLocalStop(call, uuid: action.callUUID)
+                action.fulfill()
+            }
+            return
+        }
         if let call, call.kind == .agent {
             Task { @MainActor in
                 // Ring-stage end = decline; answered end = hang-up/complete.
@@ -1723,6 +1836,10 @@ extension CallKitVoIP: CXProviderDelegate {
                AgentCallController.shared.activeCallId?
                 .caseInsensitiveCompare(call.broadcastId) == .orderedSame {
                 AgentCallController.shared.setMuted(action.isMuted)
+            } else if call.kind == .sip,
+                      SipCallController.shared.activeCallId?
+                        .caseInsensitiveCompare(call.broadcastId) == .orderedSame {
+                SipCallController.shared.setMuted(action.isMuted)
             } else if call.kind == .office,
                       OfficeCallCoordinator.shared.activeCallId?
                         .caseInsensitiveCompare(call.broadcastId) == .orderedSame {
@@ -1782,6 +1899,8 @@ extension CallKitVoIP: CXProviderDelegate {
             AlmaLiveVoicePreviewTakeoverRelay.shared.stopBeforeAudioTakeover()
             if sourceCall.call.kind == .agent, let lifecycleObservation {
                 AgentCallController.shared.audioSessionActivated(lifecycleObservation)
+            } else if sourceCall.call.kind == .sip {
+                SipCallController.shared.audioSessionActivated()
             } else if sourceCall.call.kind == .office {
                 OfficeCallCoordinator.shared.audioSessionActivated()
             }
