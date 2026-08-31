@@ -14,6 +14,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { normalizeAlmaRole } from '@/lib/roles'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -22,6 +23,10 @@ export async function GET(_req: NextRequest) {
   const session = await getServerSession(authOptions)
   const user = session?.user as { id?: string; name?: string | null; email?: string | null } | undefined
   if (!user?.id) return NextResponse.json({ ok: false, error: 'unauthenticated' }, { status: 401 })
+  // VIEWER is read-only by definition — a phone identity that can place real
+  // calls must never be minted for it (Codex P1, PR #868).
+  const role = normalizeAlmaRole((session?.user as { role?: string } | undefined)?.role)
+  if (role === 'VIEWER') return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 })
 
   const base = (process.env.SIP_GATEWAY_BASE ?? '').replace(/\/$/, '')
   const token = process.env.AGENT_INTERNAL_TOKEN ?? ''

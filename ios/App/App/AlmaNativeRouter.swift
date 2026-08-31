@@ -142,6 +142,9 @@ enum AlmaNativeRouter {
             return host(LiveWatchScreen(openWeb: openWebForced), "Live Watch")
         // NP-1 (AG-09): canonical Agent Hub — every Agent surface in one visible menu.
         case "/agent/hub": return host(AgentHubScreen(openWeb: openWebForced), "Agent Hub")
+        // Owner 2026-08-31: the staff softphone goes NATIVE (dialler UI in SwiftUI;
+        // the SIP/WebRTC audio engine stays in PhoneEngine's hidden headless WebView).
+        case "/agent/phone": return host(PhoneScreen(openWeb: openWebForced), "ফোন")
         // NP-4 (AU-01 / FN-01): native auth recovery + wallet deep link.
         case "/forgot-password": return host(ForgotPasswordScreen(openWeb: openWebForced), "Password reset")
         case "/portal/wallet": return host(PortalWalletRouteScreen(openWeb: openWebForced), "ওয়ালেট")

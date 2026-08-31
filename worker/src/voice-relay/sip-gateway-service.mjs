@@ -42,7 +42,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { copyFile, mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { WebSocket } from 'ws'
+import { WebSocket, WebSocketServer } from 'ws'
 import { muLawToPcm16, pcm16ToMuLaw } from './sarvam-media.mjs'
 
 // ── config (VPS .env only — secrets never in git) ────────────────────────────
@@ -909,6 +909,9 @@ class Call {
   async hangup(reason) {
     if (this.closed) return
     this.closed = true
+    // Stop any iOS CallKit rings still showing for this call (caller gave up, AI
+    // took it, or the call simply ended). Fire-and-forget by design.
+    cancelAppRing(this, 'ended')
     log(this.channelId, 'hangup', reason ? `(${reason})` : '',
       `| audio frames=${this.framesOut || 0} silence=${this.silenceFrames || 0} underruns=${this.underruns || 0} turn-ends=${this.turnEnds || 0} cushion=${this.cushion || JITTER_FRAMES}f barge-ins=${this.barges || 0} dropped=${this.dropped || 0}`)
     // Put the same numbers on the CDR before anything else in this teardown can trigger the
@@ -1039,8 +1042,10 @@ async function bridgeAndStartBot(call) {
   call.extChannelId = ext.id
   // 3) bridge the PSTN leg + the media leg
   await ari('POST', `/bridges/${call.bridgeId}/addChannel`, { channel: `${call.channelId},${call.extChannelId}` })
-  // 4) open the bot ws now that audio can flow
-  call.connectBot()
+  // 4) open the bot ws now that audio can flow — unless an iOS app IS the far end
+  // (native outbound leg): then the already-connected app socket takes the bot's seat.
+  if (call.appWs) attachAppLeg(call, call.appWs)
+  else call.connectBot()
   // Debug capture (SIP_DEBUG_RECORD=1): record the bridge so a reported glitch can be
   // measured instead of guessed at — it shows whether the damage is already present in what
   // Asterisk played toward the caller (our side) or only reaches the caller's ear (the PSTN
@@ -1050,7 +1055,9 @@ async function bridgeAndStartBot(call) {
   // the AI has stepped off the audio path — the one stretch of a call nobody could account
   // for before. Asterisk writes to /var/spool/asterisk/recording (created 2026-07-25; its
   // absence was why ARI recording returned 500).
-  if (RECORD_CALLS) {
+  // App legs are staff↔customer human calls: browser-phone staff calls were never
+  // recorded (they bypass this process entirely), so the native app path matches.
+  if (RECORD_CALLS && !call.appWs) {
     call.recordingName = `alma-${call.channelId}`
     // The channel dies before the upload finishes, so without this the record would be
     // persisted first and the recording link would never reach the owner's report.
@@ -1284,6 +1291,7 @@ async function onAriEvent(e) {
             parent.staffFirst = false
             parent.staffAnswered = true
             await hangupRaceLegs(parent, call.channelId)
+            cancelAppRing(parent, 'answered_elsewhere')
             log(parent.channelId, `staff-first: answered by ${call.channelId}`)
           }
           await stopMoh(parent)
@@ -1551,7 +1559,17 @@ async function renderStaffDialplan(store) {
     return `${ring}\n same => n,NoOp(=== ${s.ext} forward -> ${s.forwardTo} ===)\n same => n,Set(CALLERID(num)=${STAFF_CALLER_ID})\n same => n,Dial(PJSIP/${s.forwardTo}@${TRUNK_ENDPOINT},30)\n same => n,Hangup()`
   }).join('\n')
 
-  const outbound = `
+  const ownDid = `
+;; Our own DID dialled from a staff phone: loop straight into the inbound flow
+;; (staff-first ring / AI) WITHOUT the trunk. The provider cannot route our own
+;; number back to us (proven 2026-08-31: the landline pattern sent it out and the
+;; call died unanswered), and an internal loopback is also what self-tests need —
+;; a full media round-trip that bothers nobody and costs no trunk minutes.
+exten => ${STAFF_CALLER_ID},1,NoOp(=== STAFF -> OWN DID (internal loopback) ===)
+ same => n,Stasis(alma-sip,inbound,\${CALLERID(num)},${STAFF_CALLER_ID})
+ same => n,Hangup()
+`
+  const outbound = `${ownDid}
 ;; BD mobiles are ELEVEN digits (01 + 9).
 exten => _01XXXXXXXXX,1,NoOp(=== STAFF OUTBOUND \${CALLERID(num)} -> \${EXTEN} ===)
  same => n,Set(CALLERID(num)=${STAFF_CALLER_ID})
@@ -1930,6 +1948,41 @@ const ctrlServer = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, channelId: chan.id })
     } catch (err) { return json(res, 502, { error: err?.message || String(err) }) }
   }
+  if (url.pathname === '/api/v1/app-dial' && req.method === 'POST') {
+    // Native iOS outbound: mint the call + one-time media token; the far leg is
+    // originated only when the app's /app-media socket actually arrives.
+    if (!authOk(req)) return json(res, 401, { error: 'unauthorized' })
+    const body = await readBody(req)
+    let parsed = {}
+    try { parsed = JSON.parse(body || '{}') } catch { /* */ }
+    const staffId = String(parsed.staffId || '').trim()
+    const toRaw = String(parsed.to || '').replace(/[^\d]/g, '')
+    if (!staffId || !toRaw) return json(res, 400, { error: 'need staffId and to' })
+    const store = await readWebrtcStore()
+    const row = store[staffId]
+    if (!row) return json(res, 404, { error: 'no extension for this staff member' })
+    const pol = staffPolicy(row)
+    if (pol.disabled) return json(res, 403, { error: 'extension disabled' })
+    const rule = outboundRules(toRaw)
+    if (!rule.allowed) return json(res, 403, { error: rule.reason })
+    const to = rule.dialled
+    const internal = /^1\d{3}$/.test(to)
+    // Same per-extension policy a hand-dialled call obeys in the generated dialplan.
+    if (!internal && pol.dialOut === 'internal') return json(res, 403, { error: 'outbound not allowed for this extension' })
+    if (!internal && pol.dialOut === 'mobile' && !/^01\d{9}$/.test(to)) {
+      return json(res, 403, { error: 'mobile numbers only for this extension' })
+    }
+    const callId = 'appout-' + randomUUID()
+    const call = new Call(callId, { caller: to, callType: 'staff_app_out' })
+    call._appOutbound = { to, internal, ext: pol.ext }
+    calls.set(callId, call)
+    pruneAppRingTokens()
+    const token = randomUUID()
+    appRingTokens.set(token, { callId, exp: Date.now() + 60_000 })
+    putCdr(callId, { direction: 'outbound', from: pol.ext, to, startedAt: Date.now(), answered: false, status: 'app_dialling' })
+    log(callId, `app-dial prepared for ext ${pol.ext} -> ${to}`)
+    return json(res, 200, { ok: true, callId, token })
+  }
   if (url.pathname === '/api/v1/active' && req.method === 'GET') {
     // Read-only view of the line for the owner's phone console. Authenticated, because
     // "who is on a call right now, with which number" is customer data — /health stays
@@ -2274,6 +2327,9 @@ async function staffFirstAnswer(call, dests, ringSecs) {
   // a leg that is about to be answered is not cut off by a race with its own ring timeout.
   call._staffTimer = setTimeout(() => { void staffFirstGiveUp(call) }, (ringSecs + 2) * 1000)
   log(call.channelId, `staff-first: ringing ${dests.join(', ')} for ${ringSecs}s with music`)
+  // Ring the iOS apps too (VoIP push → CallKit), so a closed app still rings like a
+  // phone. Whoever answers first — a browser tab or an app — takes the call.
+  void ringApps(call, ringSecs)
 }
 
 /** Nobody picked up (or nobody could be rung): the AI takes the call, and says so. */
@@ -2281,6 +2337,7 @@ async function staffFirstGiveUp(call, immediate = false) {
   if (call.closed || !call.staffFirst) return
   call.staffFirst = false
   await hangupRaceLegs(call)
+  cancelAppRing(call, 'ai_took')
   await stopMoh(call)
   try {
     call.params = {
@@ -2296,6 +2353,209 @@ async function staffFirstGiveUp(call, immediate = false) {
     log(call.channelId, 'staff-first handover to the AI failed:', err?.message)
     void call.hangup('staff-first handover failed')
   }
+}
+
+// ── app leg: native iOS incoming ring (owner program 2026-08-31, step 2) ─────
+/*
+ * A closed iOS app cannot register SIP, so a customer call could never ring it. The
+ * wake path is a VoIP push: during the staff-first window the gateway asks the ERP
+ * (app-ring route) to push every eligible staff device; CallKit shows a real
+ * full-screen incoming call; answering makes the app open a WebSocket back to
+ * wss://<gateway>/app-media?token=… — and from that moment the app IS the bot as far
+ * as this file is concerned: it speaks the exact NGS media dialect the Gemini bot
+ * speaks (μ-law 8k base64 `media` frames both ways), so the LOCKED playout, jitter
+ * cushion and fade logic are reused UNTOUCHED. First answer wins: a browser tab
+ * answering cancels the app rings, an app answering hangs up the SIP race legs.
+ *
+ * Nothing here changes SIP_JITTER_*, TURN_END, VAD or any other frozen tuning value.
+ */
+const APP_RING_TOKEN_TTL_SLACK_MS = 10_000
+/** One-time media tokens: token → { callId, exp }. */
+const appRingTokens = new Map()
+
+function pruneAppRingTokens() {
+  const now = Date.now()
+  for (const [t, v] of appRingTokens) if (v.exp < now) appRingTokens.delete(t)
+}
+
+/** Ask the ERP to VoIP-push every eligible staff app for this ringing call. */
+async function ringApps(call, ringSecs) {
+  if (!APP_URL || !SIP_INBOUND_SECRET) return
+  try {
+    pruneAppRingTokens()
+    const store = await readWebrtcStore()
+    const staffIds = Object.entries(store)
+      .filter(([, row]) => { const p = staffPolicy(row); return !p.disabled && !p.dnd })
+      .map(([staffId]) => staffId)
+    if (!staffIds.length) return
+    const token = randomUUID()
+    const expiresAt = Date.now() + ringSecs * 1000 + APP_RING_TOKEN_TTL_SLACK_MS
+    appRingTokens.set(token, { callId: call.channelId, exp: expiresAt })
+    call._appRingToken = token
+    const res = await fetch(`${APP_URL}/api/assistant/phone/app-ring?k=${encodeURIComponent(SIP_INBOUND_SECRET)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: 'ring',
+        callId: call.channelId,
+        caller: call.params?.caller || '',
+        token,
+        expiresAt: new Date(expiresAt).toISOString(),
+        staffIds,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    const data = await res.json().catch(() => ({}))
+    log(call.channelId, `app-ring requested: ${data?.sent ?? 0} push(es) to ${staffIds.length} staff`)
+  } catch (err) {
+    log(call.channelId, 'app-ring failed (browser ring unaffected):', err?.message)
+  }
+}
+
+/** Stop the CallKit rings for a call (answered elsewhere / AI took it / caller left). */
+function cancelAppRing(call, reason) {
+  const token = call._appRingToken
+  if (!token) return
+  call._appRingToken = null
+  appRingTokens.delete(token)
+  if (!APP_URL || !SIP_INBOUND_SECRET) return
+  fetch(`${APP_URL}/api/assistant/phone/app-ring?k=${encodeURIComponent(SIP_INBOUND_SECRET)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'cancel', callId: call.channelId, reason }),
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => { /* the ring push has its own expiry; a lost cancel self-heals */ })
+}
+
+/**
+ * Wire a connected app socket in exactly where the Gemini bot would sit — same
+ * dialect, same locked playout path. Also gives the app two extras the bot never
+ * needed: mid-call DTMF injection (bank/courier menus) and an explicit `answered`
+ * event so CallKit can start its timer at the real connect.
+ */
+function attachAppLeg(call, ws) {
+  call.bot = ws
+  call.botReady = true
+  ws.on('message', (raw) => {
+    let m = null
+    try { m = JSON.parse(raw.toString()) } catch { /* not JSON */ }
+    if (m && m.event === 'dtmf') {
+      const d = String(m.digit ?? '').replace(/[^0-9*#]/g, '').slice(0, 1)
+      if (d) void ari('POST', `/channels/${call.channelId}/dtmf?dtmf=${encodeURIComponent(d)}`).catch(() => { /* best-effort */ })
+      return
+    }
+    call.onBot(raw)
+  })
+  if (!call._appWsCloseWired) {
+    call._appWsCloseWired = true
+    ws.on('close', () => { if (!call.closed) void call.hangup('app leg closed') })
+    ws.on('error', () => { /* close follows */ })
+  }
+  call.send({
+    event: 'start',
+    streamId: call.channelId,
+    call_id: call.channelId,
+    params: { caller: call.params?.caller || '', callType: call.params?.callType || 'staff_app' },
+  })
+  call.send({ event: 'answered', streamId: call.channelId })
+}
+
+/**
+ * An app answered an INBOUND ring: it connected /app-media with a valid token.
+ */
+async function appClaim(call, ws) {
+  if (call._appOutbound) { await appClaimOutbound(call, ws); return }
+  if (call.closed || call.staffAnswered || call.appAnswered || !call.staffFirst) {
+    try { ws.close(4409, 'call gone') } catch { /* */ }
+    return
+  }
+  call.appAnswered = true
+  call.staffFirst = false
+  call._appRingToken = null // the winner consumed it; cancel goes to the OTHER devices
+  await hangupRaceLegs(call)
+  await stopMoh(call)
+  try {
+    // The caller was answered into a bridge by staffFirstAnswer; add the media leg.
+    const ext = await ari('POST', '/channels/externalMedia', {
+      app: ARI_APP,
+      external_host: `${AS_ADVERTISE}:${AS_PORT}`,
+      encapsulation: 'audiosocket',
+      transport: 'tcp',
+      connection_type: 'client',
+      format: 'slin',
+      direction: 'both',
+      data: call.audioUuid,
+    })
+    call.extChannelId = ext.id
+    await ari('POST', `/bridges/${call.bridgeId}/addChannel`, { channel: call.extChannelId })
+    attachAppLeg(call, ws)
+    putCdr(call.channelId, { status: 'answered', answeredBy: 'app' })
+    // Tell every OTHER ringing surface to stop.
+    fetch(`${APP_URL}/api/assistant/phone/app-ring?k=${encodeURIComponent(SIP_INBOUND_SECRET)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'cancel', callId: call.channelId, reason: 'answered_app' }),
+      signal: AbortSignal.timeout(10_000),
+    }).catch(() => { /* expiry self-heals */ })
+    log(call.channelId, 'app answered — media leg live')
+  } catch (err) {
+    log(call.channelId, 'app claim failed:', err?.message)
+    try { ws.close(1011, 'wiring failed') } catch { /* */ }
+    // The caller is still on the line: let the AI take over rather than dead air.
+    call.staffFirst = true
+    void staffFirstGiveUp(call, true)
+  }
+}
+
+/**
+ * An app placed an OUTBOUND call (native dialler): the socket arrives FIRST, then
+ * we originate the far leg — so the customer's phone only rings once the staff
+ * member's audio path already exists (same order click2call insists on).
+ * bridgeAndStartBot attaches this socket as the "bot" when the far end answers.
+ */
+async function appClaimOutbound(call, ws) {
+  if (call.closed || call.appWs) {
+    try { ws.close(4409, 'call gone') } catch { /* */ }
+    return
+  }
+  call.appWs = ws
+  call._appWsCloseWired = true
+  ws.on('close', () => { if (!call.closed) void call.hangup('app leg closed') })
+  ws.on('error', () => { /* close follows */ })
+  const { to, internal, ext } = call._appOutbound
+  try {
+    await ari('POST', '/channels', {
+      endpoint: internal ? `PJSIP/${to}` : `PJSIP/${to}@${TRUNK_ENDPOINT}`,
+      app: ARI_APP,
+      channelId: call.channelId,
+      timeout: RING_TIMEOUT,
+      callerId: internal ? `${ext}` : STAFF_CALLER_ID,
+    })
+    putCdr(call.channelId, { status: 'ringing' })
+    log(call.channelId, `app-dial originate -> ${to}${internal ? ' (internal)' : ''}`)
+  } catch (err) {
+    log(call.channelId, 'app-dial originate failed:', err?.message)
+    void call.hangup('app-dial originate failed')
+  }
+}
+
+const appMediaWss = new WebSocketServer({ noServer: true })
+/** /app-media upgrade: token → call, first valid connection wins the call. */
+function handleAppMediaUpgrade(req, socket, head) {
+  let token = ''
+  try { token = new URL(req.url, 'http://x').searchParams.get('token') || '' } catch { /* */ }
+  pruneAppRingTokens()
+  const entry = token && appRingTokens.get(token)
+  const call = entry && calls.get(entry.callId)
+  if (!entry || !call || call.closed) {
+    socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
+    socket.destroy()
+    return
+  }
+  appRingTokens.delete(token) // one-time
+  socket.setKeepAlive(true, 15_000)
+  socket.setNoDelay(true)
+  appMediaWss.handleUpgrade(req, socket, head, (ws) => { void appClaim(call, ws) })
 }
 
 /** How many times to walk the whole ring group before handing the caller back to the AI. */
@@ -2748,6 +3008,8 @@ function attachWsProxy(server) {
     // Logged unconditionally: when a browser reports a bare "closed (code 1006)" the only way
     // to know whether the attempt even arrived is to record every one that does.
     log(`ws upgrade ${req.method} ${req.url} HTTP/${req.httpVersion} proto=${req.headers['sec-websocket-protocol'] || '-'} from=${req.socket.remoteAddress}`)
+    // The iOS app's answered-call media leg rides the same TLS host, own path.
+    if (String(req.url || '').startsWith('/app-media')) { handleAppMediaUpgrade(req, socket, head); return }
     if (!String(req.url || '').startsWith('/ws')) { socket.destroy(); return }
     /*
      * TCP keep-alive on BOTH legs, and no Nagle delay.

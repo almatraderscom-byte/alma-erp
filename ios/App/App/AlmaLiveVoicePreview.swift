@@ -1062,6 +1062,8 @@ final class AlmaCallAudioAdmission {
     enum CallKind: Equatable, Sendable {
         case agent
         case office
+        /// Inbound customer call from the self-hosted PBX (CallKit + gateway media socket).
+        case sip
     }
 
     enum CallKitPhase: Int, Equatable, Sendable {

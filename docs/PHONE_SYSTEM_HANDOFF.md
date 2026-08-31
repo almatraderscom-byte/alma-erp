@@ -131,6 +131,38 @@ that would hand the internet full call control.
 - `src/agent/components/phone/*` + `src/app/agent/phone/page.tsx`
 - `src/agent/lib/voice-call.ts` (`placeSipLiveCall`), `src/agent/lib/ngs-call-outcome.ts`
 
+### 3b. iOS app leg (phone program 2026-08-31 — native "full telephone")
+
+The staff iOS app is a first-class phone endpoint, three layers:
+
+1. **Native dialler UI** — `/agent/phone` resolves to the SwiftUI `PhoneScreen`
+   (`ios/App/App/PhoneSwiftUI.swift`); the browser-parity SIP audio engine lives in a
+   hidden headless WebView (`PhoneEngine.swift` → `/agent/phone?headless=1` →
+   `SoftphoneHeadless.tsx`) as the in-app fallback path.
+2. **Incoming ring with the app CLOSED** — during the staff-first window the gateway
+   POSTs `/api/assistant/phone/app-ring` (?k=SIP_INBOUND_SECRET); that fans out APNs
+   **VoIP** pushes (`type: "sip_call"`, one-time `mediaToken`); CallKit shows a real
+   full-screen call; answering opens `wss://<gateway>/app-media?token=…` and the app
+   takes the seat the Gemini bot would take — SAME NGS μ-law-8k dialect, same bridge,
+   same LOCKED playout. First answer wins (SIP race legs are hung up; other devices
+   get a `cancel` push). iOS side: `CallKitVoIP.swift` (kind `.sip`) +
+   `PhoneCallKitLeg.swift` (`SipCallController` / `SipCallAudioEngine`).
+3. **Native outbound** — app POSTs `/api/assistant/phone/app-dial` → gateway
+   `/api/v1/app-dial` mints the call + token; the app opens `/app-media` FIRST, and
+   only then does the gateway originate the customer leg (click2call's ordering).
+   `answered` event starts the CallKit timer; `{event:'dtmf'}` frames inject keypad
+   tones on the PSTN leg via ARI.
+
+**Self-test loopback**: dialling our own DID from any staff phone/context now loops
+INTERNALLY into `Stasis(alma-sip,inbound,…)` — the provider provably cannot route our
+own number back to us over the trunk. Free, bothers nobody, exercises the full
+inbound flow (staff-first ring included).
+
+**Deploy note**: the VPS pull-timer restarts only `alma-agent-worker`; after merging
+gateway changes, `pm2 restart alma-sip-gateway` by hand over SSH, then hit
+`/api/v1/webrtc/provision` once (any phone-page open does it) to re-render the staff
+dialplan with the loopback exten.
+
 ---
 
 ## 4. Self-test harness — USE THIS INSTEAD OF CALLING THE OWNER
