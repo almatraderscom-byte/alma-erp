@@ -60,26 +60,67 @@ enum AlmaMuLaw {
 
 @available(iOS 17.0, *)
 @MainActor
-final class SipCallController {
+final class SipCallController: ObservableObject {
     static let shared = SipCallController()
 
-    private(set) var activeCallId: String?
+    /// Mirrors the live call for the native phone screen (CallKit's own UI is the
+    /// primary surface; this keeps the in-app screen honest too).
+    struct CallState: Equatable {
+        var callId: String
+        var peer: String
+        var outgoing: Bool
+        var connectedAt: Date?
+    }
+    @Published private(set) var current: CallState?
+
+    var activeCallId: String? { current?.callId }
     private var engine: SipCallAudioEngine?
 
     /// Gateway closed the media socket (caller hung up). CallKitVoIP closes the
     /// system call; set once at app start.
     var onRemoteEnded: ((_ callId: String) -> Void)?
+    /// Far end answered (outgoing leg went live) — CallKit timer starts here.
+    var onAnswered: ((_ callId: String) -> Void)?
 
-    /// CallKit answer → open the media socket NOW (audio starts on didActivate).
-    /// Returns false when another call is already active.
-    func start(callId: String, mediaURL: URL, token: String) -> Bool {
-        guard activeCallId == nil else { return false }
+    /// Native outbound: mint the call server-side, then hand it to CallKit.
+    /// Returns a Bangla error message, or nil on success.
+    func placeOutbound(to number: String, display: String) async -> String? {
+        guard current == nil else { return "একটা কল ইতিমধ্যে চলছে" }
+        struct Req: Encodable { let to: String }
+        struct Resp: Decodable { let ok: Bool?; let callId: String?; let token: String?; let wsUrl: String?; let error: String? }
+        let resp: Resp
+        do {
+            resp = try await AlmaAPI.shared.send("POST", "/api/assistant/phone/app-dial", body: Req(to: number))
+        } catch {
+            return "কল দেওয়া গেল না — নেটওয়ার্ক সমস্যা"
+        }
+        guard resp.ok == true, let callId = resp.callId, let token = resp.token,
+              let wsUrl = resp.wsUrl, let mediaURL = URL(string: wsUrl) else {
+            return resp.error ?? "কল দেওয়া গেল না"
+        }
+        do {
+            try await CallKitVoIP.shared.startOutgoingSip(
+                callId: callId, peer: display, mediaURL: mediaURL, token: token)
+            return nil
+        } catch {
+            return "কল শুরু করা গেল না"
+        }
+    }
+
+    /// CallKit answer (incoming) or start (outgoing) → open the media socket NOW
+    /// (audio starts on didActivate). Returns false when a call is already active.
+    func start(callId: String, mediaURL: URL, token: String,
+               peer: String = "", outgoing: Bool = false) -> Bool {
+        guard current == nil else { return false }
         guard var comps = URLComponents(url: mediaURL, resolvingAgainstBaseURL: false) else { return false }
         let existing = comps.queryItems ?? []
         comps.queryItems = existing + [URLQueryItem(name: "token", value: token)]
         guard let url = comps.url, url.scheme == "wss" || url.scheme == "ws" else { return false }
         let id = callId
-        activeCallId = id
+        // An incoming answer is live the moment the socket opens; outgoing waits
+        // for the gateway's `answered` event.
+        current = CallState(callId: id, peer: peer, outgoing: outgoing,
+                            connectedAt: outgoing ? nil : Date())
         let eng = SipCallAudioEngine(url: url, streamId: callId)
         eng.onClosed = { [weak self] in
             Task { @MainActor in
@@ -88,9 +129,21 @@ final class SipCallController {
                 self.onRemoteEnded?(id)
             }
         }
+        eng.onAnswered = { [weak self] in
+            Task { @MainActor in
+                guard let self, self.activeCallId == id else { return }
+                if self.current?.connectedAt == nil { self.current?.connectedAt = Date() }
+                self.onAnswered?(id)
+            }
+        }
         engine = eng
         eng.connect()
         return true
+    }
+
+    /// Mid-call keypad tone — the gateway injects it on the PSTN leg.
+    func sendDtmf(_ digit: String) {
+        engine?.sendDtmf(digit)
     }
 
     func audioSessionActivated() {
@@ -110,7 +163,7 @@ final class SipCallController {
     private func stopEngine() {
         engine?.stop()
         engine = nil
-        activeCallId = nil
+        current = nil
     }
 }
 
@@ -129,6 +182,7 @@ final class SipCallAudioEngine: NSObject {
     private var closed = false
     var muted = false
     var onClosed: (() -> Void)?
+    var onAnswered: (() -> Void)?
 
     /// 8 kHz mono — the PSTN's native rate; the gateway speaks nothing else.
     private let wireFormat = AVAudioFormat(
@@ -166,13 +220,25 @@ final class SipCallAudioEngine: NSObject {
 
     private func handleFrame(_ text: String) {
         guard let data = text.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              (obj["event"] as? String) == "media",
-              let media = obj["media"] as? [String: Any],
-              let b64 = media["payload"] as? String,
-              let mu = Data(base64Encoded: b64)
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
-        schedule(AlmaMuLaw.decode(mu))
+        switch obj["event"] as? String {
+        case "answered":
+            DispatchQueue.main.async { self.onAnswered?() }
+        case "media":
+            guard let media = obj["media"] as? [String: Any],
+                  let b64 = media["payload"] as? String,
+                  let mu = Data(base64Encoded: b64) else { return }
+            schedule(AlmaMuLaw.decode(mu))
+        default:
+            break
+        }
+    }
+
+    /// Keypad tone request — injected by the gateway on the PSTN leg via ARI.
+    func sendDtmf(_ digit: String) {
+        guard let d = digit.first, "0123456789*#".contains(d) else { return }
+        send(["event": "dtmf", "streamId": streamId, "digit": String(d)])
     }
 
     private func send(_ obj: [String: Any]) {

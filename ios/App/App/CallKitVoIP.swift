@@ -662,6 +662,46 @@ final class CallKitVoIP: NSObject {
         }
     }
 
+    /// Native OUTBOUND customer call (phone program step 3): reserve the system
+    /// call and hand it to CallKit; the CXStartCallAction handler opens the
+    /// gateway media socket (the gateway only rings the customer once that
+    /// socket exists). Call ids are gateway-minted ("appout-…"), not UUIDs.
+    func startOutgoingSip(callId: String, peer: String, mediaURL: URL, token: String) async throws {
+        let uuid = almaDeterministicCallUUID(callId)
+        let insertion = reserveSystemCall(
+            uuid: uuid,
+            call: ActiveCall(
+                broadcastId: callId.lowercased(), channel: "sip_\(callId)",
+                peer: peer, direction: .outgoing, kind: .sip,
+                sipMediaURL: mediaURL, sipMediaToken: token))
+        if !insertion.inserted {
+            finishDeferredOfficePreemptionOnly()
+            throw CallKitError.callBusy
+        }
+        completeSystemPreemptionForCall(uuid: uuid)
+        stopPreviewBeforeSystemCallReport()
+        let handle = CXHandle(type: .phoneNumber, value: peer)
+        let action = CXStartCallAction(call: uuid, handle: handle)
+        action.isVideo = false
+        let transaction = CXTransaction(action: action)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            callController.request(transaction) { [weak self] error in
+                if let error {
+                    let failedCall = self?.withCallState { calls, _ in
+                        calls.removeValue(forKey: uuid)
+                    }
+                    if let failedCall {
+                        self?.stopCallLocally(failedCall)
+                        self?.retireAdmissionAfterLocalStop(failedCall, uuid: uuid)
+                    }
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
     func hasCall(callId: String) -> Bool {
         withCallState { calls, _ in
             calls.values.contains {
@@ -1291,6 +1331,47 @@ extension CallKitVoIP: CXProviderDelegate {
             return
         }
         provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: Date())
+        if call.kind == .sip {
+            Task { @MainActor in
+                SipCallController.shared.onRemoteEnded = { [weak self] id in
+                    self?.finishReportedCall(callId: id, reason: .remoteEnded)
+                }
+                SipCallController.shared.onAnswered = { [weak self] id in
+                    guard let self,
+                          let entry = self.withCallState({ calls, _ in
+                              calls.first(where: {
+                                  $0.value.broadcastId.caseInsensitiveCompare(id) == .orderedSame
+                              })
+                          }) else { return }
+                    self.provider.reportOutgoingCall(with: entry.key, connectedAt: Date())
+                }
+                guard self.stillOwnsCall(call, uuid: action.callUUID),
+                      AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken),
+                      let mediaURL = call.sipMediaURL, let token = call.sipMediaToken,
+                      SipCallController.shared.start(
+                        callId: call.broadcastId, mediaURL: mediaURL, token: token,
+                        peer: call.peer, outgoing: true)
+                else {
+                    guard let removed = self.withCallState({ calls, _ in
+                        calls.removeValue(forKey: action.callUUID)
+                    }) else {
+                        self.failActionUnlessProviderTimedOut(action, uuid: action.callUUID)
+                        return
+                    }
+                    self.stopCallLocally(removed)
+                    self.retireAdmissionAfterLocalStop(removed, uuid: action.callUUID)
+                    action.fail()
+                    self.provider.reportCall(with: action.callUUID, endedAt: Date(), reason: .failed)
+                    return
+                }
+                self.withCallState { calls, _ in
+                    calls[action.callUUID]?.answered = true
+                    calls[action.callUUID]?.answerFulfilled = true
+                }
+                action.fulfill()
+            }
+            return
+        }
         Task { @MainActor in
             guard self.stillOwnsCall(call, uuid: action.callUUID),
                   AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
@@ -1413,7 +1494,8 @@ extension CallKitVoIP: CXProviderDelegate {
                       AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken),
                       let mediaURL = call.sipMediaURL, let token = call.sipMediaToken,
                       SipCallController.shared.start(
-                        callId: call.broadcastId, mediaURL: mediaURL, token: token)
+                        callId: call.broadcastId, mediaURL: mediaURL, token: token,
+                        peer: call.peer)
                 else {
                     guard let removed = self.withCallState({ calls, _ in
                         calls.removeValue(forKey: action.callUUID)

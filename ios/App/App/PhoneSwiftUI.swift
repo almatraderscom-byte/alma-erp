@@ -50,7 +50,10 @@ struct PhoneScreen: View {
     let openWeb: (_ path: String, _ title: String) -> Void
 
     @ObservedObject private var engine = PhoneEngine.shared
+    @ObservedObject private var sipCall = SipCallController.shared
     @State private var number = ""
+    @State private var dialError: String? = nil
+    @State private var nativeMuted = false
     @State private var recents: [PhoneHistoryRow] = []
     @State private var colleagues: [PhoneColleague] = []
     @State private var caller: PhoneCallerContext? = nil
@@ -65,15 +68,17 @@ struct PhoneScreen: View {
             PhoneAurora().ignoresSafeArea()
             ScrollView {
                 VStack(spacing: 14) {
-                    statusCard
-                    if live {
-                        liveCallCard
-                    } else if engine.state.status == "registered" {
-                        diallerCard
-                        if !recents.isEmpty { recentsCard }
-                        if !colleagues.isEmpty { colleaguesCard }
+                    if let native = sipCall.current {
+                        nativeCallCard(native)
                     } else {
-                        idleCard
+                        statusCard
+                        if live {
+                            liveCallCard
+                        } else {
+                            diallerCard
+                            if !recents.isEmpty { recentsCard }
+                            if !colleagues.isEmpty { colleaguesCard }
+                        }
                     }
                 }
                 .padding(.horizontal, 14)
@@ -183,7 +188,7 @@ struct PhoneScreen: View {
 
     private var diallerCard: some View {
         VStack(spacing: 12) {
-            if let err = engine.state.error {
+            if let err = dialError ?? engine.state.error {
                 Text(err).font(.footnote).foregroundStyle(.red.opacity(0.9))
             }
             HStack(spacing: 8) {
@@ -212,7 +217,19 @@ struct PhoneScreen: View {
             Button {
                 let n = number.trimmingCharacters(in: .whitespaces)
                 guard !n.isEmpty else { return }
-                engine.dial(n)
+                dialError = nil
+                // Native CallKit leg first (works backgrounded, real call UI); the
+                // in-page WebView engine stays as the fallback when the native
+                // path is not available (old server, gateway briefly down).
+                Task {
+                    if let err = await SipCallController.shared.placeOutbound(to: n, display: n) {
+                        if engine.state.status == "registered" {
+                            engine.dial(n)
+                        } else {
+                            dialError = err
+                        }
+                    }
+                }
             } label: {
                 Label("কল করুন", systemImage: "phone.fill")
                     .font(.headline)
@@ -331,6 +348,54 @@ struct PhoneScreen: View {
         .frame(maxWidth: .infinity)
         .padding(16)
         .background(glass)
+    }
+
+    /// Live card for a NATIVE CallKit call (customer leg through the gateway).
+    /// CallKit's own lock-screen UI is the primary surface; this keeps the in-app
+    /// screen honest and adds the mid-call keypad (bank/courier menus).
+    private func nativeCallCard(_ call: SipCallController.CallState) -> some View {
+        VStack(spacing: 12) {
+            Text(call.connectedAt == nil
+                 ? (call.outgoing ? "কল যাচ্ছে" : "সংযোগ হচ্ছে…")
+                 : "কথা চলছে")
+                .font(.caption.weight(.medium)).tracking(2)
+                .foregroundStyle(.white.opacity(0.55))
+            Text(call.peer.isEmpty ? "—" : call.peer)
+                .font(.title.weight(.semibold)).foregroundStyle(.white)
+            if let since = call.connectedAt {
+                TimelineView(.periodic(from: since, by: 1)) { ctx in
+                    Text(mmss(Int(ctx.date.timeIntervalSince(since))))
+                        .font(.body.monospacedDigit()).foregroundStyle(.green)
+                }
+            } else {
+                Text("রিং হচ্ছে…").font(.body).foregroundStyle(.white.opacity(0.6))
+            }
+            HStack(spacing: 14) {
+                roundControl(nativeMuted ? "mic.slash.fill" : "mic.fill",
+                             active: nativeMuted, tint: .orange) {
+                    nativeMuted.toggle()
+                    SipCallController.shared.setMuted(nativeMuted)
+                }
+                roundControl("circle.grid.3x3.fill", active: dtmfOpen, tint: accent) {
+                    dtmfOpen.toggle()
+                }
+            }
+            if dtmfOpen {
+                dialpad { key in SipCallController.shared.sendDtmf(key) }
+            }
+            Button {
+                Task { _ = await CallKitVoIP.shared.requestEnd(callId: call.callId, reason: "user_hangup") }
+            } label: {
+                Label("কল শেষ", systemImage: "phone.down.fill")
+                    .font(.headline).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(RoundedRectangle(cornerRadius: 16).fill(.red))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(16)
+        .background(glass)
+        .onDisappear { nativeMuted = false }
     }
 
     private func popStat(_ label: String, _ value: String) -> some View {
