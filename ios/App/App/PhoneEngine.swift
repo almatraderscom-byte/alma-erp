@@ -56,9 +56,13 @@ final class PhoneEngine: NSObject, ObservableObject {
 
     // MARK: - Lifecycle
 
-    /// Create (if needed) and load the hidden engine page. Idempotent.
+    /// Create (if needed) and load the hidden engine page. Idempotent — but a page
+    /// whose LOAD failed (offline, DNS) is torn down and rebuilt, otherwise every
+    /// later "ফোন চালু করো" would wait forever on a bridge that can never appear
+    /// (Codex P2, PR #868).
     @MainActor
     func ensureLoaded() {
+        if webView != nil, pageError != nil, !ready { teardown() }
         if webView != nil { return }
         pageError = nil
         ready = false
