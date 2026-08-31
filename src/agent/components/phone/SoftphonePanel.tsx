@@ -305,6 +305,8 @@ export default function SoftphonePanel() {
 function CallHistory({ onDial }: { onDial: (number: string) => void }) {
   const [rows, setRows] = useState<Array<{
     direction: string; other: string; at: string | null; seconds: number; answered: boolean
+    /** Resolved display name (shared phonebook → customer), when the server knows one. */
+    name?: string
   }>>([])
   const [note, setNote] = useState<string | null>(null)
 
@@ -345,7 +347,8 @@ function CallHistory({ onDial }: { onDial: (number: string) => void }) {
                 <span className={r.direction === 'inbound' ? 'text-success' : 'text-gold'}>
                   {r.direction === 'inbound' ? '↙' : '↗'}
                 </span>
-                <span className="truncate text-sm text-cream">{r.other || 'অজানা নম্বর'}</span>
+                <span className="truncate text-sm text-cream">{r.name || r.other || 'অজানা নম্বর'}</span>
+                {r.name ? <span className="shrink-0 text-[11px] text-muted">{r.other}</span> : null}
               </span>
               <span className="shrink-0 text-right text-[11px] text-muted">
                 <span className="tabular-nums">{r.answered ? mmss(r.seconds) : 'ধরেনি'}</span>

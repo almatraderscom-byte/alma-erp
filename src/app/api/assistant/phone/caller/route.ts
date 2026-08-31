@@ -27,6 +27,12 @@ export async function GET(req: NextRequest) {
   if (tail.length < 9) return NextResponse.json({ found: false })
 
   try {
+    // A deliberately SAVED name (shared phonebook) outranks the customer record.
+    const contact = await db.phoneContact.findFirst({
+      where: { phone: { endsWith: tail } },
+      select: { name: true },
+    }).catch(() => null)
+
     // `phone` is stored in assorted formats across years of data, so match on the suffix.
     const customer = await db.lifestyleCustomer.findFirst({
       where: { phone: { endsWith: tail } },
@@ -48,11 +54,11 @@ export async function GET(req: NextRequest) {
       },
     }).catch(() => 0)
 
-    if (!customer && !lastOrder) return NextResponse.json({ found: false, recentCalls })
+    if (!contact && !customer && !lastOrder) return NextResponse.json({ found: false, recentCalls })
 
     return NextResponse.json({
       found: true,
-      name: customer?.name ?? null,
+      name: contact?.name ?? customer?.name ?? null,
       totalOrders: customer?.totalOrders ?? 0,
       // "Due" here is the pending-order count's value the staff most often needs; total spent
       // is shown separately in the panel's history if needed.

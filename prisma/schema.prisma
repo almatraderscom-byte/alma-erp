@@ -6595,3 +6595,19 @@ model AgentAdsEvent {
   @@index([field, lastSeenAt], map: "agent_ads_events_field_last_seen_idx")
   @@map("agent_ads_events")
 }
+
+/// Shared business phonebook for the staff phone (owner ask 2026-09-01) — like a
+/// handset's contacts, but ONE book the whole team shares: a customer saved once
+/// is named for everyone, on every ring surface (CallKit, screen-pop, recents).
+model PhoneContact {
+  id          String   @id @default(cuid())
+  /// Normalized BD-local digits (e.g. 017XXXXXXXX) — the lookup key.
+  phone       String   @unique
+  name        String
+  note        String?
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("phone_contacts")
+}

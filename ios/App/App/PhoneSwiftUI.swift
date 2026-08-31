@@ -24,6 +24,8 @@ private struct PhoneHistoryRow: Decodable, Identifiable {
     let at: String?
     let seconds: Int?
     let answered: Bool?
+    /// Resolved display name (shared phonebook → customer), when the server knows one.
+    let name: String?
     var id: String { "\(at ?? "?")-\(other ?? "?")" }
 }
 private struct PhoneHistoryResponse: Decodable { let rows: [PhoneHistoryRow]? }
@@ -34,6 +36,13 @@ private struct PhoneColleague: Decodable, Identifiable {
     var id: String { ext }
 }
 private struct PhoneColleagueList: Decodable { let staff: [PhoneColleague]? }
+
+private struct PhoneContactRow: Decodable, Identifiable {
+    let phone: String
+    let name: String
+    var id: String { phone }
+}
+private struct PhoneContactList: Decodable { let contacts: [PhoneContactRow]? }
 
 private struct PhoneCallerContext: Decodable {
     let found: Bool?
@@ -56,6 +65,9 @@ struct PhoneScreen: View {
     @State private var nativeMuted = false
     @State private var recents: [PhoneHistoryRow] = []
     @State private var colleagues: [PhoneColleague] = []
+    @State private var contacts: [PhoneContactRow] = []
+    @State private var savePhone: String? = nil
+    @State private var saveName = ""
     @State private var caller: PhoneCallerContext? = nil
     @State private var callerFetchedFor: String? = nil
     @State private var dtmfOpen = false
@@ -76,6 +88,7 @@ struct PhoneScreen: View {
                             liveCallCard
                         } else {
                             diallerCard
+                            if !contacts.isEmpty { contactsCard }
                             if !recents.isEmpty { recentsCard }
                             if !colleagues.isEmpty { colleaguesCard }
                         }
@@ -87,6 +100,28 @@ struct PhoneScreen: View {
             }
         }
         .navigationTitle("ফোন")
+        .alert("নম্বর সেভ করুন", isPresented: Binding(
+            get: { savePhone != nil },
+            set: { if !$0 { savePhone = nil } }
+        )) {
+            TextField("নাম", text: $saveName)
+            Button("সেভ") {
+                let phone = savePhone ?? ""
+                let name = saveName.trimmingCharacters(in: .whitespaces)
+                savePhone = nil
+                guard !phone.isEmpty, !name.isEmpty else { return }
+                Task {
+                    struct Req: Encodable { let phone: String; let name: String }
+                    struct Resp: Decodable { let ok: Bool? }
+                    let r: Resp? = try? await AlmaAPI.shared.send(
+                        "POST", "/api/assistant/phone/contacts", body: Req(phone: phone, name: name))
+                    if r?.ok == true { await loadLists() }
+                }
+            }
+            Button("বাতিল", role: .cancel) { savePhone = nil }
+        } message: {
+            Text(savePhone ?? "")
+        }
         .onAppear {
             engine.ensureLoaded()
             Task { await loadLists() }
@@ -203,6 +238,15 @@ struct PhoneScreen: View {
                     .padding(.vertical, 12)
                     .background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)))
                 if !number.isEmpty {
+                    Button {
+                        saveName = contacts.first { $0.phone == number }?.name ?? ""
+                        savePhone = number
+                    } label: {
+                        Image(systemName: "person.crop.circle.badge.plus")
+                            .foregroundStyle(.white.opacity(0.7))
+                            .frame(width: 44, height: 48)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)))
+                    }
                     Button {
                         number = String(number.dropLast())
                     } label: {
@@ -457,9 +501,15 @@ struct PhoneScreen: View {
                                   ? "arrow.down.left" : "arrow.up.right")
                                 .font(.footnote.weight(.semibold))
                                 .foregroundStyle(r.direction == "inbound" ? .green : accent)
-                            Text(r.other ?? "অজানা নম্বর")
-                                .font(.subheadline)
-                                .foregroundStyle(.white)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(r.name ?? r.other ?? "অজানা নম্বর")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.white)
+                                if r.name != nil, let num = r.other {
+                                    Text(num).font(.system(size: 10))
+                                        .foregroundStyle(.white.opacity(0.45))
+                                }
+                            }
                             Spacer()
                             VStack(alignment: .trailing, spacing: 1) {
                                 Text(r.answered == true ? mmss(r.seconds ?? 0) : "ধরেনি")
@@ -474,7 +524,63 @@ struct PhoneScreen: View {
                         }
                         .padding(.vertical, 9)
                     }
+                    .contextMenu {
+                        if let num = r.other {
+                            Button {
+                                saveName = r.name ?? ""
+                                savePhone = num
+                            } label: {
+                                Label("নাম দিয়ে সেভ করো", systemImage: "person.crop.circle.badge.plus")
+                            }
+                        }
+                    }
                     if i < min(recents.count, 8) - 1 {
+                        Divider().overlay(.white.opacity(0.08))
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(glass)
+    }
+
+    private var contactsCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("সেভ করা নম্বর")
+                .font(.caption.weight(.medium)).tracking(1.5)
+                .foregroundStyle(.white.opacity(0.5))
+            VStack(spacing: 0) {
+                ForEach(Array(contacts.prefix(12).enumerated()), id: \.offset) { i, c in
+                    Button {
+                        number = c.phone
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "person.crop.circle")
+                                .font(.footnote)
+                                .foregroundStyle(accent)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(c.name).font(.subheadline).foregroundStyle(.white)
+                                Text(c.phone).font(.system(size: 10))
+                                    .foregroundStyle(.white.opacity(0.45))
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            Task {
+                                struct Req: Encodable { let phone: String }
+                                struct Resp: Decodable { let ok: Bool? }
+                                let _: Resp? = try? await AlmaAPI.shared.send(
+                                    "DELETE", "/api/assistant/phone/contacts", body: Req(phone: c.phone))
+                                await loadLists()
+                            }
+                        } label: {
+                            Label("মুছে ফেলো", systemImage: "trash")
+                        }
+                    }
+                    if i < min(contacts.count, 12) - 1 {
                         Divider().overlay(.white.opacity(0.08))
                     }
                 }
@@ -520,12 +626,14 @@ struct PhoneScreen: View {
     private func loadLists() async {
         async let hist: PhoneHistoryResponse? = try? AlmaAPI.shared.get("/api/assistant/phone/history")
         async let dial: PhoneColleagueList? = try? AlmaAPI.shared.get("/api/assistant/phone/dial")
-        let (h, d) = await (hist, dial)
+        async let book: PhoneContactList? = try? AlmaAPI.shared.get("/api/assistant/phone/contacts")
+        let (h, d, b) = await (hist, dial, book)
         await MainActor.run {
             if let rows = h?.rows { recents = rows }
             if let staff = d?.staff {
                 colleagues = staff.filter { $0.ext != engine.state.ext }
             }
+            if let saved = b?.contacts { contacts = saved }
         }
     }
 
