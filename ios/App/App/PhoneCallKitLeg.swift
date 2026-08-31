@@ -99,6 +99,10 @@ final class SipCallController: ObservableObject {
               let wsUrl = resp.wsUrl, let mediaURL = URL(string: wsUrl) else {
             return resp.error ?? "কল দেওয়া গেল না"
         }
+        #if targetEnvironment(simulator)
+        NSLog("[alma-sip-leg] placeOutbound: SIM HARNESS path for %@", callId)
+        return startOutboundSimHarness(callId: callId, mediaURL: mediaURL, token: token, peer: display) ? nil : "sim harness start failed"
+        #else
         do {
             NSLog("[alma-sip-leg] placeOutbound: starting CallKit for %@", callId)
             try await CallKitVoIP.shared.startOutgoingSip(
@@ -109,6 +113,7 @@ final class SipCallController: ObservableObject {
             NSLog("[alma-sip-leg] placeOutbound: startOutgoingSip threw: %@", String(describing: error))
             return "কল শুরু করা গেল না"
         }
+        #endif
     }
 
     /// CallKit answer (incoming) or start (outgoing) → open the media socket NOW
@@ -161,6 +166,23 @@ final class SipCallController: ObservableObject {
         }
         return true
     }
+
+    #if targetEnvironment(simulator)
+    /// Simulator-only harness: the sim's callservicesd system-ends outgoing
+    /// CXStartCallAction calls after ~1 s (proven 2026-09-01), so self-testing
+    /// bypasses CallKit exactly the way the agent-call sim harness does — the
+    /// controller configures and activates the audio session itself. Everything
+    /// else (media socket, gateway leg, codec, engine) is the REAL path.
+    func startOutboundSimHarness(callId: String, mediaURL: URL, token: String, peer: String) -> Bool {
+        guard start(callId: callId, mediaURL: mediaURL, token: token, peer: peer, outgoing: true) else { return false }
+        let s = AVAudioSession.sharedInstance()
+        try? s.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP, .defaultToSpeaker])
+        try? s.setActive(true)
+        NSLog("[alma-sip-leg] SIM HARNESS: session self-activated, starting audio")
+        audioSessionActivated()
+        return true
+    }
+    #endif
 
     /// Mid-call keypad tone — the gateway injects it on the PSTN leg.
     func sendDtmf(_ digit: String) {
@@ -333,7 +355,11 @@ final class SipCallAudioEngine: NSObject {
         let input = audio.inputNode
         // Echo cancellation: without it the caller hears themselves back from the
         // speakerphone path. Best-effort — a failure must not kill the call.
+        // Simulator: voice processing makes the input tap deliver NOTHING (host-mic
+        // quirk) — skip it there; the device keeps echo cancel.
+        #if !targetEnvironment(simulator)
         try? input.setVoiceProcessingEnabled(true)
+        #endif
 
         let inFormat = input.outputFormat(forBus: 0)
         sendConverter = AVAudioConverter(from: inFormat, to: wireFormat)
@@ -371,7 +397,14 @@ final class SipCallAudioEngine: NSObject {
 
     private var sentFrames = 0
     private var playedFrames = 0
+    private var tapCalls = 0
     private func captured(_ buffer: AVAudioPCMBuffer) {
+        tapCalls += 1
+        if tapCalls == 1 || tapCalls % 100 == 0 {
+            NSLog("[alma-sip-leg] tap fired %d (in=%d frames @%.0f) muted=%d conv=%d",
+                  tapCalls, Int(buffer.frameLength), buffer.format.sampleRate,
+                  muted ? 1 : 0, sendConverter != nil ? 1 : 0)
+        }
         guard !muted, let converter = sendConverter else { return }
         let ratio = wireFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
@@ -383,6 +416,9 @@ final class SipCallAudioEngine: NSObject {
             fed = true
             outStatus.pointee = .haveData
             return buffer
+        }
+        if tapCalls == 1 || tapCalls % 100 == 0 {
+            NSLog("[alma-sip-leg] convert: err=%@ outFrames=%d", convError?.localizedDescription ?? "nil", Int(out.frameLength))
         }
         guard convError == nil, out.frameLength > 0, let ch = out.int16ChannelData else { return }
         let samples = Array(UnsafeBufferPointer(start: ch[0], count: Int(out.frameLength)))

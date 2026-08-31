@@ -447,7 +447,11 @@ struct PhoneScreen: View {
                 dialpad { key in SipCallController.shared.sendDtmf(key) }
             }
             Button {
-                Task { _ = await CallKitVoIP.shared.requestEnd(callId: call.callId, reason: "user_hangup") }
+                Task {
+                    let accepted = await CallKitVoIP.shared.requestEnd(callId: call.callId, reason: "user_hangup")
+                    // Sim harness (and any CallKit-less state): stop the leg directly.
+                    if !accepted { SipCallController.shared.callKitEnded(callId: call.callId) }
+                }
             } label: {
                 Label("কল শেষ", systemImage: "phone.down.fill")
                     .font(.headline).foregroundStyle(.white)
