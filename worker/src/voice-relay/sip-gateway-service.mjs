@@ -915,6 +915,7 @@ class Call {
     // Stop any iOS CallKit rings still showing for this call (caller gave up, AI
     // took it, or the call simply ended). Fire-and-forget by design.
     cancelAppRing(this, 'ended')
+    putCdr(this.channelId, { endedAt: Date.now() })
     log(this.channelId, 'hangup', reason ? `(${reason})` : '',
       `| audio frames=${this.framesOut || 0} silence=${this.silenceFrames || 0} underruns=${this.underruns || 0} turn-ends=${this.turnEnds || 0} cushion=${this.cushion || JITTER_FRAMES}f barge-ins=${this.barges || 0} dropped=${this.dropped || 0}`)
     // Put the same numbers on the CDR before anything else in this teardown can trigger the
@@ -1387,6 +1388,16 @@ async function onAriEvent(e) {
       if (vmCall) { await vmCall.deliverVoicemail(); void vmCall.hangup('voicemail complete') }
       break
     }
+    case 'ChannelStateChange': {
+      // Native app outbound: tell the app when the far phone actually STARTS
+      // ringing, so its screen says "রিং হচ্ছে" in sync with reality instead of
+      // the moment the button was pressed (owner ask 2026-09-01).
+      const call = chanId && calls.get(chanId)
+      if (call?.appWs && String(e.channel?.state || '') === 'Ringing') {
+        call.send({ event: 'ringing', streamId: call.channelId })
+      }
+      break
+    }
     case 'ChannelDtmfReceived': {
       const call = chanId && calls.get(chanId)
       if (!call) break
@@ -1775,7 +1786,25 @@ async function extensionHistory(ext, limit = 40) {
       disposition: r.disposition,
     })
   }
-  return { rows, error: null }
+  // Native app calls never create a PJSIP/<ext> channel (the gateway originates the
+  // far leg directly), so they are invisible to the Asterisk CSV. The gateway's own
+  // CDR ring has them — merge, newest first (owner report 2026-09-01: test calls
+  // missing from recents).
+  for (const rec of cdr.values()) {
+    if (!String(rec.call_id || '').startsWith('appout-')) continue
+    if (String(rec.call_id).includes(';')) continue // Local half — the same call twice
+    if (String(rec.from || '') !== String(ext)) continue
+    rows.push({
+      direction: 'outbound',
+      other: rec.to || '',
+      at: rec.startedAt ? new Date(rec.startedAt).toISOString().replace('T', ' ').slice(0, 19) : null,
+      seconds: rec.answeredAt && rec.endedAt ? Math.max(0, Math.round((rec.endedAt - rec.answeredAt) / 1000)) : 0,
+      answered: Boolean(rec.answered),
+      disposition: rec.answered ? 'ANSWERED' : 'NO ANSWER',
+    })
+  }
+  rows.sort((x, y) => String(y.at || '').localeCompare(String(x.at || '')))
+  return { rows: rows.slice(0, limit), error: null }
 }
 
 /** Extension -> what it is on a call with, for the console's live view of a person. */

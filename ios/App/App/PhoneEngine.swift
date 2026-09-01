@@ -43,8 +43,18 @@ final class PhoneEngine: NSObject, ObservableObject {
     private var webView: WKWebView? = nil
     private var pendingConnect = false
 
+    private static let autoOnKey = "almaPhoneAutoOn"
+
     private override init() {
         super.init()
+        // WhatsApp-style persistence (owner ask 2026-09-01): once the phone was
+        // switched on, every app launch/foreground brings it back automatically
+        // until the user explicitly presses বন্ধ.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.autoStartIfEnabled()
+        }
         // Signing into the demo backend swaps the host under us — the engine must not
         // keep a phone registered against the deployment the user just left.
         NotificationCenter.default.addObserver(
@@ -114,7 +124,13 @@ final class PhoneEngine: NSObject, ObservableObject {
 
     // MARK: - Commands
 
+    @MainActor func autoStartIfEnabled() {
+        guard UserDefaults.standard.bool(forKey: Self.autoOnKey) else { return }
+        if state.status == "idle" || state.status == "error" { connect() }
+    }
+
     @MainActor func connect() {
+        UserDefaults.standard.set(true, forKey: Self.autoOnKey)
         ensureLoaded()
         if ready { js("connect()"); return }
         pendingConnect = true
@@ -133,7 +149,10 @@ final class PhoneEngine: NSObject, ObservableObject {
         }
     }
     private var connectWaitGeneration: UInt64 = 0
-    @MainActor func disconnect() { js("disconnect()") }
+    @MainActor func disconnect() {
+        UserDefaults.standard.set(false, forKey: Self.autoOnKey)
+        js("disconnect()")
+    }
     @MainActor func dial(_ number: String) {
         let digits = number.filter { "0123456789*#".contains($0) }
         guard !digits.isEmpty else { return }

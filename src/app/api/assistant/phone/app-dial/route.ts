@@ -34,19 +34,26 @@ export async function POST(req: NextRequest) {
   if (!to) return NextResponse.json({ ok: false, error: 'missing number' }, { status: 400 })
 
   try {
-    // Ensure the extension exists (first-ever call from a new staff member).
-    await fetch(`${base}/api/v1/webrtc/provision`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ staffId: user.id, name: user.name ?? user.email ?? '' }),
-      signal: AbortSignal.timeout(20_000),
-    })
-    const res = await fetch(`${base}/api/v1/app-dial`, {
+    // Dial FIRST — an existing extension (the normal case, every call after the
+    // first) must not pay a provision round-trip: it was ~1.5 s of the owner's
+    // "call screen ashe 3/5 sec por" complaint. Provision only on the 404 a
+    // first-ever caller gets, then retry once.
+    const dial = () => fetch(`${base}/api/v1/app-dial`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ staffId: user.id, to }),
       signal: AbortSignal.timeout(20_000),
     })
+    let res = await dial()
+    if (res.status === 404) {
+      await fetch(`${base}/api/v1/webrtc/provision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ staffId: user.id, name: user.name ?? user.email ?? '' }),
+        signal: AbortSignal.timeout(20_000),
+      })
+      res = await dial()
+    }
     const data = (await res.json().catch(() => ({}))) as {
       ok?: boolean; callId?: string; token?: string; error?: string
     }

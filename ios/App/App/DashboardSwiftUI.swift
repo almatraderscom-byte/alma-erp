@@ -1113,8 +1113,11 @@ struct DashboardScreen: View {
             // NATIVE orders, not web (owner 2026-07-17): the attention banner opens the
             // native Orders screen through the single deep-link path (pushSmart →
             // AlmaNativeRouter → OrdersScreen) — the same decision a notification tap takes.
+            // Owner 2026-09-01: land ON the breached order, not the bare list — the
+            // typed `focus` query opens its native detail sheet directly.
+            let focus = breaches.first.map { "?focus=\($0.id)" } ?? ""
             NotificationCenter.default.post(name: .almaOpenPath, object: nil,
-                                            userInfo: ["path": "/orders"])
+                                            userInfo: ["path": "/orders\(focus)"])
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "bolt.fill").foregroundStyle(DashPalette.warning(scheme))
