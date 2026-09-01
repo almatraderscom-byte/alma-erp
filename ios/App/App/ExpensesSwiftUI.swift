@@ -5,10 +5,12 @@
 //  Mirrors the web /expenses page 1:1 — same endpoint, same colours, same blocks:
 //    GET  /api/finance?business_id=ALMA_LIFESTYLE&startDate=…&endDate=…
 //         → { total_expenses, cash_balance, by_category, expenses[], recent_expenses[] }
-//    POST /api/finance {title, category, amount, payment_status, payment_method,
+//    POST /api/finance {title, category, amount, paid_by, payment_method,
 //         notes, recurring, date, business_id}
 //         → SUPER_ADMIN: saved directly · anyone else: routed to the approval
 //           center ({ pending_approval: true, message } — Bangla message verbatim).
+//         paid_by: company | self (own pocket → reimbursement approval; approve
+//         records the expense AND credits the staffer's wallet) | none (Pending).
 //  Web-parity blocks: 4 KPI cards (Total expenses (range) / Ledger cash readout /
 //  Line items / Active categories) · Expense mix donut (web PALETTE hexes) ·
 //  Highest categories · Ledger lines list (date/title/category/৳/receipt/status) ·
@@ -201,7 +203,10 @@ struct ExpenseCreateBody: Encodable {
     let title: String
     let category: String
     let amount: Int
-    let paymentStatus: String
+    // Owner 2026-09-01: who paid — 'company' | 'self' (own pocket → reimbursement
+    // approval, wallet credit on approve) | 'none' (nobody yet → status Pending).
+    // The server derives payment_status from this.
+    let paidBy: String
     let paymentMethod: String
     let notes: String
     let recurring: Bool
@@ -213,7 +218,7 @@ struct ExpenseCreateBody: Encodable {
 
     private enum CodingKeys: String, CodingKey {
         case title, category, amount, notes, recurring, date
-        case paymentStatus = "payment_status"
+        case paidBy = "paid_by"
         case paymentMethod = "payment_method"
         case businessId = "business_id"
         case receiptRef = "receipt_ref"
@@ -227,7 +232,7 @@ struct ExpenseDraft {
     var category = ""
     var amountText = ""
     var date = Date()
-    var paymentStatus = "Paid"       // web options: Paid | Pending | Partial
+    var paidBy = "company"           // company | self (own pocket) | none (pending)
     var paymentMethod = ""
     var notes = ""
     var recurring = false
@@ -360,7 +365,7 @@ final class ExpensesVM {
                 title: draft.title.trimmingCharacters(in: .whitespacesAndNewlines),
                 category: draft.category,
                 amount: amount,
-                paymentStatus: draft.paymentStatus,
+                paidBy: draft.paidBy,
                 paymentMethod: draft.paymentMethod.trimmingCharacters(in: .whitespacesAndNewlines),
                 notes: draft.notes.trimmingCharacters(in: .whitespacesAndNewlines),
                 recurring: draft.recurring,
@@ -384,6 +389,48 @@ final class ExpensesVM {
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             self.error = "Could not record expense. Please try again."   // web toast, verbatim
             return false
+        }
+    }
+
+    /// Sum of বাকি rows in range (Pending/Partial — web KPI parity).
+    var dueTotal: Int {
+        expenses.filter { $0.paymentStatus == "Pending" || $0.paymentStatus == "Partial" }
+            .reduce(0) { $0 + $1.amount }
+    }
+
+    struct MarkPaidResponse: Decodable {
+        let ok: Bool?
+        let paid: Bool?
+        let pendingApproval: Bool?
+        let message: String?
+        private enum CodingKeys: String, CodingKey {
+            case ok, paid, message
+            case pendingApproval = "pending_approval"
+        }
+    }
+
+    /// Settle a বাকি row (owner 2026-09-01) — POST /api/finance/mark-paid.
+    /// company → flips to Paid right away (expenseWrite roles).
+    /// self    → staff: owner approval then Paid + wallet credit; Super Admin: direct.
+    func markPaid(_ row: ExpenseLedgerRow, paidBy: String) async {
+        notice = nil
+        error = nil
+        do {
+            let body: [String: String] = [
+                "expense_id": row.expId,
+                "business_id": AlmaAccess.Context.currentId,
+                "paid_by": paidBy,
+            ]
+            let resp: MarkPaidResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/finance/mark-paid", body: body)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = resp.message ?? "পরিশোধ চিহ্নিত করা হয়েছে।"
+            await load()
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = (error as? AlmaAPIError)?.serverMessage ?? "পরিশোধ চিহ্নিত করা যায়নি।"
         }
     }
 
@@ -539,7 +586,9 @@ struct ExpensesScreen: View {
         .refreshable { await vm.load() }
         .task { await vm.load() }
         .sheet(item: $selected) { row in
-            ExpenseDetailSheet(row: row, openWeb: openWeb)
+            ExpenseDetailSheet(row: row, openWeb: openWeb, markPaid: { paidBy in
+                Task { await vm.markPaid(row, paidBy: paidBy) }
+            })
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -614,6 +663,9 @@ struct ExpensesScreen: View {
             ExpensesStatTile(label: "ACTIVE CATEGORIES", target: vm.byCategory.count,
                              format: { "\($0)" }, sub: "With spend in range",
                              tint: .primary, accent: AlmaSwiftTheme.sage)
+            ExpensesStatTile(label: "বাকি খরচ", target: vm.dueTotal,
+                             format: { "৳\($0.formatted())" }, sub: "Pending / Partial",
+                             tint: .primary, accent: ExpensePalette.amber500)
         }
     }
 
@@ -971,20 +1023,51 @@ private struct ExpenseRowCard: View {
 private struct ExpenseDetailSheet: View {
     let row: ExpenseLedgerRow
     let openWeb: (_ path: String, _ title: String) -> Void
+    /// Settle a বাকি row — 'company' | 'self' (owner 2026-09-01, web parity).
+    var markPaid: ((_ paidBy: String) -> Void)? = nil
+    @State private var confirmingMarkPaid = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+
+    private var paymentOpen: Bool {
+        row.paymentStatus == "Pending" || row.paymentStatus == "Partial"
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
                 infoCard
+                if paymentOpen, markPaid != nil { markPaidBlock }
                 receiptBlock
                 webLink
             }
             .padding(18)
         }
         .presentationBackground { ExpensesAurora() }
+        .confirmationDialog("পেমেন্ট কে করল?", isPresented: $confirmingMarkPaid, titleVisibility: .visible) {
+            Button("কোম্পানি করেছে") { markPaid?("company"); dismiss() }
+            Button("আমি নিজে করেছি (ওয়ালেটে ফেরত)") { markPaid?("self"); dismiss() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    /// Amber "পরিশোধ হয়েছে" action for বাকি rows (web parity: ledger পরিশোধ button).
+    private var markPaidBlock: some View {
+        Button {
+            confirmingMarkPaid = true
+        } label: {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                Text("পরিশোধ হয়েছে — চিহ্নিত করুন").font(.subheadline.weight(.bold))
+                Spacer()
+            }
+            .foregroundStyle(ExpensePalette.amber500)
+            .padding(14)
+            .frame(maxWidth: .infinity)
+            .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        }
+        .buttonStyle(.plain)
     }
 
     private var header: some View {
@@ -1123,13 +1206,18 @@ private struct ExpenseAddSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("PAYMENT STATUS").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
-                    Picker("Payment status", selection: $draft.paymentStatus) {
-                        Text("Paid").tag("Paid")
-                        Text("Pending").tag("Pending")
-                        Text("Partial").tag("Partial")
+                    Text("পেমেন্ট কে করেছে?").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                    Picker("পেমেন্ট কে করেছে", selection: $draft.paidBy) {
+                        Text("কোম্পানি").tag("company")
+                        Text("আমি নিজে").tag("self")
+                        Text("কেউ না — বাকি").tag("none")
                     }
                     .pickerStyle(.segmented)
+                    if draft.paidBy == "self" {
+                        Text("অনুমোদন হলে খরচ যোগ হবে এবং টাকা আপনার ওয়ালেটে ফেরত যাবে।")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 fieldBlock("Payment method") {

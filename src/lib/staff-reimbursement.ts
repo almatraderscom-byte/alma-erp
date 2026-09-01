@@ -42,12 +42,17 @@ export interface ReimbursementClaimInput {
   actorName: string
   amount: number
   category: string
+  /** Optional expense title from the add-expense form; falls back to "<name> · নিজ খরচ ফেরত". */
+  title?: string | null
   note?: string | null
   vendor?: string | null
   receiptRef?: string | null
   receiptAttachmentId?: string | null
   /** YYYY-MM-DD the money was actually spent (defaults to today at expense-create time). */
   expenseDate?: string | null
+  /** Mark-paid flow: an ALREADY-RECORDED LifestyleExpense id. On approval the existing
+   *  row is flipped to Paid/Own pocket (no new expense is created) + wallet credited. */
+  existingExpenseId?: string | null
 }
 
 /** File a reimbursement claim → PENDING approval for the owner. */
@@ -63,7 +68,7 @@ export async function enqueueReimbursementClaim(input: ReimbursementClaimInput) 
     business_id: businessId,
     category,
     amount,
-    title: `${input.actorName} · নিজ খরচ ফেরত`,
+    title: (input.title || '').trim() || `${input.actorName} · নিজ খরচ ফেরত`,
     desc: note,
     note,
     vendor: input.vendor ? String(input.vendor).slice(0, 160) : null,
@@ -79,6 +84,7 @@ export async function enqueueReimbursementClaim(input: ReimbursementClaimInput) 
     reimburse_employee_id: input.employeeId,
     reimburse_user_id: input.userId,
     reimburse_amount: amount,
+    existing_expense_id: input.existingExpenseId || null,
   }
 
   return createApprovalRequest({
@@ -125,10 +131,26 @@ export async function processReimbursementApproval(
     return apiFailure('missing_snapshot', 'Reimbursement approval has no saved data to create from.', { status: 400 })
   }
 
-  // 1) Record the company expense (verbatim replay, like a normal expense add).
-  const { result, expenseId } = await persistExpenseFromPayload(snapshot)
-  if (result && typeof result === 'object' && 'error' in result && result.error) {
-    return apiFailure('expense_create_failed', String(result.error), { status: 400 })
+  // 1) Record the company expense. Two shapes:
+  //    - normal claim → create a new expense (verbatim replay of the add payload)
+  //    - mark-paid claim (existing_expense_id) → the expense already exists as a
+  //      বাকি (Pending) row: flip it to Paid / Own pocket instead of creating a twin.
+  let expenseId: string
+  if (snapshot.existing_expense_id) {
+    expenseId = String(snapshot.existing_expense_id)
+    const updated = await prisma.lifestyleExpense.updateMany({
+      where: { id: expenseId, deletedAt: null },
+      data: { paymentStatus: 'Paid', paymentMethod: 'Own pocket' },
+    })
+    if (!updated.count) {
+      return apiFailure('expense_missing', 'বাকি খরচটি আর পাওয়া যায়নি (মুছে ফেলা হতে পারে)।', { status: 400 })
+    }
+  } else {
+    const { result, expenseId: createdId } = await persistExpenseFromPayload(snapshot)
+    if (result && typeof result === 'object' && 'error' in result && result.error) {
+      return apiFailure('expense_create_failed', String(result.error), { status: 400 })
+    }
+    expenseId = createdId
   }
 
   // 2) Credit the staffer's wallet (REIMBURSEMENT). Idempotent via (source, sourceRef).

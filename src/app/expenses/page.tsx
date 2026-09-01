@@ -54,10 +54,47 @@ export default function ExpensesPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const expenseFormRef = useRef<HTMLFormElement>(null)
 
-  const expenses = data?.expenses ?? []
+  const expenses = useMemo(() => data?.expenses ?? [], [data?.expenses])
   const total = data?.total_expenses ?? 0
   const byCat = data?.by_category ?? {}
   const donut = useMemo(() => categoryDonut(byCat), [byCat])
+  const dueRows = useMemo(
+    () => expenses.filter(er => er.payment_status === 'Pending' || er.payment_status === 'Partial'),
+    [expenses],
+  )
+  const dueTotal = useMemo(() => dueRows.reduce((s, er) => s + er.amount, 0), [dueRows])
+  const [markPaidRow, setMarkPaidRow] = useState<{ exp_id: string; title: string; amount: number } | null>(null)
+  const [markPaidBy, setMarkPaidBy] = useState<'company' | 'self'>('company')
+  const [markPaidMethod, setMarkPaidMethod] = useState('')
+  const [markingPaid, setMarkingPaid] = useState(false)
+
+  async function submitMarkPaid() {
+    if (!markPaidRow || markingPaid) return
+    setMarkingPaid(true)
+    try {
+      const res = await fetch('/api/finance/mark-paid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expense_id: markPaidRow.exp_id,
+          business_id: business.id,
+          paid_by: markPaidBy,
+          payment_method: markPaidMethod,
+        }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.message || j.error || 'পরিশোধ চিহ্নিত করা যায়নি।')
+      toast.success(j.message || 'পরিশোধ চিহ্নিত করা হয়েছে।', { duration: 6000 })
+      setMarkPaidRow(null)
+      setMarkPaidMethod('')
+      setMarkPaidBy('company')
+      refetch()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setMarkingPaid(false)
+    }
+  }
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -67,7 +104,7 @@ export default function ExpensesPage() {
       title: String(fd.get('title') || ''),
       category: String(fd.get('category') || ''),
       amount: Number(fd.get('amount') || 0),
-      payment_status: String(fd.get('payment_status') || 'Paid'),
+      paid_by: String(fd.get('paid_by') || 'company'),
       payment_method: String(fd.get('payment_method') || ''),
       notes: String(fd.get('notes') || ''),
       recurring: fd.get('recurring') === 'on',
@@ -81,7 +118,7 @@ export default function ExpensesPage() {
     }
     const res = await addEx(payload)
     if (res?.ok) {
-      toast.success('Expense recorded')
+      toast.success(res.message || (res.pending_approval ? 'অনুমোদনের জন্য পাঠানো হয়েছে' : 'Expense recorded'), { duration: 6000 })
       setOpen(false)
       setReceipt(null)
       refetch()
@@ -170,8 +207,9 @@ export default function ExpensesPage() {
       )}
     >
       <motion.div variants={stagger} initial="hidden" animate="show" className="min-w-0 max-w-full space-y-6">
-      <motion.div variants={fadeUp} className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <motion.div variants={fadeUp} className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <KpiCard label="Total expenses (range)" value={loading ? '—' : total} loading={loading} animate />
+        <KpiCard label="বাকি খরচ (unpaid)" value={loading ? '—' : dueTotal} loading={loading} animate />
         <KpiCard label="Ledger cash readout" value={loading ? '—' : Number(data?.cash_balance ?? 0)} loading={loading} animate />
         <KpiCard label="Line items" value={loading ? '—' : expenses.length} loading={loading} animate />
         <KpiCard label="Active categories" value={loading ? '—' : Object.keys(byCat).length} loading={loading} animate />
@@ -238,7 +276,17 @@ export default function ExpensesPage() {
                         </button>
                       ) : <span className="text-muted">—</span>}
                     </td>
-                    <td className="py-2 text-muted">{er.payment_status ?? '—'}</td>
+                    <td className="py-2 text-muted">
+                      {(er.payment_status === 'Pending' || er.payment_status === 'Partial') && mayExpense ? (
+                        <button
+                          type="button"
+                          onClick={() => { setMarkPaidRow({ exp_id: er.exp_id, title: er.title, amount: er.amount }); setMarkPaidBy('company'); setMarkPaidMethod('') }}
+                          className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[9px] font-bold text-amber-300 hover:bg-amber-400/20"
+                        >
+                          {er.payment_status} · পরিশোধ
+                        </button>
+                      ) : (er.payment_status ?? '—')}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -247,6 +295,56 @@ export default function ExpensesPage() {
         )}
       </Card>
       </motion.div>
+
+      {markPaidRow && (
+        <MobileModalPortal
+          open
+          zIndex={130}
+          onBackdropClick={() => setMarkPaidRow(null)}
+          aria-label="Mark expense paid"
+        >
+          <Card className="mobile-modal-shell w-full max-w-sm border-gold-dim/30 sm:rounded-2xl">
+            <div className="mobile-modal-header p-5 pb-3">
+              <p className="text-sm font-bold text-cream">বাকি খরচ পরিশোধ</p>
+              <p className="text-[11px] text-muted mt-1">{markPaidRow.title || 'খরচ'} · ৳{markPaidRow.amount.toLocaleString('en-BD')}</p>
+            </div>
+            <div className="mobile-modal-body space-y-3 px-5 pb-4 text-xs">
+              <p className="text-muted">পেমেন্ট কে করল?</p>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-card/85 px-3 py-2">
+                  <input type="radio" name="mark_paid_by" checked={markPaidBy === 'company'} onChange={() => setMarkPaidBy('company')} />
+                  <span className="text-cream">কোম্পানি করেছে</span>
+                </label>
+                <label className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-card/85 px-3 py-2">
+                  <input type="radio" name="mark_paid_by" checked={markPaidBy === 'self'} onChange={() => setMarkPaidBy('self')} />
+                  <span className="text-cream">আমি নিজে করেছি (ওয়ালেটে ফেরত)</span>
+                </label>
+              </div>
+              {markPaidBy === 'company' ? (
+                <label className="block space-y-1">
+                  <span className="text-muted">Payment method</span>
+                  <input
+                    value={markPaidMethod}
+                    onChange={e => setMarkPaidMethod(e.target.value)}
+                    placeholder="bKash, bank…"
+                    className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm"
+                  />
+                </label>
+              ) : (
+                <p className="text-[10px] text-muted">অনুমোদন হলে খরচটি পরিশোধ হবে এবং টাকা আপনার ওয়ালেটে যোগ হবে।</p>
+              )}
+            </div>
+            <div className="mobile-modal-footer px-5 pt-3">
+              <div className="flex gap-2">
+                <Button type="button" variant="gold" className="flex-1 justify-center" disabled={markingPaid} onClick={() => void submitMarkPaid()}>
+                  {markingPaid ? 'হচ্ছে…' : 'নিশ্চিত করুন'}
+                </Button>
+                <Button type="button" variant="ghost" className="flex-1 justify-center" onClick={() => setMarkPaidRow(null)}>Cancel</Button>
+              </div>
+            </div>
+          </Card>
+        </MobileModalPortal>
+      )}
 
       {open && (
         <MobileModalPortal
@@ -287,11 +385,11 @@ export default function ExpensesPage() {
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <label className="block space-y-1">
-                        <span className="text-muted">Payment status</span>
-                        <select name="payment_status" className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm">
-                          <option>Paid</option>
-                          <option>Pending</option>
-                          <option>Partial</option>
+                        <span className="text-muted">পেমেন্ট কে করেছে?</span>
+                        <select name="paid_by" defaultValue="company" className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm">
+                          <option value="company">কোম্পানি করেছে</option>
+                          <option value="self">আমি নিজে করেছি (ওয়ালেটে ফেরত)</option>
+                          <option value="none">কেউ করেনি — বাকি</option>
                         </select>
                       </label>
                       <label className="block space-y-1">

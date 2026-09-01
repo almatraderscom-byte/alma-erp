@@ -10,6 +10,8 @@ import { apiFailure } from '@/lib/safe-api-response'
 import { TRADING_BUSINESS_ID, numberFromDecimal } from '@/lib/trading'
 import { getLifestyleFinance } from '@/lib/lifestyle/read'
 import { persistExpenseFromPayload, enqueueExpenseApproval } from '@/lib/finance-expense'
+import { enqueueReimbursementClaim } from '@/lib/staff-reimbursement'
+import { resolveMyDeskProfile } from '@/lib/profile-resolution'
 
 export const revalidate = 0
 
@@ -99,6 +101,59 @@ export async function POST(req: NextRequest) {
     const raw = (await req.json()) as Record<string, unknown>
     const payload = await mergeActorPayload(req, raw)
     const businessId = String(raw.business_id || LIFESTYLE_BUSINESS_ID)
+
+    // Who paid? (owner directive 2026-09-01) — one form, one question. The selector
+    // replaces the old free-form payment_status dropdown on new clients; legacy
+    // clients that still send payment_status without paid_by keep old behavior.
+    //   company → normal company expense (status Paid unless the client says otherwise)
+    //   none    → nobody paid yet: record with status Pending, no wallet involved
+    //   self    → own-pocket: route through the reimbursement approval so ONE owner
+    //             approve both records the expense AND credits the staffer's wallet
+    const paidBy = String(raw.paid_by || '').trim().toLowerCase()
+    if (paidBy === 'none') payload.payment_status = 'Pending'
+    if (paidBy === 'company') payload.payment_status = String(raw.payment_status || 'Paid')
+    if (paidBy === 'self') {
+      const actorUserId = String(payload.actor_user_id || '')
+      if (String(payload.actor_role || '') !== 'SUPER_ADMIN') {
+        if (!actorUserId) return apiFailure('unauthorized', 'Login required.', { status: 401 })
+        const amount = Number(raw.amount || 0)
+        if (!(amount > 0)) return apiFailure('bad_amount', 'সঠিক টাকার অঙ্ক দিন।', { status: 400 })
+        const profile = await resolveMyDeskProfile(actorUserId, businessId)
+        const employeeId = String(profile?.employeeIdGas || '').trim()
+        if (!employeeId) {
+          return apiFailure(
+            'no_employee_link',
+            'আপনার অ্যাকাউন্টে কর্মী আইডি যুক্ত নেই — ম্যানেজারকে বলুন Users-এ লিংক করতে, তারপর আবার চেষ্টা করুন।',
+            { status: 400 },
+          )
+        }
+        const approval = await enqueueReimbursementClaim({
+          businessId,
+          employeeId,
+          userId: actorUserId,
+          actorName: String(payload.actor || 'Staff'),
+          amount,
+          category: String(raw.category || '').trim() || 'Expense',
+          title: raw.title ? String(raw.title) : null,
+          note: (raw.notes ?? raw.note) ? String(raw.notes ?? raw.note) : null,
+          vendor: raw.vendor ? String(raw.vendor) : null,
+          receiptRef: raw.receipt_ref ? String(raw.receipt_ref) : null,
+          receiptAttachmentId: raw.receipt_attachment_id ? String(raw.receipt_attachment_id) : null,
+          expenseDate: raw.date ? String(raw.date) : null,
+        })
+        return NextResponse.json({
+          ok: true,
+          pending_approval: true,
+          reimbursement: true,
+          approval_id: approval.id,
+          message: 'খরচটি অনুমোদনের জন্য পাঠানো হয়েছে। মালিক অনুমোদন করলে খরচ যোগ হবে এবং টাকা আপনার ওয়ালেটে যোগ হবে।',
+        })
+      }
+      // Owner (Super Admin) paid personally — owner's money is company money:
+      // record directly as a paid expense, no wallet credit.
+      payload.payment_status = 'Paid'
+      if (!String(payload.payment_method || '').trim()) payload.payment_method = 'Own pocket'
+    }
 
     // Owner directive: only a Super Admin can add an expense directly. Anyone
     // else (admin or staff) routes the add through the approval center — it is
