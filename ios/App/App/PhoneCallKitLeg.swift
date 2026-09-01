@@ -83,13 +83,30 @@ final class SipCallController: ObservableObject {
     /// Gateway closed the media socket (caller hung up). CallKitVoIP closes the
     /// system call; set once at app start.
     var onRemoteEnded: ((_ callId: String) -> Void)?
+    /// Pre-answer failure (busy/off/no-answer) — ends the CallKit call with the
+    /// matching system reason.
+    var onCallFailed: ((_ callId: String, _ cause: String) -> Void)?
     /// Far end answered (outgoing leg went live) — CallKit timer starts here.
     var onAnswered: ((_ callId: String) -> Void)?
+    /// Why the last outgoing attempt ended without an answer — shown on the
+    /// dialler in Bangla ("লাইন ব্যস্ত", "নম্বরটি বন্ধ…"), cleared on the next dial.
+    @Published var lastEndNotice: String?
+
+    static func bangla(forCause cause: String) -> String? {
+        switch cause {
+        case "busy": return "লাইন ব্যস্ত"
+        case "noanswer": return "ধরেননি"
+        case "declined": return "কল কেটে দেওয়া হয়েছে"
+        case "congestion", "chanunavail": return "নম্বরটি বন্ধ বা নেটওয়ার্কের বাইরে"
+        default: return nil
+        }
+    }
 
     /// Native outbound: mint the call server-side, then hand it to CallKit.
     /// Returns a Bangla error message, or nil on success.
     func placeOutbound(to number: String, display: String) async -> String? {
         guard current == nil else { return "একটা কল ইতিমধ্যে চলছে" }
+        lastEndNotice = nil
         struct Req: Encodable { let to: String }
         struct Resp: Decodable { let ok: Bool?; let callId: String?; let token: String?; let wsUrl: String?; let error: String? }
         let resp: Resp
@@ -147,6 +164,14 @@ final class SipCallController: ObservableObject {
             Task { @MainActor in
                 guard let self, self.activeCallId == id else { return }
                 self.current?.ringing = true
+            }
+        }
+        eng.onFailed = { [weak self] cause in
+            Task { @MainActor in
+                guard let self, self.activeCallId == id else { return }
+                self.lastEndNotice = Self.bangla(forCause: cause)
+                self.stopEngine()
+                self.onCallFailed?(id, cause)
             }
         }
         eng.onAnswered = { [weak self] in
@@ -251,6 +276,7 @@ final class SipCallAudioEngine: NSObject {
     var onClosed: (() -> Void)?
     var onAnswered: (() -> Void)?
     var onRinging: (() -> Void)?
+    var onFailed: ((String) -> Void)?
 
     /// 8 kHz mono — the PSTN's native rate; the gateway speaks nothing else.
     private let wireFormat = AVAudioFormat(
@@ -340,8 +366,13 @@ final class SipCallAudioEngine: NSObject {
         else { return }
         switch obj["event"] as? String {
         case "ringing":
-            startRingback()
+            if isOutgoing && !answeredOrMedia { startRingback() }
             DispatchQueue.main.async { self.onRinging?() }
+        case "failed":
+            let cause = (obj["cause"] as? String) ?? ""
+            NSLog("[alma-sip-leg] call failed: %@", cause)
+            stopRingback()
+            DispatchQueue.main.async { self.onFailed?(cause) }
         case "answered":
             answeredOrMedia = true
             stopRingback()
@@ -472,10 +503,8 @@ final class SipCallAudioEngine: NSObject {
         }
         player.play()
         NSLog("[alma-sip-leg] startAudio: engine running, input rate=%f", audio.inputNode.outputFormat(forBus: 0).sampleRate)
-        if isOutgoing && !answeredOrMedia {
-            NSLog("[alma-sip-leg] local ringback started")
-            startRingback()
-        }
+        // Ringback is started ONLY by the gateway's honest 'ringing' event now —
+        // a switched-off number must never sound like it is ringing (owner bug).
     }
 
     private var sentFrames = 0

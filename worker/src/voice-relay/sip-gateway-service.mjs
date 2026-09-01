@@ -1323,6 +1323,17 @@ async function onAriEvent(e) {
     case 'ChannelDestroyed': {
       // The only place Asterisk tells us WHY the leg ended — keep it for the sweep.
       const call = chanId && calls.get(chanId)
+      // Native app outbound that died before answer: translate the Q.850 cause so
+      // the app can say WHY in Bangla instead of ringing into the void.
+      if (call?.appWs && !call.answered && !call.closed) {
+        const cause = Number(e.cause || 0)
+        const mapped = cause === 17 ? 'busy'
+          : cause === 18 || cause === 19 ? 'noanswer'
+            : cause === 21 ? 'declined'
+              : [1, 20, 27, 34, 38, 41, 42].includes(cause) ? 'chanunavail'
+                : ''
+        if (mapped) call.send({ event: 'failed', streamId: call.channelId, cause: mapped })
+      }
       // Was this a ring at a browser phone, and did it ever get off the ground?
       if (chanId) noteBrowserOutcome(chanId, Boolean(call?.answered) || Number(e.cause) === 16 || Number(e.cause) === 19)
       // A forward leg dying tells us how the human-to-human half went; fold it into the
@@ -1386,6 +1397,25 @@ async function onAriEvent(e) {
       const name = String(e.recording?.name || '')
       const vmCall = [...calls.values()].find((c) => c.vmName === name)
       if (vmCall) { await vmCall.deliverVoicemail(); void vmCall.hangup('voicemail complete') }
+      break
+    }
+    case 'Dial': {
+      // TRUE call progress for the native app leg. The Dial event carries the
+      // provider's answer about the far number — RINGING is the only honest
+      // trigger for ringback, and BUSY/CONGESTION/CHANUNAVAIL/NOANSWER are the
+      // difference between a phone system and a guessing game (owner bug
+      // 2026-09-01: an OFF number still showed 'রিং হচ্ছে').
+      const peerId = e.peer?.id || ''
+      const call = (peerId && calls.get(peerId)) || (chanId && calls.get(chanId))
+      if (!call?.appWs) break
+      const ds = String(e.dialstatus || '').toUpperCase()
+      if (!ds) break
+      if (ds === 'RINGING') {
+        call.send({ event: 'ringing', streamId: call.channelId })
+      } else if (['BUSY', 'NOANSWER', 'CONGESTION', 'CHANUNAVAIL'].includes(ds)) {
+        log(call.channelId, `dial status ${ds} — telling the app`)
+        call.send({ event: 'failed', streamId: call.channelId, cause: ds.toLowerCase() })
+      }
       break
     }
     case 'ChannelStateChange': {

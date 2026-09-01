@@ -268,6 +268,13 @@ struct PhoneScreen: View {
             if let err = dialError ?? engine.state.error {
                 Text(err).font(.footnote).foregroundStyle(.red.opacity(0.9))
             }
+            if let notice = sipCall.lastEndNotice {
+                Text(notice)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Capsule().fill(.orange.opacity(0.12)))
+            }
             HStack(spacing: 8) {
                 TextField("নম্বর লিখুন", text: $number)
                     .keyboardType(.phonePad)
