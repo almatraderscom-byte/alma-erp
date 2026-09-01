@@ -449,7 +449,7 @@ export interface NextInvoiceNumberRes {
   invoice_number: string
   next?: string
 }
-interface AddExpenseRes           extends MutationOk { expense_id: string }
+interface AddExpenseRes           extends MutationOk { expense_id: string; pending_approval?: boolean; reimbursement?: boolean; message?: string }
 interface CreateOrderFolderRes    extends MutationOk { folder_url: string }
 
 export type CreateProductInput = {
@@ -972,6 +972,8 @@ export const api = {
       payment_method?: string
       payment?: string
       payment_status?: string
+      /** Who paid: 'company' | 'self' (own pocket → reimbursement flow) | 'none' (pending). */
+      paid_by?: string
       receipt_ref?: string
       receipt_attachment_id?: string
       attachment_url?: string

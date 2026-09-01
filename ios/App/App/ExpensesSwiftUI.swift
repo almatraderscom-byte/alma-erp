@@ -5,10 +5,12 @@
 //  Mirrors the web /expenses page 1:1 — same endpoint, same colours, same blocks:
 //    GET  /api/finance?business_id=ALMA_LIFESTYLE&startDate=…&endDate=…
 //         → { total_expenses, cash_balance, by_category, expenses[], recent_expenses[] }
-//    POST /api/finance {title, category, amount, payment_status, payment_method,
+//    POST /api/finance {title, category, amount, paid_by, payment_method,
 //         notes, recurring, date, business_id}
 //         → SUPER_ADMIN: saved directly · anyone else: routed to the approval
 //           center ({ pending_approval: true, message } — Bangla message verbatim).
+//         paid_by: company | self (own pocket → reimbursement approval; approve
+//         records the expense AND credits the staffer's wallet) | none (Pending).
 //  Web-parity blocks: 4 KPI cards (Total expenses (range) / Ledger cash readout /
 //  Line items / Active categories) · Expense mix donut (web PALETTE hexes) ·
 //  Highest categories · Ledger lines list (date/title/category/৳/receipt/status) ·
@@ -201,7 +203,10 @@ struct ExpenseCreateBody: Encodable {
     let title: String
     let category: String
     let amount: Int
-    let paymentStatus: String
+    // Owner 2026-09-01: who paid — 'company' | 'self' (own pocket → reimbursement
+    // approval, wallet credit on approve) | 'none' (nobody yet → status Pending).
+    // The server derives payment_status from this.
+    let paidBy: String
     let paymentMethod: String
     let notes: String
     let recurring: Bool
@@ -213,7 +218,7 @@ struct ExpenseCreateBody: Encodable {
 
     private enum CodingKeys: String, CodingKey {
         case title, category, amount, notes, recurring, date
-        case paymentStatus = "payment_status"
+        case paidBy = "paid_by"
         case paymentMethod = "payment_method"
         case businessId = "business_id"
         case receiptRef = "receipt_ref"
@@ -227,7 +232,7 @@ struct ExpenseDraft {
     var category = ""
     var amountText = ""
     var date = Date()
-    var paymentStatus = "Paid"       // web options: Paid | Pending | Partial
+    var paidBy = "company"           // company | self (own pocket) | none (pending)
     var paymentMethod = ""
     var notes = ""
     var recurring = false
@@ -360,7 +365,7 @@ final class ExpensesVM {
                 title: draft.title.trimmingCharacters(in: .whitespacesAndNewlines),
                 category: draft.category,
                 amount: amount,
-                paymentStatus: draft.paymentStatus,
+                paidBy: draft.paidBy,
                 paymentMethod: draft.paymentMethod.trimmingCharacters(in: .whitespacesAndNewlines),
                 notes: draft.notes.trimmingCharacters(in: .whitespacesAndNewlines),
                 recurring: draft.recurring,
@@ -1123,13 +1128,18 @@ private struct ExpenseAddSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("PAYMENT STATUS").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
-                    Picker("Payment status", selection: $draft.paymentStatus) {
-                        Text("Paid").tag("Paid")
-                        Text("Pending").tag("Pending")
-                        Text("Partial").tag("Partial")
+                    Text("পেমেন্ট কে করেছে?").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                    Picker("পেমেন্ট কে করেছে", selection: $draft.paidBy) {
+                        Text("কোম্পানি").tag("company")
+                        Text("আমি নিজে").tag("self")
+                        Text("কেউ না — বাকি").tag("none")
                     }
                     .pickerStyle(.segmented)
+                    if draft.paidBy == "self" {
+                        Text("অনুমোদন হলে খরচ যোগ হবে এবং টাকা আপনার ওয়ালেটে ফেরত যাবে।")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 fieldBlock("Payment method") {
