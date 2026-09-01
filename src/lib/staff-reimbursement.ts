@@ -42,6 +42,8 @@ export interface ReimbursementClaimInput {
   actorName: string
   amount: number
   category: string
+  /** Optional expense title from the add-expense form; falls back to "<name> · নিজ খরচ ফেরত". */
+  title?: string | null
   note?: string | null
   vendor?: string | null
   receiptRef?: string | null
@@ -63,7 +65,7 @@ export async function enqueueReimbursementClaim(input: ReimbursementClaimInput) 
     business_id: businessId,
     category,
     amount,
-    title: `${input.actorName} · নিজ খরচ ফেরত`,
+    title: (input.title || '').trim() || `${input.actorName} · নিজ খরচ ফেরত`,
     desc: note,
     note,
     vendor: input.vendor ? String(input.vendor).slice(0, 160) : null,

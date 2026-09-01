@@ -67,7 +67,7 @@ export default function ExpensesPage() {
       title: String(fd.get('title') || ''),
       category: String(fd.get('category') || ''),
       amount: Number(fd.get('amount') || 0),
-      payment_status: String(fd.get('payment_status') || 'Paid'),
+      paid_by: String(fd.get('paid_by') || 'company'),
       payment_method: String(fd.get('payment_method') || ''),
       notes: String(fd.get('notes') || ''),
       recurring: fd.get('recurring') === 'on',
@@ -81,7 +81,7 @@ export default function ExpensesPage() {
     }
     const res = await addEx(payload)
     if (res?.ok) {
-      toast.success('Expense recorded')
+      toast.success(res.message || (res.pending_approval ? 'অনুমোদনের জন্য পাঠানো হয়েছে' : 'Expense recorded'), { duration: 6000 })
       setOpen(false)
       setReceipt(null)
       refetch()
@@ -287,11 +287,11 @@ export default function ExpensesPage() {
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <label className="block space-y-1">
-                        <span className="text-muted">Payment status</span>
-                        <select name="payment_status" className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm">
-                          <option>Paid</option>
-                          <option>Pending</option>
-                          <option>Partial</option>
+                        <span className="text-muted">পেমেন্ট কে করেছে?</span>
+                        <select name="paid_by" defaultValue="company" className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm">
+                          <option value="company">কোম্পানি করেছে</option>
+                          <option value="self">আমি নিজে করেছি (ওয়ালেটে ফেরত)</option>
+                          <option value="none">কেউ করেনি — বাকি</option>
                         </select>
                       </label>
                       <label className="block space-y-1">
