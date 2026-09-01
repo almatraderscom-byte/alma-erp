@@ -960,7 +960,15 @@ class Call {
     if (this.recordingName) await this.finishRecording()
     // Closed LAST: closing it is what makes the bot send its post-call report, and by now the
     // recording is already on the record, so that report can carry the link.
-    try { this.bot?.close() } catch { /* */ }
+    // App leg that never connected: hold the socket ~1.5 s so the Dial/Q.850 cause
+    // (which arrives AFTER the hangup events) still reaches the app — otherwise the
+    // phone shows nothing instead of 'নম্বরটি বন্ধ' (owner bug 2026-09-01).
+    if (this.appWs && !this.answered) {
+      const ws = this.bot
+      setTimeout(() => { try { ws?.close() } catch { /* */ } }, 1500)
+    } else {
+      try { this.bot?.close() } catch { /* */ }
+    }
     calls.delete(this.channelId)
     byUuid.delete(this.audioUuid)
   }
