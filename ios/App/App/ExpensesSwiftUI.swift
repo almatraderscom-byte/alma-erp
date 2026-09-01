@@ -392,6 +392,48 @@ final class ExpensesVM {
         }
     }
 
+    /// Sum of বাকি rows in range (Pending/Partial — web KPI parity).
+    var dueTotal: Int {
+        expenses.filter { $0.paymentStatus == "Pending" || $0.paymentStatus == "Partial" }
+            .reduce(0) { $0 + $1.amount }
+    }
+
+    struct MarkPaidResponse: Decodable {
+        let ok: Bool?
+        let paid: Bool?
+        let pendingApproval: Bool?
+        let message: String?
+        private enum CodingKeys: String, CodingKey {
+            case ok, paid, message
+            case pendingApproval = "pending_approval"
+        }
+    }
+
+    /// Settle a বাকি row (owner 2026-09-01) — POST /api/finance/mark-paid.
+    /// company → flips to Paid right away (expenseWrite roles).
+    /// self    → staff: owner approval then Paid + wallet credit; Super Admin: direct.
+    func markPaid(_ row: ExpenseLedgerRow, paidBy: String) async {
+        notice = nil
+        error = nil
+        do {
+            let body: [String: String] = [
+                "expense_id": row.expId,
+                "business_id": AlmaAccess.Context.currentId,
+                "paid_by": paidBy,
+            ]
+            let resp: MarkPaidResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/finance/mark-paid", body: body)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = resp.message ?? "পরিশোধ চিহ্নিত করা হয়েছে।"
+            await load()
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = (error as? AlmaAPIError)?.serverMessage ?? "পরিশোধ চিহ্নিত করা যায়নি।"
+        }
+    }
+
     // ── Receipt upload (owner 2026-07-11: native — web POST /api/finance/receipts). ──
 
     struct ReceiptUpload: Decodable {
@@ -544,7 +586,9 @@ struct ExpensesScreen: View {
         .refreshable { await vm.load() }
         .task { await vm.load() }
         .sheet(item: $selected) { row in
-            ExpenseDetailSheet(row: row, openWeb: openWeb)
+            ExpenseDetailSheet(row: row, openWeb: openWeb, markPaid: { paidBy in
+                Task { await vm.markPaid(row, paidBy: paidBy) }
+            })
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -619,6 +663,9 @@ struct ExpensesScreen: View {
             ExpensesStatTile(label: "ACTIVE CATEGORIES", target: vm.byCategory.count,
                              format: { "\($0)" }, sub: "With spend in range",
                              tint: .primary, accent: AlmaSwiftTheme.sage)
+            ExpensesStatTile(label: "বাকি খরচ", target: vm.dueTotal,
+                             format: { "৳\($0.formatted())" }, sub: "Pending / Partial",
+                             tint: .primary, accent: ExpensePalette.amber500)
         }
     }
 
@@ -976,20 +1023,51 @@ private struct ExpenseRowCard: View {
 private struct ExpenseDetailSheet: View {
     let row: ExpenseLedgerRow
     let openWeb: (_ path: String, _ title: String) -> Void
+    /// Settle a বাকি row — 'company' | 'self' (owner 2026-09-01, web parity).
+    var markPaid: ((_ paidBy: String) -> Void)? = nil
+    @State private var confirmingMarkPaid = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+
+    private var paymentOpen: Bool {
+        row.paymentStatus == "Pending" || row.paymentStatus == "Partial"
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
                 infoCard
+                if paymentOpen, markPaid != nil { markPaidBlock }
                 receiptBlock
                 webLink
             }
             .padding(18)
         }
         .presentationBackground { ExpensesAurora() }
+        .confirmationDialog("পেমেন্ট কে করল?", isPresented: $confirmingMarkPaid, titleVisibility: .visible) {
+            Button("কোম্পানি করেছে") { markPaid?("company"); dismiss() }
+            Button("আমি নিজে করেছি (ওয়ালেটে ফেরত)") { markPaid?("self"); dismiss() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    /// Amber "পরিশোধ হয়েছে" action for বাকি rows (web parity: ledger পরিশোধ button).
+    private var markPaidBlock: some View {
+        Button {
+            confirmingMarkPaid = true
+        } label: {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                Text("পরিশোধ হয়েছে — চিহ্নিত করুন").font(.subheadline.weight(.bold))
+                Spacer()
+            }
+            .foregroundStyle(ExpensePalette.amber500)
+            .padding(14)
+            .frame(maxWidth: .infinity)
+            .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        }
+        .buttonStyle(.plain)
     }
 
     private var header: some View {
