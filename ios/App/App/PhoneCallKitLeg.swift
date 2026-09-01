@@ -135,6 +135,7 @@ final class SipCallController: ObservableObject {
         current = CallState(callId: id, peer: peer, outgoing: outgoing,
                             connectedAt: outgoing ? nil : Date())
         let eng = SipCallAudioEngine(url: url, streamId: callId)
+        eng.isOutgoing = outgoing
         eng.onClosed = { [weak self] in
             Task { @MainActor in
                 guard let self, self.activeCallId == id else { return }
@@ -255,6 +256,12 @@ final class SipCallAudioEngine: NSObject {
     private let wireFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16, sampleRate: 8000, channels: 1, interleaved: true)!
 
+    /// Outgoing legs generate a local ringback until answer/first media —
+    /// providers here signal 183 (no ARI 'Ringing'), so a server event can't be
+    /// relied on and dead silence reads as a broken call.
+    var isOutgoing = false
+    private var answeredOrMedia = false
+
     init(url: URL, streamId: String) {
         self.url = url
         self.streamId = streamId
@@ -333,10 +340,15 @@ final class SipCallAudioEngine: NSObject {
         else { return }
         switch obj["event"] as? String {
         case "ringing":
+            startRingback()
             DispatchQueue.main.async { self.onRinging?() }
         case "answered":
+            answeredOrMedia = true
+            stopRingback()
             DispatchQueue.main.async { self.onAnswered?() }
         case "media":
+            answeredOrMedia = true
+            stopRingback()
             guard let media = obj["media"] as? [String: Any],
                   let b64 = media["payload"] as? String,
                   let mu = Data(base64Encoded: b64) else { return }
@@ -344,6 +356,39 @@ final class SipCallAudioEngine: NSObject {
         default:
             break
         }
+    }
+
+    // MARK: ringback — the audible "ring… ring…" a caller expects (owner ask:
+    // WhatsApp plays one; dead silence while the far phone rings reads as broken).
+    // Standard 400+450 Hz, 0.4 s on / 0.2 s off / 0.4 s on / 2 s off, generated
+    // locally and fed through the SAME playout path, stopped by answer/first media.
+    private var ringbackTimer: DispatchSourceTimer?
+    private func startRingback() {
+        guard ringbackTimer == nil else { return }
+        let t = DispatchSource.makeTimerSource(queue: sendQueue)
+        t.schedule(deadline: .now(), repeating: 3.0)
+        t.setEventHandler { [weak self] in
+            guard let self, self.audioRunning, self.ringbackTimer != nil else { return }
+            self.scheduleNow(self.ringbackCadence())
+        }
+        ringbackTimer = t
+        t.resume()
+    }
+    private func stopRingback() {
+        ringbackTimer?.cancel()
+        ringbackTimer = nil
+    }
+    private func ringbackCadence() -> [Int16] {
+        func burst(_ seconds: Double) -> [Int16] {
+            let n = Int(8000 * seconds)
+            return (0..<n).map { i in
+                let t = Double(i) / 8000
+                let v = (sin(2 * .pi * 400 * t) + sin(2 * .pi * 450 * t)) * 0.22
+                return Int16(max(-1, min(1, v)) * 12000)
+            }
+        }
+        let gapShort = [Int16](repeating: 0, count: Int(8000 * 0.2))
+        return burst(0.4) + gapShort + burst(0.4)
     }
 
     /// Keypad tone request — injected by the gateway on the PSTN leg via ARI.
@@ -427,6 +472,10 @@ final class SipCallAudioEngine: NSObject {
         }
         player.play()
         NSLog("[alma-sip-leg] startAudio: engine running, input rate=%f", audio.inputNode.outputFormat(forBus: 0).sampleRate)
+        if isOutgoing && !answeredOrMedia {
+            NSLog("[alma-sip-leg] local ringback started")
+            startRingback()
+        }
     }
 
     private var sentFrames = 0
@@ -464,7 +513,8 @@ final class SipCallAudioEngine: NSObject {
             NSLog("[alma-sip-leg] convert: err=%@ outFrames=%d", convError?.localizedDescription ?? "nil", Int(out.frameLength))
         }
         guard convError == nil, out.frameLength > 0, let ch = out.int16ChannelData else { return }
-        let samples = Array(UnsafeBufferPointer(start: ch[0], count: Int(out.frameLength)))
+        var samples = Array(UnsafeBufferPointer(start: ch[0], count: Int(out.frameLength)))
+        applySendGain(&samples)
         let mu = AlmaMuLaw.encode(samples)
         sentFrames += 1
         if sentFrames == 1 || sentFrames % 100 == 0 {
@@ -482,6 +532,27 @@ final class SipCallAudioEngine: NSObject {
     private var pendingSamples: [Int16] = []
     private var cushionFilled = false
     private let cushionSamples = 8 * 160   // 8 × 20 ms @ 8 kHz
+
+    /// Send-side AGC. Without voice processing iOS hands over the RAW mic, which on
+    /// a real iPhone measured ~20 dB too quiet (device call capture: speech peaks
+    /// ≈450/32767 — the far side could barely hear, and over the loudspeaker
+    /// distance heard nothing). Track the recent peak and lift speech toward a
+    /// healthy level, hard-clamped, with slow decay so gain doesn't pump.
+    private var agcPeak: Float = 2000
+    private var rxPeak: Float = 4000
+    private func applySendGain(_ samples: inout [Int16]) {
+        var localPeak: Float = 1
+        for x in samples { localPeak = max(localPeak, abs(Float(x))) }
+        // Fast attack on louder speech, slow release toward quiet.
+        agcPeak = localPeak > agcPeak ? localPeak : max(200, agcPeak * 0.995)
+        let target: Float = 9000
+        let gain = min(14, max(1, target / agcPeak))
+        if gain <= 1.05 { return }
+        for i in 0..<samples.count {
+            let v = Float(samples[i]) * gain
+            samples[i] = Int16(max(-32000, min(32000, v)))
+        }
+    }
 
     private func schedule(_ samples: [Int16]) {
         guard audioRunning, !samples.isEmpty else { return }
@@ -507,10 +578,19 @@ final class SipCallAudioEngine: NSObject {
             NSLog("[alma-sip-leg] play frames: %d (running=%d)", playedFrames, audioRunning ? 1 : 0)
         }
         if let ch = buf.floatChannelData {
-            // Mild fixed gain: 8 kHz μ-law off the PSTN lands quiet on the earpiece.
-            // 1.4× with a hard clamp is safely below clipping for phone speech.
+            // Receive AGC: PSTN μ-law arrives at wildly varying (often low) levels;
+            // WhatsApp-loud on the speaker needs speech lifted toward a healthy
+            // peak, clamped well below clipping.
+            var localPeak: Float = 1
+            for x in samples { localPeak = max(localPeak, abs(Float(x))) }
+            rxPeak = localPeak > rxPeak ? localPeak : max(300, rxPeak * 0.995)
+            // Full-volume-on-speaker loudness (owner benchmark: WhatsApp). Higher
+            // target + soft tanh limiter instead of a hard clamp, so pushed speech
+            // saturates gracefully instead of crackling.
+            let gain = min(14, max(1, 24000 / rxPeak))
             for i in 0..<samples.count {
-                ch[0][i] = max(-1.0, min(1.0, Float(samples[i]) / 32768.0 * 1.4))
+                let v = Float(samples[i]) * gain / 32768.0
+                ch[0][i] = tanhf(v * 1.2) / tanhf(1.2)
             }
         }
         player.scheduleBuffer(buf, completionHandler: nil)
@@ -539,7 +619,13 @@ final class SipCallAudioEngine: NSObject {
             input.installTap(onBus: 0, bufferSize: tapFrames, format: nil) { [weak self] buffer, _ in
                 self?.captured(buffer)
             }
+            // The player node MUST be stopped across an engine restart — a node left
+            // 'playing' through stop()/start() accepts schedules but renders nothing
+            // (device bug: speaker on = incoming audio dead while mic flowed fine).
+            self.player.stop()
             self.audio.stop()
+            self.cushionFilled = false
+            self.pendingSamples = []
             do {
                 try self.audio.start()
                 self.player.play()
@@ -552,6 +638,7 @@ final class SipCallAudioEngine: NSObject {
 
     func stop() {
         closed = true
+        stopRingback()
         NotificationCenter.default.removeObserver(self)
         conn?.cancel()
         conn = nil

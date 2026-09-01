@@ -81,27 +81,74 @@ struct PhoneScreen: View {
     var body: some View {
         ZStack {
             PhoneAurora().ignoresSafeArea()
+            if let native = sipCall.current {
+                callScreen(
+                    peer: native.peer,
+                    statusLine: native.connectedAt == nil
+                        ? (native.outgoing ? (native.ringing ? "রিং হচ্ছে…" : "কল যাচ্ছে…") : "সংযোগ হচ্ছে…")
+                        : "কথা চলছে",
+                    connectedAt: native.connectedAt,
+                    muted: nativeMuted,
+                    onMute: {
+                        nativeMuted.toggle()
+                        SipCallController.shared.setMuted(nativeMuted)
+                    },
+                    speakerOn: sipCall.speakerOn,
+                    onSpeaker: { SipCallController.shared.setSpeaker(!sipCall.speakerOn) },
+                    onDtmf: { SipCallController.shared.sendDtmf($0) },
+                    onEnd: {
+                        Task {
+                            let accepted = await CallKitVoIP.shared.requestEnd(callId: native.callId, reason: "user_hangup")
+                            if !accepted { SipCallController.shared.callKitEnded(callId: native.callId) }
+                        }
+                    })
+            } else if let placing = placingNumber {
+                callScreen(
+                    peer: placing,
+                    statusLine: "কল যাচ্ছে…",
+                    connectedAt: nil,
+                    muted: false, onMute: nil,
+                    speakerOn: false, onSpeaker: nil,
+                    onDtmf: nil,
+                    onEnd: {
+                        placingNumber = nil
+                        Task {
+                            for id in CallKitVoIP.shared.allCallIds() {
+                                _ = await CallKitVoIP.shared.requestEnd(callId: id, reason: "user_cancel")
+                            }
+                        }
+                    })
+            } else if live {
+                callScreen(
+                    peer: caller?.name ?? engine.state.peer ?? "—",
+                    subtitle: caller?.name != nil ? engine.state.peer : nil,
+                    statusLine: engine.state.status == "in-call"
+                        ? (engine.state.incoming ? "ইনকামিং কল · কথা চলছে" : "কথা চলছে")
+                        : engine.state.incoming ? "কল আসছে" : "কল যাচ্ছে…",
+                    connectedAt: nil,
+                    seconds: engine.state.status == "in-call" ? engine.state.seconds : nil,
+                    muted: engine.state.muted,
+                    onMute: { engine.toggleMute() },
+                    speakerOn: sipCall.speakerOn,
+                    onSpeaker: { SipCallController.shared.setSpeaker(!sipCall.speakerOn) },
+                    onDtmf: { engine.sendDtmf($0) },
+                    onAnswer: engine.state.incoming && engine.state.status == "ringing"
+                        ? { engine.answer() } : nil,
+                    onEnd: { engine.hangup() },
+                    callerContext: caller)
+            } else {
             ScrollView {
                 VStack(spacing: 14) {
-                    if let native = sipCall.current {
-                        nativeCallCard(native)
-                    } else if let placing = placingNumber {
-                        placingCard(placing)
-                    } else {
-                        statusCard
-                        if live {
-                            liveCallCard
-                        } else {
-                            diallerCard
-                            if !contacts.isEmpty { contactsCard }
-                            if !recents.isEmpty { recentsCard }
-                            if !colleagues.isEmpty { colleaguesCard }
-                        }
-                    }
+                    statusCard
+                    diallerCard
+                    if !contacts.isEmpty { contactsCard }
+                    if !recents.isEmpty { recentsCard }
+                    if !colleagues.isEmpty { colleaguesCard }
                 }
                 .padding(.horizontal, 14)
                 .padding(.top, 8)
                 .padding(.bottom, 28)
+            }
             }
         }
         .navigationTitle("ফোন")
@@ -214,27 +261,6 @@ struct PhoneScreen: View {
         .background(glass)
     }
 
-    private var idleCard: some View {
-        VStack(spacing: 10) {
-            if let err = engine.state.error ?? engine.pageError {
-                Text(err).font(.footnote).foregroundStyle(.red.opacity(0.9))
-                    .multilineTextAlignment(.center)
-            }
-            Text(engine.state.status == "connecting"
-                 ? "ফোনের সাথে যুক্ত হচ্ছে…"
-                 : "কল ধরতে বা করতে ফোনটি চালু করুন। প্রথমবার মাইক্রোফোনের অনুমতি চাইবে — একবার দিলেই হবে।")
-                .font(.footnote)
-                .foregroundStyle(.white.opacity(0.6))
-                .multilineTextAlignment(.center)
-            Button("ওয়েবে খুলুন") { openWeb("/agent/phone", "ফোন") }
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.4))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(18)
-        .background(glass)
-    }
-
     // MARK: dialler
 
     private var diallerCard: some View {
@@ -243,13 +269,14 @@ struct PhoneScreen: View {
                 Text(err).font(.footnote).foregroundStyle(.red.opacity(0.9))
             }
             HStack(spacing: 8) {
-                TextField("01XXXXXXXXX", text: $number)
+                TextField("নম্বর লিখুন", text: $number)
                     .keyboardType(.phonePad)
                     .multilineTextAlignment(.center)
-                    .font(.title3.weight(.medium))
+                    .font(.system(size: 26, weight: .medium)).monospacedDigit()
                     .foregroundStyle(.white)
                     .padding(.vertical, 12)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)))
+                    .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.05)))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.07)))
                 if !number.isEmpty {
                     Button {
                         saveName = contacts.first { $0.phone == number }?.name ?? ""
@@ -310,14 +337,17 @@ struct PhoneScreen: View {
                     }
                 }
             } label: {
-                Label("কল করুন", systemImage: "phone.fill")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(RoundedRectangle(cornerRadius: 16).fill(number.isEmpty ? accent.opacity(0.35) : accent))
+                ZStack {
+                    Circle()
+                        .fill(number.isEmpty ? Color.green.opacity(0.3) : Color.green)
+                        .frame(width: 70, height: 70)
+                        .shadow(color: number.isEmpty ? .clear : .green.opacity(0.4), radius: 12, y: 4)
+                    Image(systemName: "phone.fill")
+                        .font(.system(size: 26)).foregroundStyle(.white)
+                }
             }
             .disabled(number.isEmpty)
+            .frame(maxWidth: .infinity)
         }
         .padding(14)
         .background(glass)
@@ -330,207 +360,188 @@ struct PhoneScreen: View {
             [("7", "PQRS"), ("8", "TUV"), ("9", "WXYZ")],
             [("*", ""), ("0", "+"), ("#", "")],
         ]
-        return VStack(spacing: 8) {
+        return VStack(spacing: 12) {
             ForEach(0..<keys.count, id: \.self) { r in
-                HStack(spacing: 8) {
+                HStack(spacing: 24) {
                     ForEach(keys[r], id: \.0) { key, sub in
                         Button {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             press(key)
                         } label: {
                             VStack(spacing: 1) {
-                                Text(key).font(.title2.weight(.medium)).foregroundStyle(.white)
+                                Text(key).font(.system(size: 28, weight: .regular)).foregroundStyle(.white)
                                 if !sub.isEmpty {
-                                    Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.45))
+                                    Text(sub).font(.system(size: 9, weight: .medium)).tracking(1.5)
+                                        .foregroundStyle(.white.opacity(0.45))
                                 }
                             }
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 56)
-                            .background(RoundedRectangle(cornerRadius: 18).fill(.white.opacity(0.06)))
+                            .frame(width: 74, height: 74)
+                            .background(Circle().fill(.white.opacity(0.07)))
+                            .overlay(Circle().stroke(.white.opacity(0.06)))
                         }
                     }
                 }
             }
         }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: live call
 
-    private var liveCallCard: some View {
-        VStack(spacing: 12) {
-            Text(engine.state.status == "in-call"
-                 ? (engine.state.incoming ? "ইনকামিং কল · কথা চলছে" : "কথা চলছে")
-                 : engine.state.incoming ? "ইনকামিং কল" : "কল যাচ্ছে")
-                .font(.caption.weight(.medium))
-                .tracking(2)
-                .foregroundStyle(.white.opacity(0.55))
 
-            Text(caller?.name ?? engine.state.peer ?? "—")
-                .font(.title.weight(.semibold))
+    /// The call screen — one professional full-height view for every live state
+    /// (native CallKit leg, optimistic placing, and the in-page engine): status
+    /// line, glass avatar, name/number, timer, control row, big round end button.
+    private func callScreen(
+        peer: String,
+        subtitle: String? = nil,
+        statusLine: String,
+        connectedAt: Date?,
+        seconds: Int? = nil,
+        muted: Bool,
+        onMute: (() -> Void)?,
+        speakerOn: Bool,
+        onSpeaker: (() -> Void)?,
+        onDtmf: ((String) -> Void)?,
+        onAnswer: (() -> Void)? = nil,
+        onEnd: @escaping () -> Void,
+        callerContext: PhoneCallerContext? = nil
+    ) -> some View {
+        VStack(spacing: 0) {
+            Spacer().frame(height: 22)
+            Text(statusLine)
+                .font(.footnote.weight(.medium)).tracking(2.5)
+                .foregroundStyle(accent.opacity(0.95))
+
+            Spacer().frame(height: 26)
+            ZStack {
+                Circle().fill(.ultraThinMaterial).frame(width: 108, height: 108)
+                Circle().stroke(.white.opacity(0.14), lineWidth: 1).frame(width: 108, height: 108)
+                if let first = peer.first(where: { $0.isLetter }) {
+                    Text(String(first)).font(.system(size: 44, weight: .semibold))
+                        .foregroundStyle(.white)
+                } else {
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 42)).foregroundStyle(.white.opacity(0.85))
+                }
+            }
+            .padding(.bottom, 18)
+
+            Text(peer.isEmpty ? "অজানা নম্বর" : peer)
+                .font(.system(size: 28, weight: .semibold))
                 .foregroundStyle(.white)
-            if caller?.name != nil, let peer = engine.state.peer {
-                Text(peer).font(.subheadline).foregroundStyle(.white.opacity(0.6))
-            }
-            Text(engine.state.status == "in-call" ? mmss(engine.state.seconds) : "সংযোগ হচ্ছে…")
-                .font(.body.monospacedDigit())
-                .foregroundStyle(engine.state.status == "in-call" ? .green : .white.opacity(0.6))
-
-            // Screen-pop: what this caller already means to the business.
-            if let c = caller, c.found == true {
-                HStack(spacing: 8) {
-                    popStat("অর্ডার", "\(c.totalOrders ?? 0)")
-                    popStat("বাকি", "৳\(Int(c.dueAmount ?? 0))")
-                    popStat("আগের কল", "\(c.recentCalls ?? 0)")
-                }
-            } else if let c = caller, c.found == false {
-                Text("নতুন নম্বর — আগের রেকর্ড নেই")
-                    .font(.footnote).foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .padding(.horizontal, 24)
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle).font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.55)).padding(.top, 2)
             }
 
-            if engine.state.status == "in-call" {
-                HStack(spacing: 14) {
-                    roundControl(engine.state.muted ? "mic.slash.fill" : "mic.fill",
-                                 active: engine.state.muted, tint: .orange) {
-                        engine.toggleMute()
+            Group {
+                if let since = connectedAt {
+                    TimelineView(.periodic(from: since, by: 1)) { ctx in
+                        Text(mmss(Int(ctx.date.timeIntervalSince(since))))
                     }
-                    roundControl("circle.grid.3x3.fill", active: dtmfOpen, tint: accent) {
-                        dtmfOpen.toggle()
-                    }
+                } else if let seconds {
+                    Text(mmss(seconds))
+                } else {
+                    Text(statusLine.contains("রিং") ? "রিং হচ্ছে…" : " ")
                 }
-                if dtmfOpen {
-                    dialpad { key in engine.sendDtmf(key) }
+            }
+            .font(.title3.monospacedDigit().weight(.light))
+            .foregroundStyle(connectedAt != nil || seconds != nil ? .green : .white.opacity(0.5))
+            .padding(.top, 10)
+
+            if let c = callerContext, c.found == true {
+                HStack(spacing: 10) {
+                    callStat("অর্ডার", "\(c.totalOrders ?? 0)")
+                    callStat("বাকি", "৳\(Int(c.dueAmount ?? 0))")
+                    callStat("আগের কল", "\(c.recentCalls ?? 0)")
                 }
+                .padding(.horizontal, 32).padding(.top, 18)
             }
 
-            HStack(spacing: 10) {
-                if engine.state.incoming && engine.state.status == "ringing" {
-                    Button {
-                        engine.answer()
-                    } label: {
-                        Label("ধরো", systemImage: "phone.fill")
-                            .font(.headline).foregroundStyle(.white)
-                            .frame(maxWidth: .infinity).padding(.vertical, 14)
-                            .background(RoundedRectangle(cornerRadius: 16).fill(.green))
+            Spacer()
+
+            if dtmfOpen, let onDtmf {
+                dialpad { key in onDtmf(key) }
+                    .padding(.horizontal, 40)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            if onMute != nil || onDtmf != nil || onSpeaker != nil {
+                HStack(spacing: 34) {
+                    if let onMute {
+                        callControl(muted ? "mic.slash.fill" : "mic.fill",
+                                    label: "মিউট", active: muted, action: onMute)
+                    }
+                    if onDtmf != nil {
+                        callControl("circle.grid.3x3.fill", label: "কিপ্যাড",
+                                    active: dtmfOpen) {
+                            withAnimation(.spring(duration: 0.35)) { dtmfOpen.toggle() }
+                        }
+                    }
+                    if let onSpeaker {
+                        callControl("speaker.wave.2.fill", label: "স্পিকার",
+                                    active: speakerOn, action: onSpeaker)
                     }
                 }
-                Button {
-                    engine.hangup()
-                } label: {
-                    Label(engine.state.status == "in-call" ? "কল শেষ" : "কেটে দাও",
-                          systemImage: "phone.down.fill")
-                        .font(.headline).foregroundStyle(.white)
-                        .frame(maxWidth: .infinity).padding(.vertical, 14)
-                        .background(RoundedRectangle(cornerRadius: 16).fill(.red))
+                .padding(.top, 14)
+            }
+
+            HStack(spacing: 44) {
+                if let onAnswer {
+                    Button(action: onAnswer) {
+                        ZStack {
+                            Circle().fill(.green).frame(width: 74, height: 74)
+                                .shadow(color: .green.opacity(0.45), radius: 14, y: 5)
+                            Image(systemName: "phone.fill")
+                                .font(.system(size: 28)).foregroundStyle(.white)
+                        }
+                    }
+                }
+                Button(action: onEnd) {
+                    ZStack {
+                        Circle().fill(.red).frame(width: 74, height: 74)
+                            .shadow(color: .red.opacity(0.45), radius: 14, y: 5)
+                        Image(systemName: "phone.down.fill")
+                            .font(.system(size: 28)).foregroundStyle(.white)
+                    }
                 }
             }
+            .padding(.top, 26)
+            .padding(.bottom, 44)
         }
-        .frame(maxWidth: .infinity)
-        .padding(16)
-        .background(glass)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Instant feedback card between the dial tap and the server minting the call.
-    private func placingCard(_ number: String) -> some View {
-        VStack(spacing: 12) {
-            Text("কল যাচ্ছে…").font(.caption.weight(.medium)).tracking(2)
-                .foregroundStyle(.white.opacity(0.55))
-            Text(number).font(.title.weight(.semibold)).foregroundStyle(.white)
-            ProgressView().tint(.white)
-            Button {
-                placingNumber = nil
-                Task {
-                    for id in CallKitVoIP.shared.allCallIds() {
-                        _ = await CallKitVoIP.shared.requestEnd(callId: id, reason: "user_cancel")
-                    }
-                }
-            } label: {
-                Label("কেটে দাও", systemImage: "phone.down.fill")
-                    .font(.headline).foregroundStyle(.white)
-                    .frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(RoundedRectangle(cornerRadius: 16).fill(.red))
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(16)
-        .background(glass)
-    }
-
-    /// Live card for a NATIVE CallKit call (customer leg through the gateway).
-    /// CallKit's own lock-screen UI is the primary surface; this keeps the in-app
-    /// screen honest and adds the mid-call keypad (bank/courier menus).
-    private func nativeCallCard(_ call: SipCallController.CallState) -> some View {
-        VStack(spacing: 12) {
-            Text(call.connectedAt == nil
-                 ? (call.outgoing ? (call.ringing ? "রিং হচ্ছে" : "কল যাচ্ছে…") : "সংযোগ হচ্ছে…")
-                 : "কথা চলছে")
-                .font(.caption.weight(.medium)).tracking(2)
-                .foregroundStyle(.white.opacity(0.55))
-            Text(call.peer.isEmpty ? "—" : call.peer)
-                .font(.title.weight(.semibold)).foregroundStyle(.white)
-            if let since = call.connectedAt {
-                TimelineView(.periodic(from: since, by: 1)) { ctx in
-                    Text(mmss(Int(ctx.date.timeIntervalSince(since))))
-                        .font(.body.monospacedDigit()).foregroundStyle(.green)
-                }
-            } else {
-                Text(call.ringing ? "ওপাশে রিং হচ্ছে…" : "সংযোগ হচ্ছে…")
-                    .font(.body).foregroundStyle(.white.opacity(0.6))
-            }
-            HStack(spacing: 14) {
-                roundControl(nativeMuted ? "mic.slash.fill" : "mic.fill",
-                             active: nativeMuted, tint: .orange) {
-                    nativeMuted.toggle()
-                    SipCallController.shared.setMuted(nativeMuted)
-                }
-                roundControl("speaker.wave.3.fill",
-                             active: sipCall.speakerOn, tint: .green) {
-                    SipCallController.shared.setSpeaker(!sipCall.speakerOn)
-                }
-                roundControl("circle.grid.3x3.fill", active: dtmfOpen, tint: accent) {
-                    dtmfOpen.toggle()
-                }
-            }
-            if dtmfOpen {
-                dialpad { key in SipCallController.shared.sendDtmf(key) }
-            }
-            Button {
-                Task {
-                    let accepted = await CallKitVoIP.shared.requestEnd(callId: call.callId, reason: "user_hangup")
-                    // Sim harness (and any CallKit-less state): stop the leg directly.
-                    if !accepted { SipCallController.shared.callKitEnded(callId: call.callId) }
-                }
-            } label: {
-                Label("কল শেষ", systemImage: "phone.down.fill")
-                    .font(.headline).foregroundStyle(.white)
-                    .frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(RoundedRectangle(cornerRadius: 16).fill(.red))
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(16)
-        .background(glass)
-        .onDisappear { nativeMuted = false }
-    }
-
-    private func popStat(_ label: String, _ value: String) -> some View {
-        VStack(spacing: 2) {
-            Text(label).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
+    private func callStat(_ label: String, _ value: String) -> some View {
+        VStack(spacing: 3) {
             Text(value).font(.callout.weight(.semibold)).foregroundStyle(.white)
+            Text(label).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.06)))
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.08)))
     }
 
-    private func roundControl(_ icon: String, active: Bool, tint: Color,
-                              _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 18))
-                .foregroundStyle(active ? tint : .white)
-                .frame(width: 50, height: 50)
-                .background(Circle().fill(active ? tint.opacity(0.18) : .white.opacity(0.08)))
-                .overlay(Circle().stroke(active ? tint.opacity(0.6) : .white.opacity(0.12)))
+    private func callControl(_ icon: String, label: String, active: Bool,
+                             action: @escaping () -> Void) -> some View {
+        VStack(spacing: 7) {
+            Button(action: action) {
+                ZStack {
+                    Circle()
+                        .fill(active ? AnyShapeStyle(.white) : AnyShapeStyle(.ultraThinMaterial))
+                        .frame(width: 62, height: 62)
+                    Circle().stroke(.white.opacity(active ? 0 : 0.16))
+                        .frame(width: 62, height: 62)
+                    Image(systemName: icon)
+                        .font(.system(size: 22))
+                        .foregroundStyle(active ? .black : .white)
+                }
+            }
+            Text(label).font(.system(size: 11)).foregroundStyle(.white.opacity(0.65))
         }
     }
 
@@ -619,6 +630,12 @@ struct PhoneScreen: View {
                         .padding(.vertical, 8)
                     }
                     .contextMenu {
+                        Button {
+                            saveName = c.name
+                            savePhone = c.phone
+                        } label: {
+                            Label("এডিট করো", systemImage: "pencil")
+                        }
                         Button(role: .destructive) {
                             Task {
                                 struct Req: Encodable { let phone: String }
