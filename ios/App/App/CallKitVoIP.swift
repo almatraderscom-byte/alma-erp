@@ -1349,6 +1349,11 @@ extension CallKitVoIP: CXProviderDelegate {
                 SipCallController.shared.onRemoteEnded = { [weak self] id in
                     self?.finishReportedCall(callId: id, reason: .remoteEnded)
                 }
+                SipCallController.shared.onCallFailed = { [weak self] id, cause in
+                    self?.finishReportedCall(
+                        callId: id,
+                        reason: cause == "noanswer" ? .unanswered : .failed)
+                }
                 SipCallController.shared.onAnswered = { [weak self] id in
                     guard let self,
                           let entry = self.withCallState({ calls, _ in

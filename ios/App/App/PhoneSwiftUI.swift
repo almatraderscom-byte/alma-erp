@@ -178,6 +178,7 @@ struct PhoneScreen: View {
             SipCallPillCoordinator.shared.phoneScreenVisible = true
             SipCallPillCoordinator.shared.install()
             engine.ensureLoaded()
+            engine.autoStartIfEnabled()
             Task { await loadLists() }
             // A call may already be ringing when the user navigates here — the
             // .onChange below never fires for a peer set before appearance.
@@ -191,6 +192,11 @@ struct PhoneScreen: View {
         }
         .onChange(of: sipCall.current) { _, cur in
             if cur != nil { placingNumber = nil }
+        }
+        .onChange(of: sipCall.lastEndNotice) { _, notice in
+            // A fast pre-answer failure can end the call before SwiftUI ever saw
+            // it start — the optimistic card must clear the moment a cause lands.
+            if notice != nil { placingNumber = nil }
         }
         .onChange(of: engine.state.status) { old, new in
             // Refresh recents when a call finishes, so the row appears like on a handset.
@@ -268,6 +274,13 @@ struct PhoneScreen: View {
             if let err = dialError ?? engine.state.error {
                 Text(err).font(.footnote).foregroundStyle(.red.opacity(0.9))
             }
+            if let notice = sipCall.lastEndNotice {
+                Text(notice)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Capsule().fill(.orange.opacity(0.12)))
+            }
             HStack(spacing: 8) {
                 TextField("নম্বর লিখুন", text: $number)
                     .keyboardType(.phonePad)
@@ -306,6 +319,14 @@ struct PhoneScreen: View {
                 guard !n.isEmpty else { return }
                 dialError = nil
                 placingNumber = n
+                let placed = n
+                Task { // hard ceiling: never let the optimistic card outlive reality
+                    try? await Task.sleep(nanoseconds: 15_000_000_000)
+                    if placingNumber == placed, SipCallController.shared.current == nil {
+                        placingNumber = nil
+                        if sipCall.lastEndNotice == nil { dialError = "কল যায়নি — আবার চেষ্টা করুন" }
+                    }
+                }
                 // Native CallKit leg first (works backgrounded, real call UI); the
                 // in-page WebView engine stays as the fallback when the native
                 // path is not available (old server, gateway briefly down).

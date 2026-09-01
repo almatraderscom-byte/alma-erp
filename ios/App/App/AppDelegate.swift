@@ -45,6 +45,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
         // Capacitor page/auth boot, so a cold-start click could arrive too early
         // and silently leave the visible native shell on Dashboard.
         OneSignal.Notifications.addClickListener(self)
+        // Wake the phone engine singleton AT LAUNCH — its WhatsApp-style auto-on
+        // lives in a didBecomeActive observer that only exists once the singleton
+        // does; lazily created on the phone screen it never fired on a cold start
+        // (owner: 'protibar চালু করতে হয়', build 122).
+        if #available(iOS 17.0, *) { _ = PhoneEngine.shared }
         #if DEBUG
         runNavSelfTestIfRequested()
         if #available(iOS 17.0, *) { runOverlaySelfTestIfRequested() }
