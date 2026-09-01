@@ -178,6 +178,7 @@ struct PhoneScreen: View {
             SipCallPillCoordinator.shared.phoneScreenVisible = true
             SipCallPillCoordinator.shared.install()
             engine.ensureLoaded()
+            engine.autoStartIfEnabled()
             Task { await loadLists() }
             // A call may already be ringing when the user navigates here — the
             // .onChange below never fires for a peer set before appearance.

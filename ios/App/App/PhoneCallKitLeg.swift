@@ -287,6 +287,7 @@ final class SipCallAudioEngine: NSObject {
     /// relied on and dead silence reads as a broken call.
     var isOutgoing = false
     private var answeredOrMedia = false
+    private var failedOrClosed = false
 
     init(url: URL, streamId: String) {
         self.url = url
@@ -371,6 +372,7 @@ final class SipCallAudioEngine: NSObject {
         case "failed":
             let cause = (obj["cause"] as? String) ?? ""
             NSLog("[alma-sip-leg] call failed: %@", cause)
+            failedOrClosed = true
             stopRingback()
             DispatchQueue.main.async { self.onFailed?(cause) }
         case "answered":
@@ -442,6 +444,8 @@ final class SipCallAudioEngine: NSObject {
     private func handleClosed() {
         guard !closed else { return }
         closed = true
+        failedOrClosed = true
+        stopRingback()
         NSLog("[alma-sip-leg] media socket closed (call %@)", streamId)
         DispatchQueue.main.async { self.onClosed?() }
     }
@@ -503,8 +507,19 @@ final class SipCallAudioEngine: NSObject {
         }
         player.play()
         NSLog("[alma-sip-leg] startAudio: engine running, input rate=%f", audio.inputNode.outputFormat(forBus: 0).sampleRate)
-        // Ringback is started ONLY by the gateway's honest 'ringing' event now —
-        // a switched-off number must never sound like it is ringing (owner bug).
+        // Ringback: the provider mostly signals 183 (no RINGING dial status), so a
+        // pure event-driven ring stays silent on perfectly good calls. Real
+        // softphone compromise: if ~3 s pass with NO failure (dead/busy numbers
+        // fail inside 1-2 s), the call is progressing through the network — ring.
+        // The gateway's explicit 'ringing' still starts it instantly when it comes.
+        if isOutgoing {
+            sendQueue.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                guard let self, self.audioRunning, !self.closed,
+                      !self.answeredOrMedia, !self.failedOrClosed else { return }
+                NSLog("[alma-sip-leg] grace ringback started")
+                self.startRingback()
+            }
+        }
     }
 
     private var sentFrames = 0
