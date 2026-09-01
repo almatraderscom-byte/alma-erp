@@ -68,6 +68,9 @@ struct PhoneScreen: View {
     @State private var contacts: [PhoneContactRow] = []
     @State private var savePhone: String? = nil
     @State private var saveName = ""
+    /// Optimistic call card the instant the button is tapped — the server
+    /// round-trip used to leave a 3-5 s dead gap before any call UI appeared.
+    @State private var placingNumber: String? = nil
     @State private var caller: PhoneCallerContext? = nil
     @State private var callerFetchedFor: String? = nil
     @State private var dtmfOpen = false
@@ -82,6 +85,8 @@ struct PhoneScreen: View {
                 VStack(spacing: 14) {
                     if let native = sipCall.current {
                         nativeCallCard(native)
+                    } else if let placing = placingNumber {
+                        placingCard(placing)
                     } else {
                         statusCard
                         if live {
@@ -123,6 +128,8 @@ struct PhoneScreen: View {
             Text(savePhone ?? "")
         }
         .onAppear {
+            SipCallPillCoordinator.shared.phoneScreenVisible = true
+            SipCallPillCoordinator.shared.install()
             engine.ensureLoaded()
             Task { await loadLists() }
             // A call may already be ringing when the user navigates here — the
@@ -131,6 +138,12 @@ struct PhoneScreen: View {
         }
         .onChange(of: engine.state.peer) { _, peer in
             Task { await fetchCaller(peer) }
+        }
+        .onDisappear {
+            SipCallPillCoordinator.shared.phoneScreenVisible = false
+        }
+        .onChange(of: sipCall.current) { _, cur in
+            if cur != nil { placingNumber = nil }
         }
         .onChange(of: engine.state.status) { old, new in
             // Refresh recents when a call finishes, so the row appears like on a handset.
@@ -265,11 +278,13 @@ struct PhoneScreen: View {
                 let n = number.trimmingCharacters(in: .whitespaces)
                 guard !n.isEmpty else { return }
                 dialError = nil
+                placingNumber = n
                 // Native CallKit leg first (works backgrounded, real call UI); the
                 // in-page WebView engine stays as the fallback when the native
                 // path is not available (old server, gateway briefly down).
                 Task {
                     if let err = await SipCallController.shared.placeOutbound(to: n, display: n) {
+                        placingNumber = nil
                         if engine.state.status == "registered" {
                             engine.dial(n)
                         } else {
@@ -283,6 +298,7 @@ struct PhoneScreen: View {
                     // their call instead of a dead button.
                     try? await Task.sleep(nanoseconds: 4_000_000_000)
                     if SipCallController.shared.current == nil {
+                        placingNumber = nil
                         for id in CallKitVoIP.shared.allCallIds() {
                             _ = await CallKitVoIP.shared.requestEnd(callId: id, reason: "start_watchdog")
                         }
@@ -413,13 +429,39 @@ struct PhoneScreen: View {
         .background(glass)
     }
 
+    /// Instant feedback card between the dial tap and the server minting the call.
+    private func placingCard(_ number: String) -> some View {
+        VStack(spacing: 12) {
+            Text("কল যাচ্ছে…").font(.caption.weight(.medium)).tracking(2)
+                .foregroundStyle(.white.opacity(0.55))
+            Text(number).font(.title.weight(.semibold)).foregroundStyle(.white)
+            ProgressView().tint(.white)
+            Button {
+                placingNumber = nil
+                Task {
+                    for id in CallKitVoIP.shared.allCallIds() {
+                        _ = await CallKitVoIP.shared.requestEnd(callId: id, reason: "user_cancel")
+                    }
+                }
+            } label: {
+                Label("কেটে দাও", systemImage: "phone.down.fill")
+                    .font(.headline).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(RoundedRectangle(cornerRadius: 16).fill(.red))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(16)
+        .background(glass)
+    }
+
     /// Live card for a NATIVE CallKit call (customer leg through the gateway).
     /// CallKit's own lock-screen UI is the primary surface; this keeps the in-app
     /// screen honest and adds the mid-call keypad (bank/courier menus).
     private func nativeCallCard(_ call: SipCallController.CallState) -> some View {
         VStack(spacing: 12) {
             Text(call.connectedAt == nil
-                 ? (call.outgoing ? "কল যাচ্ছে" : "সংযোগ হচ্ছে…")
+                 ? (call.outgoing ? (call.ringing ? "রিং হচ্ছে" : "কল যাচ্ছে…") : "সংযোগ হচ্ছে…")
                  : "কথা চলছে")
                 .font(.caption.weight(.medium)).tracking(2)
                 .foregroundStyle(.white.opacity(0.55))
@@ -431,13 +473,18 @@ struct PhoneScreen: View {
                         .font(.body.monospacedDigit()).foregroundStyle(.green)
                 }
             } else {
-                Text("রিং হচ্ছে…").font(.body).foregroundStyle(.white.opacity(0.6))
+                Text(call.ringing ? "ওপাশে রিং হচ্ছে…" : "সংযোগ হচ্ছে…")
+                    .font(.body).foregroundStyle(.white.opacity(0.6))
             }
             HStack(spacing: 14) {
                 roundControl(nativeMuted ? "mic.slash.fill" : "mic.fill",
                              active: nativeMuted, tint: .orange) {
                     nativeMuted.toggle()
                     SipCallController.shared.setMuted(nativeMuted)
+                }
+                roundControl("speaker.wave.3.fill",
+                             active: sipCall.speakerOn, tint: .green) {
+                    SipCallController.shared.setSpeaker(!sipCall.speakerOn)
                 }
                 roundControl("circle.grid.3x3.fill", active: dtmfOpen, tint: accent) {
                     dtmfOpen.toggle()

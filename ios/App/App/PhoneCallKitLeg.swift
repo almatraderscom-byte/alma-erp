@@ -71,6 +71,9 @@ final class SipCallController: ObservableObject {
         var peer: String
         var outgoing: Bool
         var connectedAt: Date?
+        /// Far phone is actually ringing (gateway's ChannelStateChange), so the UI
+        /// can say "রিং হচ্ছে" in sync with reality.
+        var ringing = false
     }
     @Published private(set) var current: CallState?
 
@@ -139,6 +142,12 @@ final class SipCallController: ObservableObject {
                 self.onRemoteEnded?(id)
             }
         }
+        eng.onRinging = { [weak self] in
+            Task { @MainActor in
+                guard let self, self.activeCallId == id else { return }
+                self.current?.ringing = true
+            }
+        }
         eng.onAnswered = { [weak self] in
             Task { @MainActor in
                 guard let self, self.activeCallId == id else { return }
@@ -197,6 +206,17 @@ final class SipCallController: ObservableObject {
         engine?.muted = muted
     }
 
+    /// Earpiece ↔ loudspeaker (the phone-app toggle the owner asked for).
+    @Published private(set) var speakerOn = false
+    func setSpeaker(_ on: Bool) {
+        speakerOn = on
+        let s = AVAudioSession.sharedInstance()
+        try? s.overrideOutputAudioPort(on ? .speaker : .none)
+        // The engine stops on the route change; don't wait for the notification —
+        // rebuild deterministically (device bug: speaker on = one-way audio).
+        engine?.rebuildAfterRouteChange(delay: 0.25)
+    }
+
     /// CallKit ended the call locally (user hung up / declined after answer path).
     func callKitEnded(callId: String) {
         NSLog("[alma-sip-leg] callKitEnded(%@) active=%@", callId, activeCallId ?? "nil")
@@ -208,6 +228,7 @@ final class SipCallController: ObservableObject {
         engine?.stop()
         engine = nil
         current = nil
+        speakerOn = false
     }
 }
 
@@ -228,6 +249,7 @@ final class SipCallAudioEngine: NSObject {
     var muted = false
     var onClosed: (() -> Void)?
     var onAnswered: (() -> Void)?
+    var onRinging: (() -> Void)?
 
     /// 8 kHz mono — the PSTN's native rate; the gateway speaks nothing else.
     private let wireFormat = AVAudioFormat(
@@ -310,6 +332,8 @@ final class SipCallAudioEngine: NSObject {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
         switch obj["event"] as? String {
+        case "ringing":
+            DispatchQueue.main.async { self.onRinging?() }
         case "answered":
             DispatchQueue.main.async { self.onAnswered?() }
         case "media":
@@ -353,13 +377,13 @@ final class SipCallAudioEngine: NSObject {
         audioRunning = true
         NSLog("[alma-sip-leg] startAudio: beginning graph")
         let input = audio.inputNode
-        // Echo cancellation: without it the caller hears themselves back from the
-        // speakerphone path. Best-effort — a failure must not kill the call.
-        // Simulator: voice processing makes the input tap deliver NOTHING (host-mic
-        // quirk) — skip it there; the device keeps echo cancel.
-        #if !targetEnvironment(simulator)
-        try? input.setVoiceProcessingEnabled(true)
-        #endif
+        // NO setVoiceProcessingEnabled — ever. Device-proven 2026-09-01 (builds
+        // 120/121 dead air): with it enabled the input tap never fires and the
+        // whole audio unit goes silent BOTH ways, on the Simulator AND on a real
+        // iPhone (device console: didActivate ✓, engine running ✓, 1200 play
+        // frames scheduled, zero tap callbacks, owner heard nothing). Echo
+        // cancellation is already provided at the session level by CallKit's
+        // .voiceChat mode, so nothing is lost.
 
         let inFormat = input.outputFormat(forBus: 0)
         sendConverter = AVAudioConverter(from: inFormat, to: wireFormat)
@@ -369,12 +393,22 @@ final class SipCallAudioEngine: NSObject {
         playFormat = playFmt
         audio.attach(player)
         audio.connect(player, to: audio.mainMixerNode, format: playFmt)
+        // Full volume through the whole chain — the earpiece default was noticeably
+        // quiet on the first device test.
+        player.volume = 1.0
+        audio.mainMixerNode.outputVolume = 1.0
 
         // ~20 ms of mic per tap at the hardware rate keeps wire frames tight.
         let tapFrames = AVAudioFrameCount(max(160, Int(inFormat.sampleRate * 0.02)))
-        input.installTap(onBus: 0, bufferSize: tapFrames, format: inFormat) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: tapFrames, format: nil) { [weak self] buffer, _ in
             self?.captured(buffer)
         }
+        // Route changes (earpiece ↔ loudspeaker, bluetooth) STOP the engine and can
+        // change the hardware I/O format — without rebuilding, the speaker button
+        // killed audio both ways (owner device test 2026-09-01).
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(engineConfigChanged),
+            name: .AVAudioEngineConfigurationChange, object: audio)
         do {
             try audio.start()
         } catch {
@@ -398,6 +432,7 @@ final class SipCallAudioEngine: NSObject {
     private var sentFrames = 0
     private var playedFrames = 0
     private var tapCalls = 0
+    private var converterInFormat: AVAudioFormat?
     private func captured(_ buffer: AVAudioPCMBuffer) {
         tapCalls += 1
         if tapCalls == 1 || tapCalls % 100 == 0 {
@@ -405,7 +440,15 @@ final class SipCallAudioEngine: NSObject {
                   tapCalls, Int(buffer.frameLength), buffer.format.sampleRate,
                   muted ? 1 : 0, sendConverter != nil ? 1 : 0)
         }
-        guard !muted, let converter = sendConverter else { return }
+        guard !muted else { return }
+        // Route changes (earpiece↔speaker↔bluetooth) can change the mic format
+        // under a live tap — rebuild the converter to match the buffers we are
+        // actually given, never the format cached at install time.
+        if sendConverter == nil || converterInFormat != buffer.format {
+            sendConverter = AVAudioConverter(from: buffer.format, to: wireFormat)
+            converterInFormat = buffer.format
+        }
+        guard let converter = sendConverter else { return }
         let ratio = wireFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
         guard let out = AVAudioPCMBuffer(pcmFormat: wireFormat, frameCapacity: capacity) else { return }
@@ -431,8 +474,31 @@ final class SipCallAudioEngine: NSObject {
               "media": ["payload": mu.base64EncodedString()]])
     }
 
+    /// Jitter cushion: 20 ms network chunks scheduled raw starve the player on any
+    /// hiccup — every starve is an audible click and the call sounds muddy/quiet
+    /// (owner: "sound onk kom r crystal clear na"). Hold ~160 ms before the first
+    /// schedule; after that pass-through keeps latency flat while the queue keeps
+    /// a standing cushion.
+    private var pendingSamples: [Int16] = []
+    private var cushionFilled = false
+    private let cushionSamples = 8 * 160   // 8 × 20 ms @ 8 kHz
+
     private func schedule(_ samples: [Int16]) {
-        guard audioRunning, let fmt = playFormat, !samples.isEmpty,
+        guard audioRunning, !samples.isEmpty else { return }
+        if !cushionFilled {
+            pendingSamples.append(contentsOf: samples)
+            if pendingSamples.count < cushionSamples { return }
+            cushionFilled = true
+            let held = pendingSamples
+            pendingSamples = []
+            scheduleNow(held)
+            return
+        }
+        scheduleNow(samples)
+    }
+
+    private func scheduleNow(_ samples: [Int16]) {
+        guard let fmt = playFormat,
               let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(samples.count))
         else { return }
         buf.frameLength = AVAudioFrameCount(samples.count)
@@ -441,13 +507,52 @@ final class SipCallAudioEngine: NSObject {
             NSLog("[alma-sip-leg] play frames: %d (running=%d)", playedFrames, audioRunning ? 1 : 0)
         }
         if let ch = buf.floatChannelData {
-            for i in 0..<samples.count { ch[0][i] = Float(samples[i]) / 32768.0 }
+            // Mild fixed gain: 8 kHz μ-law off the PSTN lands quiet on the earpiece.
+            // 1.4× with a hard clamp is safely below clipping for phone speech.
+            for i in 0..<samples.count {
+                ch[0][i] = max(-1.0, min(1.0, Float(samples[i]) / 32768.0 * 1.4))
+            }
         }
         player.scheduleBuffer(buf, completionHandler: nil)
     }
 
+    @objc private func engineConfigChanged(_ note: Notification) {
+        rebuildAfterRouteChange(delay: 0.1)
+    }
+
+    private var rebuildGeneration = 0
+    /// Debounced full-graph rebuild after any route/config change. Multiple
+    /// notifications within the window collapse to ONE rebuild on the final route.
+    func rebuildAfterRouteChange(delay: TimeInterval) {
+        rebuildGeneration += 1
+        let gen = rebuildGeneration
+        sendQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, gen == self.rebuildGeneration,
+                  self.audioRunning, !self.closed else { return }
+            NSLog("[alma-sip-leg] rebuilding audio graph (gen %d)", gen)
+            let input = self.audio.inputNode
+            input.removeTap(onBus: 0)
+            self.sendConverter = nil
+            self.converterInFormat = nil
+            let inFormat = input.outputFormat(forBus: 0)
+            let tapFrames = AVAudioFrameCount(max(160, Int(inFormat.sampleRate * 0.02)))
+            input.installTap(onBus: 0, bufferSize: tapFrames, format: nil) { [weak self] buffer, _ in
+                self?.captured(buffer)
+            }
+            self.audio.stop()
+            do {
+                try self.audio.start()
+                self.player.play()
+                NSLog("[alma-sip-leg] graph rebuilt, input rate=%f", inFormat.sampleRate)
+            } catch {
+                NSLog("[alma-sip-leg] graph rebuild failed: %@", String(describing: error))
+            }
+        }
+    }
+
     func stop() {
         closed = true
+        NotificationCenter.default.removeObserver(self)
         conn?.cancel()
         conn = nil
         if audioRunning {

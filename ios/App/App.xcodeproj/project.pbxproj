@@ -183,6 +183,7 @@
 		F2AA7700000000000000B7E1 /* PhoneSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A7E1 /* PhoneSwiftUI.swift */; };
 		F2AA7700000000000000B7E2 /* PhoneEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A7E2 /* PhoneEngine.swift */; };
 		F2AA7700000000000000B7E3 /* PhoneCallKitLeg.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A7E3 /* PhoneCallKitLeg.swift */; };
+		F2AA7700000000000000B7E5 /* SipCallPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A7E5 /* SipCallPill.swift */; };
 		F2AA7700000000000000B2AA /* CSLifestyleEditorSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A2AA /* CSLifestyleEditorSwiftUI.swift */; };
 		F2AA7700000000000000B9C1 /* MacRemoteControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A9C1 /* MacRemoteControl.swift */; };
 		F2AA7700000000000000B9F1 /* BrowserLiveSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A9F1 /* BrowserLiveSwiftUI.swift */; };
@@ -425,6 +426,7 @@
 		F2AA7700000000000000A7E1 /* PhoneSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A7E2 /* PhoneEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneEngine.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A7E3 /* PhoneCallKitLeg.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneCallKitLeg.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A7E5 /* SipCallPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SipCallPill.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A2AA /* CSLifestyleEditorSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSLifestyleEditorSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A9C1 /* MacRemoteControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRemoteControl.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A9F1 /* BrowserLiveSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLiveSwiftUI.swift; sourceTree = "<group>"; };
@@ -588,6 +590,7 @@
 				F2AA7700000000000000A7E1 /* PhoneSwiftUI.swift */,
 				F2AA7700000000000000A7E2 /* PhoneEngine.swift */,
 				F2AA7700000000000000A7E3 /* PhoneCallKitLeg.swift */,
+				F2AA7700000000000000A7E5 /* SipCallPill.swift */,
 				F2AA7700000000000000A1FE /* StaffMonitorAgentsSwiftUI.swift */,
 				F2AA7700000000000000A1FD /* StaffMonitorSystemSwiftUI.swift */,
 				F2AA7700000000000000A1FC /* NativeAuthRecoverySwiftUI.swift */,
@@ -1145,6 +1148,7 @@
 				F2AA7700000000000000B7E1 /* PhoneSwiftUI.swift in Sources */,
 				F2AA7700000000000000B7E2 /* PhoneEngine.swift in Sources */,
 				F2AA7700000000000000B7E3 /* PhoneCallKitLeg.swift in Sources */,
+				F2AA7700000000000000B7E5 /* SipCallPill.swift in Sources */,
 				F2AA7700000000000000B1FE /* StaffMonitorAgentsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B1FD /* StaffMonitorSystemSwiftUI.swift in Sources */,
 				F2AA7700000000000000B1FC /* NativeAuthRecoverySwiftUI.swift in Sources */,
