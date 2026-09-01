@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { getArchivedRegistryIds } from '@/lib/business-archive/registry-filter'
 import type { Prisma } from '@prisma/client'
 import { serverGet } from '@/lib/server-api'
 import type { Order } from '@/types'
@@ -221,5 +222,11 @@ export async function fetchLifestyleOrdersForMetrics(p: QueryParams = {}): Promi
     { ...p, limit: String(p.limit || '10000'), offset: '0' },
     { includeItems: false, allMatching: true },
   )
-  return data.orders
+  // The orders LIST hides archive-approved orders; the dashboard must agree —
+  // otherwise a deleted order keeps haunting revenue, counts and the SLA
+  // attention banner while the list says it does not exist (owner report
+  // 2026-09-01: banner order AL-0325 was already removed, delete said 409).
+  const archived = await getArchivedRegistryIds(p.business_id || 'ALMA_LIFESTYLE', 'orders')
+  if (archived.size === 0) return data.orders
+  return data.orders.filter((o) => !archived.has(String(o.id)))
 }
