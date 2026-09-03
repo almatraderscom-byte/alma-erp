@@ -3,7 +3,7 @@ import { cookies } from 'next/headers'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { isAgentEnabled } from '@/agent/config'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import {
   listAccessibleStudioBrands,
   type StudioActor,
@@ -61,7 +61,7 @@ export default async function CreativeStudioPage(
     email: session.user.email?.trim().slice(0, 240) || null,
     erpRole: String(session.user.role),
   }
-  const actorIsSystemOwner = isSystemOwner(actor.erpRole)
+  const actorIsSystemOwner = isCreativeStudioOwner(actor.erpRole)
   const requestedBrandId = first(searchParams?.brand)
   const requestedProjectId = first(searchParams?.project)
   const explicitStudio = first(searchParams?.studio)

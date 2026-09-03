@@ -2,7 +2,7 @@
 // GET    → list tracks · POST → register a finished upload (verifies object)
 // DELETE → remove a track. Registry in agent_kv_settings (`studio_music_track:<id>`).
 import { type NextRequest } from 'next/server'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { agentStorageObjectInfo, agentStorageDelete } from '@/agent/lib/storage'
 import { MUSIC_VIBES, type MusicVibe } from '@/lib/creative-studio/video-recipes'
@@ -30,7 +30,7 @@ const db = prisma as any
 async function ownerActor(req: NextRequest): Promise<StudioActor | Response> {
   const actor = await authenticateStudioRequest(req)
   if (actor instanceof Response) return actor
-  if (!isSystemOwner(actor.erpRole)) {
+  if (!isCreativeStudioOwner(actor.erpRole)) {
     return Response.json({ error: 'forbidden' }, { status: 403 })
   }
   return actor
@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
       return studioAccessErrorResponse(error, 'creative-music-list')
     }
   }
-  if (!isSystemOwner(actor.erpRole)) {
+  if (!isCreativeStudioOwner(actor.erpRole)) {
     return Response.json({ error: 'forbidden' }, { status: 403 })
   }
   return Response.json({ tracks: await listMusicTracks(), vibes: MUSIC_VIBES })

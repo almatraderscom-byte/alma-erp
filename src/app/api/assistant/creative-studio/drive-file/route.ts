@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { fetchDriveFile } from '@/agent/lib/drive'
 
@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
 
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  if (!isCreativeStudioOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   const id = req.nextUrl.searchParams.get('id')?.trim()
   if (!id) return Response.json({ error: 'id_required' }, { status: 400 })

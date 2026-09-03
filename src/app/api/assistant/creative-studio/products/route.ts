@@ -2,7 +2,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { agentStorageSignedUrls } from '@/agent/lib/storage'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import {
   ContentOsServiceError,
   searchErpProducts,
@@ -26,7 +26,7 @@ async function ownerAllowed(req: NextRequest): Promise<Response | null> {
   if (disabled) return disabled
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  if (!isCreativeStudioOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
   return null
 }
 

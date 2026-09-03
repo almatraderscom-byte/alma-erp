@@ -43,7 +43,7 @@ vi.mock('@/lib/prisma', () => ({
 }))
 
 vi.mock('@/lib/roles', () => ({
-  isSystemOwner: vi.fn((role: unknown) => role === 'SUPER_ADMIN'),
+  isCreativeStudioOwner: vi.fn((role: unknown) => role === 'SUPER_ADMIN'),
 }))
 
 vi.mock('@/lib/creative-studio/studio-access', () => ({

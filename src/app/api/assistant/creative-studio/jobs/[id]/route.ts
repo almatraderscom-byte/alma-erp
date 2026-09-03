@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { agentStorageDelete, agentStorageSignedUrl } from '@/agent/lib/storage'
 import { normalizeArtifactVariants } from '@/lib/creative-studio/artifact-metadata'
@@ -22,7 +22,7 @@ export async function DELETE(req: NextRequest, props: { params: Promise<{ id: st
 
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  if (!isCreativeStudioOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
@@ -62,7 +62,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
 
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  if (!isCreativeStudioOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any

@@ -749,7 +749,7 @@
       "/agent/browser-live": false,
       "/agent/catalog-images": true,
       "/agent/costs": false,
-      "/agent/creative-studio": false,
+      "/agent/creative-studio": true,
       "/agent/creative-studio-demo": false,
       "/agent/growth": false,
       "/agent/hub": false,
@@ -849,7 +849,7 @@
       "/agent/browser-live": false,
       "/agent/catalog-images": true,
       "/agent/costs": false,
-      "/agent/creative-studio": false,
+      "/agent/creative-studio": true,
       "/agent/creative-studio-demo": false,
       "/agent/growth": false,
       "/agent/hub": false,
@@ -949,7 +949,7 @@
       "/agent/browser-live": false,
       "/agent/catalog-images": true,
       "/agent/costs": false,
-      "/agent/creative-studio": false,
+      "/agent/creative-studio": true,
       "/agent/creative-studio-demo": false,
       "/agent/growth": false,
       "/agent/hub": false,
@@ -2001,6 +2001,11 @@
         "label": "Product Images"
       },
       {
+        "href": "/agent/creative-studio",
+        "icon": "🎨",
+        "label": "Creative Studio"
+      },
+      {
         "href": "/invoice",
         "icon": "🧾",
         "label": "Invoice"
@@ -2344,6 +2349,7 @@
       "/crm",
       "/inventory",
       "/agent/catalog-images",
+      "/agent/creative-studio",
       "/invoice",
       "/finance",
       "/expenses",
@@ -2424,6 +2430,7 @@
       "/crm",
       "/inventory",
       "/agent/catalog-images",
+      "/agent/creative-studio",
       "/invoice",
       "/finance",
       "/expenses",

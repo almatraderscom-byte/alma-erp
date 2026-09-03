@@ -6,7 +6,7 @@
 // Registry lives in agent_kv_settings (`studio_video_upload:<id>`) — the same
 // no-new-tables pattern as the child-garment cache.
 import { type NextRequest } from 'next/server'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { agentStorageObjectInfo, agentStorageDelete, agentStorageSignedUrls } from '@/agent/lib/storage'
 import { createHash } from 'crypto'
@@ -66,7 +66,7 @@ async function computeContentHash(path: string, sizeBytes: number): Promise<stri
 async function ownerActor(req: NextRequest): Promise<StudioActor | Response> {
   const actor = await authenticateStudioRequest(req)
   if (actor instanceof Response) return actor
-  if (!isSystemOwner(actor.erpRole)) {
+  if (!isCreativeStudioOwner(actor.erpRole)) {
     return Response.json({ error: 'forbidden' }, { status: 403 })
   }
   return actor
@@ -109,7 +109,7 @@ export async function GET(req: NextRequest) {
       return studioAccessErrorResponse(error, 'creative-video-list')
     }
   }
-  if (!isSystemOwner(actor.erpRole)) {
+  if (!isCreativeStudioOwner(actor.erpRole)) {
     return Response.json({ error: 'forbidden' }, { status: 403 })
   }
   return Response.json({ uploads: await listUploads() })
@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
     } catch (error) {
       return studioAccessErrorResponse(error, 'creative-video-register')
     }
-  } else if (!isSystemOwner(actor.erpRole)) {
+  } else if (!isCreativeStudioOwner(actor.erpRole)) {
     return Response.json({ error: 'forbidden' }, { status: 403 })
   }
   const uploadId = String(body.uploadId ?? '').trim()

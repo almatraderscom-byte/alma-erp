@@ -3,7 +3,7 @@
 // planner produces a frame-exact plan; the VPS worker renders it with Remotion
 // and composites it over the reel.
 import { type NextRequest } from 'next/server'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { buildOverlayPlan, type FinishTemplateInput } from '@/lib/creative-studio/video-finish'
 import { VIDEO_ASPECTS } from '@/lib/creative-studio/video-recipes'
@@ -42,7 +42,7 @@ async function resolveOwnerAssetScope(
     || input.projectAssetId,
   )
   if (!hasScopedSelector) {
-    if (!isSystemOwner(actor.erpRole)) {
+    if (!isCreativeStudioOwner(actor.erpRole)) {
       throw new StudioAccessError('studio_finish_owner_required', 403)
     }
     return null

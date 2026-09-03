@@ -2,7 +2,7 @@
 // Contract: white = edit, black = keep; mask dimensions MUST equal the base
 // image's (validated here with sharp so a bad mask never reaches a paid call).
 import { type NextRequest } from 'next/server'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import { agentStorageDownload, agentStorageUpload } from '@/agent/lib/storage'
 import { prisma } from '@/lib/prisma'
 import {
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
     } catch (error) {
       return studioAccessErrorResponse(error, 'creative-mask-upload')
     }
-  } else if (!isSystemOwner(actor.erpRole)) {
+  } else if (!isCreativeStudioOwner(actor.erpRole)) {
     return Response.json({ error: 'forbidden' }, { status: 403 })
   }
 

@@ -43,6 +43,12 @@ const creator: StudioActor = {
   email: 'creator@example.com',
   erpRole: 'STAFF',
 }
+const admin: StudioActor = {
+  userId: 'admin-1',
+  name: 'Admin',
+  email: 'admin@example.com',
+  erpRole: 'ADMIN',
+}
 
 beforeEach(() => {
   accessHarness.assignment = null
@@ -59,6 +65,33 @@ describe('Creative Studio role matrix', () => {
     expect(access).toMatchObject({ role: 'owner', ownerId: 'owner-1' })
     expect(() => assertStudioCapability('owner', 'approve')).not.toThrow()
     expect(() => assertStudioCapability('owner', 'manage_roles')).not.toThrow()
+  })
+
+  it("treats an ADMIN as owner of their OWN brands only — never of the owner's", async () => {
+    // The owner's brand: an admin is a plain outsider there until assigned.
+    await expect(requireStudioBrandAccess(admin, 'brand-alma')).rejects.toMatchObject({
+      code: 'brand_access_forbidden',
+      status: 403,
+    })
+    accessHarness.assignment = { ownerId: 'owner-1', role: 'REVIEWER' }
+    await expect(requireStudioBrandAccess(admin, 'brand-alma')).resolves.toMatchObject({
+      role: 'reviewer',
+      ownerId: 'owner-1',
+    })
+
+    // A brand in the admin's own workspace: implicit owner, like SUPER_ADMIN.
+    accessHarness.assignment = null
+    accessHarness.prisma.creativeStudioRoleAssignment.findUnique.mockClear()
+    accessHarness.prisma.creativeBrandProfile.findUnique.mockResolvedValue({
+      id: 'brand-admin',
+      ownerId: 'admin-1',
+      approvalSpendThresholdBdt: 0,
+    })
+    await expect(requireStudioBrandAccess(admin, 'brand-admin')).resolves.toMatchObject({
+      role: 'owner',
+      ownerId: 'admin-1',
+    })
+    expect(accessHarness.prisma.creativeStudioRoleAssignment.findUnique).not.toHaveBeenCalled()
   })
 
   it('requires an explicit assignment for non-owner access', async () => {

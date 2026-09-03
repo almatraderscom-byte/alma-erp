@@ -5,7 +5,7 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner, isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { readKv, writeKv, QC_LEVEL_KEY, NOTIFY_KEY, readSceneWeights } from '@/lib/creative-studio/taste'
 import {
@@ -32,12 +32,18 @@ const GARMENT_PREFIX = 'tryon_child_garment:'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-async function auth(req: NextRequest) {
+// Reads are open to every studio owner (SUPER_ADMIN + ADMIN) so the settings
+// screen renders for admins; WRITES change GLOBAL studio configuration (engine
+// switches, QC level, image models, garment sizes) and stay SUPER_ADMIN-only.
+async function auth(req: NextRequest, intent: 'read' | 'write' = 'read') {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  if (!isCreativeStudioOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  if (intent === 'write' && !isSystemOwner(token)) {
+    return Response.json({ error: 'owner_only', message: 'Studio settings are owner-only.' }, { status: 403 })
+  }
   return null
 }
 
@@ -96,7 +102,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await auth(req)
+  const denied = await auth(req, 'write')
   if (denied) return denied
   let body: {
     qcLevel?: string
@@ -181,7 +187,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const denied = await auth(req)
+  const denied = await auth(req, 'write')
   if (denied) return denied
   const key = req.nextUrl.searchParams.get('key') ?? ''
   if (!key.startsWith(GARMENT_PREFIX)) return Response.json({ error: 'invalid_key' }, { status: 422 })

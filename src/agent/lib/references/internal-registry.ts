@@ -95,7 +95,7 @@ export const INTERNAL_SECTION_REGISTRY = {
   agent_hub: section('agent_hub', 'Agent Hub', '/agent', 'any', OWNER, '/agent/hub'),
   agent_growth: section('agent_growth', 'Agent Growth', '/agent/growth', ['ALMA_LIFESTYLE'], OWNER),
   agent_ads: section('agent_ads', 'Ads center', '/agent/growth', ['ALMA_LIFESTYLE'], OWNER),
-  creative_studio: section('creative_studio', 'Creative Studio', '/agent/creative-studio', ['ALMA_LIFESTYLE'], OWNER),
+  creative_studio: section('creative_studio', 'Creative Studio', '/agent/creative-studio', ['ALMA_LIFESTYLE'], ADMINS),
   catalog_images: section('catalog_images', 'Catalog images', '/agent/catalog-images', ['ALMA_LIFESTYLE'], ADMINS),
   agent_media: protectedWebSection('agent_media', 'Media studio', '/agent/media', 'any', OWNER),
   agent_staff_monitor: section('agent_staff_monitor', 'Staff monitor', '/agent/staff-monitor', 'any', OWNER),

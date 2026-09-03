@@ -146,6 +146,7 @@ enum AlmaNav {
     ]
     static let agentItem = AlmaNavItem("/agent", "✨", "ALMA Agent", "sparkles")
     static let catalogImagesItem = AlmaNavItem("/agent/catalog-images", "📷", "Product Images", "photo.on.rectangle")
+    static let creativeStudioItem = AlmaNavItem("/agent/creative-studio", "🎨", "Creative Studio", "wand.and.stars")
     static let officeItem = AlmaNavItem("/portal/office", "🏢", "Office", "building.2")
     private static let settingsNav: [AlmaNavItem] = [
         AlmaNavItem("/operations/task-spotlight", "🎯", "Task Spotlight", "target"),
@@ -171,6 +172,7 @@ enum AlmaNav {
         AlmaNavItem("/crm", "👥", "CRM", "person.crop.circle.badge.checkmark"),
         AlmaNavItem("/inventory", "📊", "Inventory", "archivebox"),
         catalogImagesItem,
+        creativeStudioItem,
         AlmaNavItem("/invoice", "🧾", "Invoice", "doc.text"),
     ] + financeSuite + [
         AlmaNavItem("/analytics", "📈", "Analytics", "chart.bar"),
@@ -314,6 +316,11 @@ enum AlmaAccess {
         if pathname.hasPrefix("/operations") { return role == .SUPER_ADMIN }
 
         if pathname.hasPrefix("/agent/catalog-images") {
+            return role == .SUPER_ADMIN || role == .ADMIN
+        }
+        // Creative Studio is shared with Admins (mirrors src/lib/roles.ts —
+        // each admin works in their own studio workspace). Demo page stays owner-only.
+        if pathname == "/agent/creative-studio" {
             return role == .SUPER_ADMIN || role == .ADMIN
         }
         // Browser phone: open to every staff member (mirrors the web carve-out in
