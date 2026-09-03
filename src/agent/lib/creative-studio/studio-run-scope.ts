@@ -1,6 +1,6 @@
 import type { CreativeStudioRunInput } from '@/lib/creative-studio/create-run'
 import { prisma } from '@/lib/prisma'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import {
   assertStudioSpendAllowed,
   requireStudioBrandAccess,
@@ -84,7 +84,7 @@ export async function resolveScopedStudioRun(
   const access = await requireStudioBrandAccess(actor, brandProfileId)
   const legacyModelActor = access.role === 'owner'
     && access.ownerId === actor.userId
-    && isSystemOwner(actor.erpRole)
+    && isCreativeStudioOwner(actor.erpRole)
     ? { userId: actor.userId, erpRole: actor.erpRole }
     : undefined
   // A reviewer never gains a paid/draft path merely by knowing a project id.

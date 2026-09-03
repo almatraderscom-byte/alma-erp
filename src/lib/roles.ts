@@ -35,10 +35,28 @@ export function isSystemOwner(subject: unknown): boolean {
 }
 
 /**
+ * Creative Studio access (owner decision 2026-09-04: the Studio is shared with
+ * Admins, not owner-only like the rest of /agent). Every studio owner works in
+ * their OWN workspace — brands, projects, gallery and voices are keyed by the
+ * acting user's id — so an Admin never sees or edits the owner's assets unless
+ * the owner assigns them a creator/reviewer role on a brand. Global studio
+ * configuration writes (engine switches, QC level) stay SUPER_ADMIN-only in the
+ * settings route.
+ */
+export function isCreativeStudioOwner(subject: unknown): boolean {
+  const role = typeof subject === 'string'
+    ? subject
+    : (subject as { user?: { role?: string | null }; role?: string | null } | null | undefined)?.user?.role
+      ?? (subject as { role?: string | null } | null | undefined)?.role
+  const r = normalizeAlmaRole(role)
+  return r === 'SUPER_ADMIN' || r === 'ADMIN'
+}
+
+/**
  * Product-image screen access. SUPER_ADMIN has full control (view/upload/delete);
  * ADMIN can view + upload (delete stays SUPER_ADMIN-only, enforced in the route).
- * This is the ONLY part of /agent/* shared beyond the owner — see the carve-out in
- * isPathAllowedForRole.
+ * Product Images and the Creative Studio are the only parts of /agent/* shared
+ * beyond the owner — see the carve-outs in isPathAllowedForRole.
  */
 export function canManageCatalogImages(subject: unknown): boolean {
   const role = typeof subject === 'string'
@@ -95,6 +113,12 @@ export function isPathAllowedForRole(pathname: string, role: AlmaRole, businessI
   // Product-image screen is shared with Admins (view/upload); everything else
   // under /agent stays owner-only.
   if (pathname.startsWith('/agent/catalog-images')) {
+    return role === 'SUPER_ADMIN' || role === 'ADMIN'
+  }
+
+  // Creative Studio is shared with Admins (each in their own studio workspace —
+  // see isCreativeStudioOwner). The demo/preview page stays owner-only.
+  if (pathname === '/agent/creative-studio') {
     return role === 'SUPER_ADMIN' || role === 'ADMIN'
   }
 

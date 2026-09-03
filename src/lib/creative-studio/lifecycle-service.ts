@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { downloadStorageObject } from '@/lib/supabase-storage'
 import { isAgentEnabled } from '@/lib/agent-runtime-flag'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import {
   requireStudioBrandAccess,
   studioRoleToDb,
@@ -1243,7 +1243,7 @@ async function validateLifecycleClaimAuthorization(client: Db, row: Row): Promis
   ) throw new LifecycleServiceError('claim_authorization_revoked', 403)
 
   let currentRole: StudioLifecycleFlagScope['role'] | null = null
-  if (brand.ownerId === actor.id && isSystemOwner(String(actor.role))) {
+  if (brand.ownerId === actor.id && isCreativeStudioOwner(String(actor.role))) {
     currentRole = 'owner'
   } else {
     const assignment = await client.creativeStudioRoleAssignment.findUnique({

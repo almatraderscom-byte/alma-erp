@@ -3,7 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { agentStorageSignedUrls } from '@/agent/lib/storage'
 import { prisma } from '@/lib/prisma'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import {
   authenticateStudioRequest,
   requireStudioBrandAccess,
@@ -36,7 +36,7 @@ async function ownerId(req: NextRequest): Promise<string | Response> {
   if (disabled) return disabled
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  if (!isCreativeStudioOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
   return token.sub
 }
 
@@ -113,7 +113,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   try {
     let assets: StudioProjectAsset[]
     if (isLegacyProjectId(params.id)) {
-      if (!isSystemOwner(actor.erpRole)) {
+      if (!isCreativeStudioOwner(actor.erpRole)) {
         throw new StudioAccessError('legacy_owner_only', 403)
       }
       assets = await listLegacyAssets(actor.userId)

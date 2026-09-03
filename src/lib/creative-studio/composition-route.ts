@@ -8,7 +8,7 @@ import {
   creativeStudioV3FeatureResponse,
 } from '@/lib/creative-studio/composition-feature-flags'
 import { compositionServiceErrorResponse } from '@/lib/creative-studio/composition-service'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 
 export const CREATIVE_COMPOSITION_API_REQUEST_MAX_BYTES = 2 * 1024 * 1024
 
@@ -41,7 +41,7 @@ export async function authorizeCompositionRoute(
   const actor = await authenticateStudioRequest(req)
   if (actor instanceof Response) return actor
   return creativeStudioV3FeatureResponse(capability, process.env, {
-    actorIsSystemOwner: isSystemOwner(actor.erpRole),
+    actorIsSystemOwner: isCreativeStudioOwner(actor.erpRole),
     requestedStudio: requestedStudioFromSameOriginReferrer(req),
   }) ?? actor
 }

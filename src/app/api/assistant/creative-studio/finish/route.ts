@@ -10,7 +10,7 @@
  * owner's correction: the same code/hook must not sit on every image.
  */
 import { type NextRequest } from 'next/server'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import {
   applyBrandFrameArtifact,
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
       const code = error instanceof StudioAccessError ? error.code : 'forbidden'
       return Response.json({ error: code }, { status })
     }
-  } else if (!isSystemOwner(actor.erpRole)) {
+  } else if (!isCreativeStudioOwner(actor.erpRole)) {
     // Legacy callers remain owner-only. Supplying a project/brand selector
     // never upgrades access and partial scoped selectors fail closed above.
     return Response.json({ error: 'forbidden' }, { status: 403 })

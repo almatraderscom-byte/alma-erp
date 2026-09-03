@@ -3,7 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { isAgentEnabled } from '@/lib/agent-runtime-flag'
 import { prisma } from '@/lib/prisma'
 import { roundMoney } from '@/lib/money'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 
 // Kept structural so access-contract tests do not depend on a just-generated
 // Prisma client while the schema and migration are being developed together.
@@ -180,8 +180,29 @@ const BRAND_COUNT = {
   recipes: true,
 }
 
+function sumProjectAssets(row: Record<string, unknown>): number {
+  const projects = Array.isArray(row.projects) ? row.projects : []
+  return projects.reduce((total: number, project: unknown) => {
+    const projectRow = project && typeof project === 'object'
+      ? project as Record<string, unknown>
+      : {}
+    const count = projectRow._count && typeof projectRow._count === 'object'
+      ? projectRow._count as Record<string, unknown>
+      : {}
+    return total + Number(count.assets ?? 0)
+  }, 0)
+}
+
+/**
+ * Brands the actor may open. A studio owner (SUPER_ADMIN or ADMIN — see
+ * isCreativeStudioOwner) gets their OWN brands as `owner`; on top of that,
+ * anyone gets the brands another owner explicitly assigned them as
+ * creator/reviewer. The two sets never overlap: an assignment on a brand the
+ * actor owns is ignored.
+ */
 export async function listAccessibleStudioBrands(actor: StudioActor): Promise<StudioBrandSummary[]> {
-  if (isSystemOwner(actor.erpRole)) {
+  const owned: StudioBrandSummary[] = []
+  if (isCreativeStudioOwner(actor.erpRole)) {
     await ensureDefaultStudioBrands(actor.userId)
     const rows = await db.creativeBrandProfile.findMany({
       where: { ownerId: actor.userId },
@@ -191,20 +212,11 @@ export async function listAccessibleStudioBrands(actor: StudioActor): Promise<St
       },
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
     })
-    return rows.map((row: Record<string, unknown>) => {
-      const projects = Array.isArray(row.projects) ? row.projects : []
+    for (const row of rows as Record<string, unknown>[]) {
       const summary = serializeBrand(row, 'owner')
-      summary.assetCount = projects.reduce((total: number, project: unknown) => {
-        const projectRow = project && typeof project === 'object'
-          ? project as Record<string, unknown>
-          : {}
-        const count = projectRow._count && typeof projectRow._count === 'object'
-          ? projectRow._count as Record<string, unknown>
-          : {}
-        return total + Number(count.assets ?? 0)
-      }, 0)
-      return summary
-    })
+      summary.assetCount = sumProjectAssets(row)
+      owned.push(summary)
+    }
   }
 
   const rows = await db.creativeStudioRoleAssignment.findMany({
@@ -219,25 +231,18 @@ export async function listAccessibleStudioBrands(actor: StudioActor): Promise<St
     },
     orderBy: [{ brandProfile: { name: 'asc' } }, { id: 'asc' }],
   })
-  return rows.flatMap((assignment: Record<string, unknown>) => {
+  const assigned = (rows as Record<string, unknown>[]).flatMap((assignment) => {
     const brand = assignment.brandProfile && typeof assignment.brandProfile === 'object'
       ? assignment.brandProfile as Record<string, unknown>
       : null
     const role = accessRole(assignment.role)
     if (!brand || !role || role === 'owner') return []
-    const projects = Array.isArray(brand.projects) ? brand.projects : []
+    if (String(brand.ownerId) === actor.userId) return []
     const summary = serializeBrand(brand, role)
-    summary.assetCount = projects.reduce((total: number, project: unknown) => {
-      const projectRow = project && typeof project === 'object'
-        ? project as Record<string, unknown>
-        : {}
-      const count = projectRow._count && typeof projectRow._count === 'object'
-        ? projectRow._count as Record<string, unknown>
-        : {}
-      return total + Number(count.assets ?? 0)
-    }, 0)
+    summary.assetCount = sumProjectAssets(brand)
     return [summary]
   })
+  return [...owned, ...assigned]
 }
 
 export async function requireStudioBrandAccess(
@@ -254,7 +259,7 @@ export async function requireStudioBrandAccess(
   })
   if (!brand) throw new StudioAccessError('brand_not_found', 404)
 
-  if (brand.ownerId === actor.userId && isSystemOwner(actor.erpRole)) {
+  if (brand.ownerId === actor.userId && isCreativeStudioOwner(actor.erpRole)) {
     return {
       brandProfileId: String(brand.id),
       ownerId: String(brand.ownerId),

@@ -23,7 +23,7 @@ import {
   CS_XAI_ENABLED_KEY,
 } from '@/lib/creative-studio/provider-registry'
 import { readKv } from '@/lib/creative-studio/taste'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -269,7 +269,7 @@ export async function assertStudioRunExecutionGate(input: {
   }
   const legacyModelActor = access.role === 'owner'
     && access.ownerId === actor.userId
-    && isSystemOwner(actor.erpRole)
+    && isCreativeStudioOwner(actor.erpRole)
     ? { userId: actor.userId, erpRole: actor.erpRole }
     : undefined
   const project = await db.creativeProject.findFirst({

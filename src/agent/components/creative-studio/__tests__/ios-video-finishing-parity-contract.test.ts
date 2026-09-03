@@ -44,7 +44,7 @@ describe('iOS production video-finishing parity', () => {
   })
 
   it('fails video finishing closed unless the existing owner-only project route verified the scope', () => {
-    expect(projectsRoute).toContain('if (!isSystemOwner(token))')
+    expect(projectsRoute).toContain('if (!isCreativeStudioOwner(token))')
     expect(native).toContain('private var verifiedVideoOwnerScope: VideoOwnerScope?')
     expect(native).toContain('verifiedVideoOwnerScope = nil')
     expect(native).toContain('func canFinishVideo(_ item: CSGalleryItem) -> Bool')

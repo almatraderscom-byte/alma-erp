@@ -112,6 +112,8 @@ const FINANCE_SUITE: NavItem[] = [
 export const AGENT_NAV_ITEM: NavItem = { href: '/agent', icon: '✨', label: 'ALMA Agent' }
 // Shared with Admins (not owner-only like the rest of /agent) — product photos.
 export const CATALOG_IMAGES_NAV_ITEM: NavItem = { href: '/agent/catalog-images', icon: '📷', label: 'Product Images' }
+// Shared with Admins (owner decision 2026-09-04) — each admin gets their own studio workspace.
+export const CREATIVE_STUDIO_NAV_ITEM: NavItem = { href: '/agent/creative-studio', icon: '🎨', label: 'Creative Studio' }
 export const OFFICE_NAV_ITEM: NavItem = { href: '/portal/office', icon: '🏢', label: 'Office' }
 
 const SETTINGS_NAV: NavItem[] = [
@@ -139,6 +141,7 @@ const ALMA_NAV: NavItem[] = [
   { href: '/crm', icon: '👥', label: 'CRM' },
   { href: '/inventory', icon: '📊', label: 'Inventory' },
   CATALOG_IMAGES_NAV_ITEM,
+  CREATIVE_STUDIO_NAV_ITEM,
   { href: '/invoice', icon: '🧾', label: 'Invoice' },
   ...FINANCE_SUITE,
   { href: '/analytics', icon: '📈', label: 'Analytics' },

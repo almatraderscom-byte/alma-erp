@@ -3,7 +3,7 @@
 // the (up to ~500 MB) body.
 import { type NextRequest } from 'next/server'
 import { randomUUID } from 'crypto'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import { agentStorageSignedUploadUrl } from '@/agent/lib/storage'
 import { VIDEO_UPLOAD_MAX_BYTES, VIDEO_UPLOAD_EXTENSIONS } from '@/lib/creative-studio/video-recipes'
 import {
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     } catch (error) {
       return studioAccessErrorResponse(error, 'creative-video-upload-url')
     }
-  } else if (!isSystemOwner(actor.erpRole)) {
+  } else if (!isCreativeStudioOwner(actor.erpRole)) {
     return Response.json({ error: 'forbidden' }, { status: 403 })
   }
 

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { isSystemOwner } from '@/lib/roles'
+import { isCreativeStudioOwner } from '@/lib/roles'
 import {
   requireStudioBrandAccess,
   StudioAccessError,
@@ -227,7 +227,7 @@ export function studioModelScopeMatches(
   return Boolean(
     !scope
     && actor.userId === expected.ownerId
-    && isSystemOwner(actor.erpRole),
+    && isCreativeStudioOwner(actor.erpRole),
   )
 }
 
