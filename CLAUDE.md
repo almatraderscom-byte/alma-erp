@@ -102,6 +102,9 @@
 ## Communication
 
 - Owner is not an engineer: reports should be concise, plain language, no terminal handholding.
+- **Always reply to the owner in Bangla** (owner rule, restated 2026-09-02). This applies in every
+  session, including remote/web sessions that have no access to the Mac-side Claude memory.
+  Code, file names, and commands stay as-is; everything else in the reply is Bangla.
 - User-facing agent output (runtime): pure Bangla, address owner as **"Boss" ONLY — "Sir"/"স্যার" banned** (owner rule 2026-07-07, TTS accent), no emoji in voice/TTS output, Islamic guardrails (no haram products/imagery), staff messages in Bangla.
 
 <!-- BEGIN:nextjs-agent-rules -->

@@ -46,3 +46,6 @@ worker/data/browser-profiles/
 
 # Mac app build output (built locally with mac-app/build.sh)
 mac-app/build/
+
+# Claude Code per-machine permission overrides (never commit)
+.claude/settings.local.json
