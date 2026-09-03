@@ -67,9 +67,23 @@ async function getEnabled(): Promise<boolean> {
   return v !== 'off' && v !== 'false' && v !== '0'
 }
 
+/**
+ * Expected office head-count. Owner override in KV wins; otherwise the number of
+ * ACTIVE staff on the roster (so firing / hiring someone updates the alert without
+ * a redeploy — owner report 2026-09-03: a hard-coded 2 kept alerting "1 staff
+ * missing" after the roster dropped to one). DEFAULT_EXPECTED only when the roster
+ * itself cannot be read.
+ */
 async function getExpectedCount(): Promise<number> {
   const n = parseInt((await kvGet(EXPECTED_KEY)) ?? '', 10)
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_EXPECTED
+  if (Number.isFinite(n) && n > 0) return n
+  try {
+    const active = await db.agentStaff.count({ where: { active: true, businessId: BUSINESS_ID } })
+    if (Number.isFinite(active) && active > 0) return active
+  } catch {
+    /* fall through to the code default */
+  }
+  return DEFAULT_EXPECTED
 }
 
 async function getThresholdMin(): Promise<number> {
