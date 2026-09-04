@@ -53,14 +53,14 @@ final class PhoneEngine: NSObject, ObservableObject {
         NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.autoStartIfEnabled()
+            MainActor.assumeIsolated { self?.autoStartIfEnabled() }
         }
         // Signing into the demo backend swaps the host under us — the engine must not
         // keep a phone registered against the deployment the user just left.
         NotificationCenter.default.addObserver(
             forName: AlmaBackend.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.teardown()
+            MainActor.assumeIsolated { self?.teardown() }
         }
     }
 

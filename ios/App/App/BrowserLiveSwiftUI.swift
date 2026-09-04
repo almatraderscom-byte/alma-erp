@@ -240,7 +240,7 @@ final class BrowserLiveModel: ObservableObject {
                 await self?.consumeStream()
                 if Task.isCancelled { break }
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if await self?.status.running != true { break }
+                if self?.status.running != true { break }
             }
             await MainActor.run { self?.streamTask = nil }
         }

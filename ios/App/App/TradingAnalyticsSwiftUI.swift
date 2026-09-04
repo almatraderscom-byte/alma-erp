@@ -267,15 +267,15 @@ private struct TradingAnalyticsPayload: Decodable {
         let root = try decoder.container(keyedBy: Keys.self)
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
         kpis = try? c.decodeIfPresent(TradingAnalyticsKpis.self, forKey: .kpis)
-        topProfitableAccounts = ((try? c.decodeIfPresent([TradingAnalyticsAccountRow].self, forKey: .topProfitableAccounts)) ?? []) ?? []
-        topLossAccounts = ((try? c.decodeIfPresent([TradingAnalyticsAccountRow].self, forKey: .topLossAccounts)) ?? []) ?? []
-        bestSpreadAccounts = ((try? c.decodeIfPresent([TradingAnalyticsAccountRow].self, forKey: .bestSpreadAccounts)) ?? []) ?? []
-        highestExpenseAccounts = ((try? c.decodeIfPresent([TradingAnalyticsAccountRow].self, forKey: .highestExpenseAccounts)) ?? []) ?? []
-        staff = ((try? c.decodeIfPresent([TradingAnalyticsStaffRow].self, forKey: .staff)) ?? []) ?? []
-        expenseCategories = ((try? c.decodeIfPresent([TradingAnalyticsExpenseCat].self, forKey: .expenseCategories)) ?? []) ?? []
-        trend = ((try? c.decodeIfPresent([TradingAnalyticsTrendPoint].self, forKey: .trend)) ?? []) ?? []
-        alerts = ((try? c.decodeIfPresent([TradingAnalyticsAlert].self, forKey: .alerts)) ?? []) ?? []
-        reportRows = ((try? c.decodeIfPresent([TradingAnalyticsAccountRow].self, forKey: .reportRows)) ?? []) ?? []
+        topProfitableAccounts = (try? c.decodeIfPresent([TradingAnalyticsAccountRow].self, forKey: .topProfitableAccounts)) ?? []
+        topLossAccounts = (try? c.decodeIfPresent([TradingAnalyticsAccountRow].self, forKey: .topLossAccounts)) ?? []
+        bestSpreadAccounts = (try? c.decodeIfPresent([TradingAnalyticsAccountRow].self, forKey: .bestSpreadAccounts)) ?? []
+        highestExpenseAccounts = (try? c.decodeIfPresent([TradingAnalyticsAccountRow].self, forKey: .highestExpenseAccounts)) ?? []
+        staff = (try? c.decodeIfPresent([TradingAnalyticsStaffRow].self, forKey: .staff)) ?? []
+        expenseCategories = (try? c.decodeIfPresent([TradingAnalyticsExpenseCat].self, forKey: .expenseCategories)) ?? []
+        trend = (try? c.decodeIfPresent([TradingAnalyticsTrendPoint].self, forKey: .trend)) ?? []
+        alerts = (try? c.decodeIfPresent([TradingAnalyticsAlert].self, forKey: .alerts)) ?? []
+        reportRows = (try? c.decodeIfPresent([TradingAnalyticsAccountRow].self, forKey: .reportRows)) ?? []
     }
 }
 
@@ -301,8 +301,8 @@ private struct TradingAnalyticsOptionsResponse: Decodable {
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
-        accounts = ((try? c.decodeIfPresent([TradingAnalyticsOption].self, forKey: .accounts)) ?? []) ?? []
-        staff = ((try? c.decodeIfPresent([TradingAnalyticsOption].self, forKey: .staff)) ?? []) ?? []
+        accounts = (try? c.decodeIfPresent([TradingAnalyticsOption].self, forKey: .accounts)) ?? []
+        staff = (try? c.decodeIfPresent([TradingAnalyticsOption].self, forKey: .staff)) ?? []
     }
 }
 

@@ -955,24 +955,19 @@ final class FloatingChatHead {
     }
 
     private func openChat(completion: (() -> Void)? = nil) {
-        if #available(iOS 17.0, *) {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            if OfficeCallCoordinator.shared.hasActiveCall {
-                openIntercom(completion: completion)
-            } else {
-                present(OfficeChatStandalone(), completion: completion)
-            }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if OfficeCallCoordinator.shared.hasActiveCall {
+            openIntercom(completion: completion)
+        } else {
+            present(OfficeChatStandalone(), completion: completion)
         }
     }
 
     private func openIntercom(completion: (() -> Void)? = nil) {
-        if #available(iOS 17.0, *) {
-            present(IntercomView(), completion: completion)
-        }
+        present(IntercomView(), completion: completion)
     }
 
     private func openTaskTray(completion: (() -> Void)? = nil) {
-        guard #available(iOS 17.0, *) else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         guard let root = overlay?.rootViewController else { return }
         presentationHidesRobot = true
@@ -1041,7 +1036,6 @@ final class FloatingChatHead {
     }
 
     private func openQuickActions(completion: (() -> Void)? = nil) {
-        guard #available(iOS 17.0, *) else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         guard let root = overlay?.rootViewController else { return }
         presentationHidesRobot = true

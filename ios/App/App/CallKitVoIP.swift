@@ -63,7 +63,9 @@ private final class AlmaAgentCallStatusAPITransport: AlmaAgentCallStatusTranspor
 // WhatsApp-parity spec: talk starts on answer, no app section is opened.
 
 @available(iOS 17.0, *)
-final class CallKitVoIP: NSObject {
+// @unchecked Sendable: all mutable call state is guarded by `withCallState`'s lock;
+// CXCallController completion closures only touch it through that gate.
+final class CallKitVoIP: NSObject, @unchecked Sendable {
     static let shared = CallKitVoIP()
 
     private var voipRegistry: PKPushRegistry?

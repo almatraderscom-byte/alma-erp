@@ -253,6 +253,7 @@ private struct SysDiagBusiness: Identifiable, Equatable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class SystemDiagnosticsVM {
     /// Web scopes via the global business switcher — native mirrors it with chips.
     var businessId = AlmaAccess.Context.currentId   // starts on the shell's current business

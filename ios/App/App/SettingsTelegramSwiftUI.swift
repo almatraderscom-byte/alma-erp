@@ -331,6 +331,7 @@ struct SettingsTelegramDashboard: Decodable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class SettingsTelegramVM {
     /// Web BUSINESS_LIST (src/lib/businesses.ts) — id → name, same order.
     static let businesses: [(id: String, name: String)] = [

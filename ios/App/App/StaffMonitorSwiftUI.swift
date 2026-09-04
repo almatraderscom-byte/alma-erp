@@ -772,7 +772,7 @@ struct StaffMonitorScreen: View {
                         Spacer(minLength: 4)
                         Button {
                             UISelectionFeedbackGenerator().selectionChanged()
-                            withAnimation { dismissedAlerts.insert(a.id) }
+                            withAnimation { _ = dismissedAlerts.insert(a.id) }
                         } label: {
                             Image(systemName: "xmark").font(.system(size: 9)).foregroundStyle(.secondary)
                         }

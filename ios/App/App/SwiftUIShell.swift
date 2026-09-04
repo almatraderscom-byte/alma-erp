@@ -615,7 +615,7 @@ extension AlmaTabBarController {
                     self?.pushSmart(on: navRef.value, path: path, title: title, icon: "safari")
                 },
                 openCompanion: { [weak self] in
-                    guard let self else { return }
+                    guard self != nil else { return }
                     let host = AlmaHostingController(
                         rootView: CompanionScreen())
                     host.title = "Phone Companion"

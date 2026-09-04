@@ -88,12 +88,16 @@ final class AlmaCompanionViewController: UIViewController, WKNavigationDelegate 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         stopButton = UIButton(type: .system)
-        stopButton.setTitle("⏹ STOP", for: .normal)
-        stopButton.setTitleColor(.white, for: .normal)
-        stopButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .bold)
-        stopButton.backgroundColor = UIColor(red: 0.88, green: 0.32, blue: 0.32, alpha: 1)
-        stopButton.layer.cornerRadius = 12
-        stopButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 14, bottom: 6, right: 14)
+        // UIButton.Configuration (contentEdgeInsets is deprecated / ignored on iOS 15+).
+        var stopConfig = UIButton.Configuration.filled()
+        stopConfig.attributedTitle = AttributedString(
+            "⏹ STOP", attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 13, weight: .bold)]))
+        stopConfig.baseForegroundColor = .white
+        stopConfig.baseBackgroundColor = UIColor(red: 0.88, green: 0.32, blue: 0.32, alpha: 1)
+        stopConfig.cornerStyle = .fixed
+        stopConfig.background.cornerRadius = 12
+        stopConfig.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14)
+        stopButton.configuration = stopConfig
         stopButton.addTarget(self, action: #selector(stopTapped), for: .touchUpInside)
         stopButton.translatesAutoresizingMaskIntoConstraints = false
 
@@ -362,7 +366,7 @@ final class AlmaCompanionViewController: UIViewController, WKNavigationDelegate 
     }
 
     private func navigate(to url: URL) async -> [String: Any] {
-        await MainActor.run { webView.load(URLRequest(url: url)) }
+        _ = await MainActor.run { webView.load(URLRequest(url: url)) }
         // Wait for load (didFinish flips the flag) with a 15s budget + settle.
         loadFinished = false
         for _ in 0..<60 {

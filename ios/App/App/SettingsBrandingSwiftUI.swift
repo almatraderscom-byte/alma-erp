@@ -149,6 +149,7 @@ struct SettingsBrandingResponse: Decodable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class SettingsBrandingVM {
     var brandings: [SettingsBrandingInfo] = []
     var fallback = false

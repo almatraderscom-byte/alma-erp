@@ -215,6 +215,7 @@ struct BusinessArchiveBusiness: Identifiable, Equatable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class BusinessArchiveVM {
     var businessId = AlmaAccess.Context.currentId   // starts on the shell's current business
     var modules: [BusinessArchiveModule] = []

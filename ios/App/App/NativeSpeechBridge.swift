@@ -84,7 +84,7 @@ public class NativeSpeechBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         #if canImport(Speech)
         if #available(iOS 16, *) {
             requestAuthorization { [weak self] granted in
-                guard let self = self else {
+                guard self != nil else {
                     call.resolve(["text": "", "onDevice": false, "reason": "released"])
                     return
                 }

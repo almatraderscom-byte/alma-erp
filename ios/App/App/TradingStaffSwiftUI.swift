@@ -411,7 +411,7 @@ struct TradingStaffScreen: View {
                         }
                         Button {
                             editingRole = member
-                            roleDraft = member.role ?? "p2p_trader"
+                            roleDraft = member.role
                         } label: {
                             Label("Role বদলান", systemImage: "person.text.rectangle")
                         }

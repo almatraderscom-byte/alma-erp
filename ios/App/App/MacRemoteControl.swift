@@ -653,7 +653,7 @@ final class MacRemoteControlStore {
             "POST", "/api/assistant/mac-agent/screen-video-token",
             body: VideoTokenRequest(deviceId: deviceId, uid: session.uid)
         ) as VideoTokenResponse)?.token
-        await session.disarmControl(viewToken: viewToken)
+        session.disarmControl(viewToken: viewToken)
         _ = try? await AlmaAPI.shared.send(
             "POST", "/api/assistant/mac-agent/screen-control-token",
             body: ControlTokenRequest(deviceId: deviceId, uid: session.uid, on: false)
@@ -1828,7 +1828,7 @@ struct MacKeyboardBar: View {
         // the parts that actually left (Codex P2).
         text = ""
         Task {
-            let sent = await control.sendText(payload)
+            let sent = control.sendText(payload)
             if !sent {
                 text = payload // nothing was lost silently — it comes back
                 AlmaAgentHaptics.error()
@@ -1998,7 +1998,7 @@ struct MacScreenFullScreen: View {
         guard !payload.isEmpty else { return }
         typed = ""
         Task {
-            if await !control.sendText(payload) { typed = payload }
+            if !control.sendText(payload) { typed = payload }
         }
     }
 

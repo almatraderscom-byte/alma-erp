@@ -236,14 +236,14 @@ struct AnalyticsResponse: Decodable {
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
         kpis = try? c.decodeIfPresent(AnalyticsKpis.self, forKey: .kpis)
         let status = (try? c.decodeIfPresent([String: AnalyticsFlexNumber].self, forKey: .byStatus)) ?? [:]
-        byStatus = (status ?? [:]).mapValues(\.value)
-        bySource = ((try? c.decodeIfPresent([String: AnalyticsSourceStat].self, forKey: .bySource)) ?? [:]) ?? [:]
+        byStatus = status.mapValues(\.value)
+        bySource = (try? c.decodeIfPresent([String: AnalyticsSourceStat].self, forKey: .bySource)) ?? [:]
         let payment = (try? c.decodeIfPresent([String: AnalyticsFlexNumber].self, forKey: .byPayment)) ?? [:]
-        byPayment = (payment ?? [:]).mapValues(\.value)
-        byCategory = ((try? c.decodeIfPresent([String: AnalyticsCategoryStat].self, forKey: .byCategory)) ?? [:]) ?? [:]
-        monthlyTrend = ((try? c.decodeIfPresent([AnalyticsTrendPoint].self, forKey: .monthlyTrend)) ?? []) ?? []
+        byPayment = payment.mapValues(\.value)
+        byCategory = (try? c.decodeIfPresent([String: AnalyticsCategoryStat].self, forKey: .byCategory)) ?? [:]
+        monthlyTrend = (try? c.decodeIfPresent([AnalyticsTrendPoint].self, forKey: .monthlyTrend)) ?? []
         let expenses = (try? c.decodeIfPresent([String: AnalyticsFlexNumber].self, forKey: .expenseByCat)) ?? [:]
-        expenseByCat = (expenses ?? [:]).mapValues(\.value)
+        expenseByCat = expenses.mapValues(\.value)
         totalExpenses = analyticsFlexInt(c, .totalExpenses)
     }
 }

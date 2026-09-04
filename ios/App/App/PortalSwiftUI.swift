@@ -2703,7 +2703,9 @@ import CoreLocation
 
 /// One-shot CLLocation fetch — the web acquireAttendanceLocation() twin.
 @available(iOS 17.0, *)
-final class PortalGpsOnce: NSObject, CLLocationManagerDelegate {
+// @unchecked Sendable: `finish` is only ever reached on the main queue (CLLocationManager
+// delegate + the main-queue watchdog), and it is idempotent (the continuation is consumed once).
+final class PortalGpsOnce: NSObject, CLLocationManagerDelegate, @unchecked Sendable {
     private let manager = CLLocationManager()
     private var continuation: CheckedContinuation<(location: CLLocation?, reason: String), Never>? = nil
 
