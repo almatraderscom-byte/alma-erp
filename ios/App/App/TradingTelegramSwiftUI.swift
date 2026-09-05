@@ -491,6 +491,7 @@ struct TradingTelegramAliasesResponse: Decodable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class TradingTelegramVM {
     enum Tab: String, CaseIterable {
         case drafts, monitor, live, groups, mapping

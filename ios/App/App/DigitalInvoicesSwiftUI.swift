@@ -1353,7 +1353,7 @@ private struct DigitalInvoiceActionsSheet: View {
 
 // MARK: - NP-7 (FN-02): PDFKit preview sheet (hosted PDF displayed natively)
 
-extension URL: Identifiable {
+extension URL: @retroactive Identifiable {
     public var id: String { absoluteString }
 }
 

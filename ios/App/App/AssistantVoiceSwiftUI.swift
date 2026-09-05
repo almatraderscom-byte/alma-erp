@@ -3836,7 +3836,7 @@ final class AlmaVoiceEngine {
             lifecycleApprovalPolicy = .reject
             lifecycleAppliedPlayback = nil
         }
-        if #available(iOS 17.0, *) { AlmaCallBarBridge.shared.engine = self }
+        AlmaCallBarBridge.shared.engine = self
         agentBriefSent = false
         agentSpokeThisLiveSession = false
         closed = false
@@ -4383,7 +4383,7 @@ final class AlmaVoiceEngine {
             if let agentCallEndRequest {
                 self.agentCallEndRequest = nil
                 agentCallEndRequest()
-            } else if #available(iOS 17.0, *), CallKitVoIP.shared.hasCall(callId: agentCallId) {
+            } else if CallKitVoIP.shared.hasCall(callId: agentCallId) {
                 Task {
                     _ = await CallKitVoIP.shared.requestEnd(
                         callId: agentCallId,
@@ -4451,7 +4451,7 @@ final class AlmaVoiceEngine {
             }
         }
         tts.stopAll()
-        if #available(iOS 17.0, *), AlmaCallBarBridge.shared.engine === self {
+        if AlmaCallBarBridge.shared.engine === self {
             AlmaCallBarBridge.shared.engine = nil
             AlmaCallBarBridge.shared.consoleVisible = false
         }
@@ -5478,10 +5478,8 @@ final class AlmaVoiceEngine {
                     .map { $0.portType.rawValue }.joined(separator: "+")
                 if self.speakerOn && outputs.contains("Receiver") {
                     self.live.nudgeSpeakerRoute()
-                    if #available(iOS 17.0, *) {
-                        Task { await CallKitVoIP.postAgentCallStatus(callId, status: nil,
-                                                                     note: "route was \(outputs) 2s after connect — nudged to speaker") }
-                    }
+                    Task { await CallKitVoIP.postAgentCallStatus(callId, status: nil,
+                                                                 note: "route was \(outputs) 2s after connect — nudged to speaker") }
                 }
             }
         }
@@ -5942,7 +5940,7 @@ final class AlmaVoiceEngine {
         modelEndPending = false
         // Agent call: go through the controller so its window tears down too
         // (on-device the engine end also closes the CallKit call → 'completed').
-        if #available(iOS 17.0, *), AgentCallController.shared.isActive,
+        if AgentCallController.shared.isActive,
            AgentCallController.shared.engine === self {
             AgentCallController.shared.endFromUI()
         } else {
@@ -6865,6 +6863,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private static var prewarmed: (session: SessionResponse, at: Date)?
     private static let prewarmLock = NSLock()
 
+    /// Synchronous critical section — NSLock must not be taken in an async context.
+    private static func storePrewarmed(_ minted: SessionResponse) {
+        prewarmLock.lock()
+        prewarmed = (minted, Date())
+        prewarmLock.unlock()
+    }
+
     static func prewarm() {
         Task.detached(priority: .userInitiated) {
             await AlmaAPI.shared.syncCookies()
@@ -6873,9 +6878,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     path: "/api/assistant/live-session", body: selection),
                   let minted = try? JSONDecoder().decode(SessionResponse.self, from: raw),
                   !minted.token.isEmpty else { return }
-            prewarmLock.lock()
-            prewarmed = (minted, Date())
-            prewarmLock.unlock()
+            storePrewarmed(minted)
             #if DEBUG
             NSLog("ALMA-VOICE prewarmed live-session token at ring")
             #endif
@@ -6911,6 +6914,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// engine, activated exactly once by `start`, and invalidated before stop
     /// tears down the current socket/audio graph.
     private let startAttemptLock = NSCondition()
+
+    /// Synchronous critical section on `startAttemptLock` (callable from async code —
+    /// the lock itself must not be taken inside an async function).
+    private func withStartAttemptLock<T>(_ body: () -> T) -> T {
+        startAttemptLock.lock()
+        defer { startAttemptLock.unlock() }
+        return body()
+    }
     private var startAttemptState = AlmaLiveVoiceStartAttemptState()
     private var startAttemptEngineConnectionGeneration: Int?
     private var startAttemptProfile: AlmaLiveVoiceProfile?
@@ -8249,7 +8260,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         } else {
             contextWindowCompression = ["slidingWindow": [:]]
         }
-        var setup: [String: Any] = [
+        let setup: [String: Any] = [
             "model": model.hasPrefix("models/") ? model : "models/\(model)",
             "generationConfig": generationConfig,
             "systemInstruction": ["parts": [["text": sessionProtocol.systemInstruction]]],
@@ -10375,13 +10386,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     recoveryAttempt: true,
                     startAttempt: startAttempt)
             } catch {
-                self.startAttemptLock.lock()
-                guard self.startAttemptState.acceptsActive(startAttempt) else {
-                    self.startAttemptLock.unlock()
-                    return
+                // NSCondition is unavailable from async contexts — take it in a sync helper.
+                let stillActive = self.withStartAttemptLock { () -> Bool in
+                    guard self.startAttemptState.acceptsActive(startAttempt) else { return false }
+                    self.reconnecting = false
+                    return true
                 }
-                self.reconnecting = false
-                self.startAttemptLock.unlock()
+                guard stillActive else { return }
                 self.fail(
                     "লাইভ ভয়েস সংযোগ বিচ্ছিন্ন হয়েছে।",
                     underlyingError: error,
@@ -11768,6 +11779,38 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         // Serialize the cancellation decision with the actual synchronous mic
         // mutation. If cancel wins first, no tap is installed. If start wins,
         // cancel waits and then immediately tears down the just-started graph.
+        let cancelledDuringStart = try reserveStartAndStartMic()
+        if cancelledDuringStart {
+            cancel()
+            throw CancellationError()
+        }
+
+        await MainActor.run { self.engine?.streamDidStart(from: self) }
+        try Task.checkCancellation()
+
+        // Assign the connection task while cancellation is excluded.  Otherwise
+        // cancel could observe nil, return, and let this stale start publish a new
+        // token/WebSocket task immediately afterward.
+        guard publishConnectTask() else {
+            cancel()
+            throw CancellationError()
+        }
+    }
+
+    private func isCancellationRequested() -> Bool {
+        lifecycleLock.lock()
+        let value = cancellationRequested
+        lifecycleLock.unlock()
+        return value
+    }
+
+    // The three helpers below are the synchronous critical sections of `start()`
+    // and `connect()`: NSLock must not be taken inside an async function (Swift 6
+    // error), so each lock/unlock pair lives in a plain sync method instead.
+
+    /// Reserves the start slot, resets state and starts the mic under the lifecycle
+    /// lock. Returns whether cancellation arrived while the mic was starting.
+    private func reserveStartAndStartMic() throws -> Bool {
         lifecycleLock.lock()
         guard !startReserved, !cancellationRequested, !Task.isCancelled else {
             lifecycleLock.unlock()
@@ -11784,35 +11827,29 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         }
         let cancelledDuringStart = Task.isCancelled || cancellationRequested
         lifecycleLock.unlock()
-        if cancelledDuringStart {
-            cancel()
-            throw CancellationError()
-        }
+        return cancelledDuringStart
+    }
 
-        await MainActor.run { self.engine?.streamDidStart(from: self) }
-        try Task.checkCancellation()
-
-        // Assign the connection task while cancellation is excluded.  Otherwise
-        // cancel could observe nil, return, and let this stale start publish a new
-        // token/WebSocket task immediately afterward.
+    /// Publishes the connect task while cancellation is excluded. False = already cancelled.
+    private func publishConnectTask() -> Bool {
         lifecycleLock.lock()
-        guard !cancellationRequested, !Task.isCancelled else {
-            lifecycleLock.unlock()
-            cancel()
-            throw CancellationError()
-        }
+        defer { lifecycleLock.unlock() }
+        guard !cancellationRequested, !Task.isCancelled else { return false }
         connectTask = Task { [weak self] in
             guard let self, !self.isCancellationRequested(), !Task.isCancelled else { return }
             await self.connect()
         }
-        lifecycleLock.unlock()
+        return true
     }
 
-    private func isCancellationRequested() -> Bool {
+    /// Publishes the session + socket while cancellation is excluded. False = already cancelled.
+    private func publishSocket(_ sess: URLSession, _ task: URLSessionWebSocketTask) -> Bool {
         lifecycleLock.lock()
-        let value = cancellationRequested
-        lifecycleLock.unlock()
-        return value
+        defer { lifecycleLock.unlock() }
+        guard !cancellationRequested, !Task.isCancelled else { return false }
+        session = sess
+        ws = task
+        return true
     }
 
     /// Token mint → socket handshake → force OUR endpointing → flush the buffer.
@@ -11836,15 +11873,10 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
             // Token mint can return after lifecycle cancellation. Serialize the
             // final socket publication with `cancel()` so it either rejects the
             // stale local task or publishes it before cancel tears it down.
-            lifecycleLock.lock()
-            guard !cancellationRequested, !Task.isCancelled else {
-                lifecycleLock.unlock()
+            guard publishSocket(sess, task) else {
                 sess.invalidateAndCancel()
                 return
             }
-            session = sess
-            ws = task
-            lifecycleLock.unlock()
             try await awaitSocketOpen(task)
             if failed { closeSocket(); return }
             // NOTE: no session.update is sent — the GA realtime API rejects the

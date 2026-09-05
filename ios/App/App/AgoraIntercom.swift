@@ -297,7 +297,9 @@ private final class AgoraChannelLeaveBarrier: @unchecked Sendable {
 
 @available(iOS 17.0, *)
 @Observable
-final class OfficeCallCoordinator: NSObject {
+// @unchecked Sendable: every Timer / SDK callback re-enters through `Task { @MainActor }`
+// before touching observed state — the closures only carry a weak reference across.
+final class OfficeCallCoordinator: NSObject, @unchecked Sendable {
     static let shared = OfficeCallCoordinator()
 
     /// `ringing` = a 1:1 call is placed/answered but the other party hasn't joined yet

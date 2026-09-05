@@ -661,13 +661,14 @@ struct TradingAccountAdminSection: View {
                 shotDate = f.string(from: Date())
             }
         }
+        let busy = store.busy
         HStack {
             PhotosPicker(selection: $photoItem, matching: .images) {
-                Label(store.busy ? "আপলোড হচ্ছে…" : "📸 আপলোড", systemImage: "square.and.arrow.up")
+                Label(busy ? "আপলোড হচ্ছে…" : "📸 আপলোড", systemImage: "square.and.arrow.up")
                     .font(.caption.weight(.bold))
             }
             .buttonStyle(.bordered)
-            .disabled(store.busy)
+            .disabled(busy)
             Spacer()
             Toggle("Archived", isOn: Binding(
                 get: { store.screenshotsArchived },

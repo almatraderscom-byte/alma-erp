@@ -115,7 +115,7 @@ public class NativeIntelligenceBridgePlugin: CAPPlugin, CAPBridgedPlugin {
     /// the caller falls back rather than trusting an off-list answer.
     @objc public func classify(_ call: CAPPluginCall) {
         let text = call.getString("text", "")
-        let labels = (call.getArray("labels", []) ?? []).compactMap { $0 as? String }
+        let labels = call.getArray("labels", []).compactMap { $0 as? String }
 
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !labels.isEmpty else {
             call.resolve(["label": "", "onDevice": false, "reason": "bad_input"])

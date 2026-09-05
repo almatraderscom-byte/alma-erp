@@ -137,6 +137,7 @@ struct PaymentAccountsListResponse: Decodable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class PaymentAccountsVM {
     var methods: [PaymentAccountMethod] = []
     /// Same default business the other native tabs scope to (web _businessId default).

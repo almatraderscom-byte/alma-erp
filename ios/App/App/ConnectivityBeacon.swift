@@ -19,7 +19,9 @@ import SwiftUI
 import Network
 
 @available(iOS 17.0, *)
-final class ConnectivityBeacon {
+// @unchecked Sendable: timer / path-monitor closures hop to `Task { @MainActor }` before
+// touching the overlay windows; nothing is mutated off the main actor.
+final class ConnectivityBeacon: @unchecked Sendable {
     static let shared = ConnectivityBeacon()
     private init() {}
 

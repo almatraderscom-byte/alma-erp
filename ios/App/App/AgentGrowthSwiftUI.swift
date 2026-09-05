@@ -359,6 +359,7 @@ struct AgentAdsEvent: Decodable, Equatable, Identifiable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class AgentGrowthVM {
     var gsc: AgentGrowthGscStatus? = nil
     var features: AgentGrowthFeatureStatus? = nil

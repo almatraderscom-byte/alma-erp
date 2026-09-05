@@ -1,0 +1,96 @@
+AgentGrowthSwiftUI.swift:392:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+AgentGrowthSwiftUI.swift:508:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+AgoraIntercom.swift:1379:27: warning: capture of 'self' with non-Sendable type 'OfficeCallCoordinator?' in a '@Sendable' closure
+AgoraIntercom.swift:1418:27: warning: capture of 'self' with non-Sendable type 'OfficeCallCoordinator?' in a '@Sendable' closure
+AgoraIntercom.swift:2378:29: warning: capture of 'self' with non-Sendable type 'OfficeCallCoordinator?' in a '@Sendable' closure
+AgoraIntercom.swift:2403:25: warning: capture of 'self' with non-Sendable type 'OfficeCallCoordinator?' in a '@Sendable' closure
+AlmaCompanion.swift:365:25: warning: result of call to 'run(resultType:body:)' is unused
+AlmaCompanion.swift:96:20: warning: 'contentEdgeInsets' was deprecated in iOS 15.0: This property is ignored when using UIButtonConfiguration
+AlmaPerfLog.swift:70:9: warning: result of 'try?' is unused
+AnalyticsSwiftUI.swift:239:28: warning: left side of nil coalescing operator '??' has non-optional type '[String : AnalyticsFlexNumber]', so the right side is never used
+AnalyticsSwiftUI.swift:240:109: warning: left side of nil coalescing operator '??' has non-optional type '[String : AnalyticsSourceStat]', so the right side is never used
+AnalyticsSwiftUI.swift:242:30: warning: left side of nil coalescing operator '??' has non-optional type '[String : AnalyticsFlexNumber]', so the right side is never used
+AnalyticsSwiftUI.swift:243:115: warning: left side of nil coalescing operator '??' has non-optional type '[String : AnalyticsCategoryStat]', so the right side is never used
+AnalyticsSwiftUI.swift:244:108: warning: left side of nil coalescing operator '??' has non-optional type '[AnalyticsTrendPoint]', so the right side is never used
+AnalyticsSwiftUI.swift:246:34: warning: left side of nil coalescing operator '??' has non-optional type '[String : AnalyticsFlexNumber]', so the right side is never used
+AssistantVoiceSwiftUI.swift:10378:39: warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:10380:43: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:10384:39: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:11771:23: warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:11773:27: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:11782:27: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:11786:23: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:11798:23: warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:11800:27: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:11808:23: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:11839:27: warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:11841:31: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:11847:27: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:3839:12: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+AssistantVoiceSwiftUI.swift:4386:23: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+AssistantVoiceSwiftUI.swift:4454:12: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+AssistantVoiceSwiftUI.swift:5481:24: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+AssistantVoiceSwiftUI.swift:5945:12: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+AssistantVoiceSwiftUI.swift:6876:25: warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:6878:25: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+AssistantVoiceSwiftUI.swift:8252:13: warning: variable 'setup' was never mutated; consider changing to 'let' constant
+BrowserLiveSwiftUI.swift:243:20: warning: no 'async' operations occur within 'await' expression
+BusinessArchiveSwiftUI.swift:327:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+BusinessArchiveSwiftUI.swift:362:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+BusinessArchiveSwiftUI.swift:390:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+CallKitVoIP.swift:648:38: warning: capture of 'self' with non-Sendable type 'CallKitVoIP?' in a '@Sendable' closure
+CallKitVoIP.swift:693:38: warning: capture of 'self' with non-Sendable type 'CallKitVoIP?' in a '@Sendable' closure
+CallKitVoIP.swift:733:21: warning: capture of 'self' with non-Sendable type 'CallKitVoIP?' in a '@Sendable' closure
+ConnectivityBeacon.swift:127:27: warning: capture of 'self' with non-Sendable type 'ConnectivityBeacon?' in a '@Sendable' closure
+ConnectivityBeacon.swift:59:31: warning: capture of 'self' with non-Sendable type 'ConnectivityBeacon?' in a '@Sendable' closure
+DigitalInvoicesSwiftUI.swift:1356:1: warning: extension declares a conformance of imported type 'URL' to imported protocol 'Identifiable'; this will not behave correctly if the owners of 'Foundation' introduce this conformance in the future
+EntityCacheBridge.swift:44:50: warning: left side of nil coalescing operator '??' has non-optional type 'JSArray' (aka 'Array<any JSValue>'), so the right side is never used
+EntityCacheBridge.swift:45:54: warning: left side of nil coalescing operator '??' has non-optional type 'JSArray' (aka 'Array<any JSValue>'), so the right side is never used
+FloatingChatHead.swift:1044:15: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+FloatingChatHead.swift:958:12: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+FloatingChatHead.swift:969:12: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+FloatingChatHead.swift:975:15: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+MacRemoteControl.swift:1831:24: warning: no 'async' operations occur within 'await' expression
+MacRemoteControl.swift:2001:16: warning: no 'async' operations occur within 'await' expression
+MacRemoteControl.swift:656:9: warning: no 'async' operations occur within 'await' expression
+MoreMenuSwiftUI.swift:1332:12: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+NativeIntelligenceBridge.swift:118:51: warning: left side of nil coalescing operator '??' has non-optional type 'JSArray' (aka 'Array<any JSValue>'), so the right side is never used
+NativeSpeechBridge.swift:87:27: warning: value 'self' was defined but never used; consider replacing with boolean test
+PaymentAccountsSwiftUI.swift:223:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+PaymentAccountsSwiftUI.swift:250:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+PaymentAccountsSwiftUI.swift:269:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+PaymentAccountsSwiftUI.swift:286:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+PhoneEngine.swift:56:19: warning: call to main actor-isolated instance method 'autoStartIfEnabled()' in a synchronous nonisolated context
+PhoneEngine.swift:63:19: warning: call to main actor-isolated instance method 'teardown()' in a synchronous nonisolated context
+PortalOfficeSwiftUI.swift:200:27: warning: left side of nil coalescing operator '??' has non-optional type '[PortalOfficeChatMsg.Attachment]', so the right side is never used
+PortalSwiftUI.swift:2726:17: warning: capture of 'self' with non-Sendable type 'PortalGpsOnce?' in a '@Sendable' closure
+SettingsBrandingSwiftUI.swift:255:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+SettingsTelegramSwiftUI.swift:499:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+SettingsUsersSwiftUI.swift:261:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+SettingsUsersSwiftUI.swift:278:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+SettingsUsersSwiftUI.swift:296:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+SettingsUsersSwiftUI.swift:316:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+StaffMonitorSwiftUI.swift:775:29: warning: result of call to 'withAnimation' is unused
+SwiftUIShell.swift:618:31: warning: value 'self' was defined but never used; consider replacing with boolean test
+SystemDiagnosticsSwiftUI.swift:332:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+TradingAccountAdminSwiftUI.swift:666:29: warning: main actor-isolated property 'busy' can not be referenced from a Sendable closure
+TradingAnalyticsSwiftUI.swift:270:133: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsAccountRow]', so the right side is never used
+TradingAnalyticsSwiftUI.swift:271:121: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsAccountRow]', so the right side is never used
+TradingAnalyticsSwiftUI.swift:272:127: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsAccountRow]', so the right side is never used
+TradingAnalyticsSwiftUI.swift:273:135: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsAccountRow]', so the right side is never used
+TradingAnalyticsSwiftUI.swift:274:99: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsStaffRow]', so the right side is never used
+TradingAnalyticsSwiftUI.swift:275:125: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsExpenseCat]', so the right side is never used
+TradingAnalyticsSwiftUI.swift:276:101: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsTrendPoint]', so the right side is never used
+TradingAnalyticsSwiftUI.swift:277:98: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsAlert]', so the right side is never used
+TradingAnalyticsSwiftUI.swift:278:111: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsAccountRow]', so the right side is never used
+TradingAnalyticsSwiftUI.swift:304:103: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsOption]', so the right side is never used
+TradingAnalyticsSwiftUI.swift:305:97: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsOption]', so the right side is never used
+TradingStaffSwiftUI.swift:414:53: warning: left side of nil coalescing operator '??' has non-optional type 'String', so the right side is never used
+TradingTelegramSwiftUI.swift:703:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+TradingTelegramSwiftUI.swift:782:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+TradingTelegramSwiftUI.swift:820:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+TradingTelegramSwiftUI.swift:836:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+TradingTelegramSwiftUI.swift:863:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+TradingTelegramSwiftUI.swift:890:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+TradingTelegramSwiftUI.swift:909:17: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+TradingTelegramSwiftUI.swift:963:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode

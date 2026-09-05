@@ -146,6 +146,7 @@ struct SettingsUsersListResponse: Decodable {
 
 @available(iOS 17.0, *)
 @Observable
+@MainActor
 final class SettingsUsersVM {
     var users: [SettingsUserRow] = []
     var roleFilter = "ALL"                // ALL | SUPER_ADMIN | ADMIN | HR | STAFF | VIEWER

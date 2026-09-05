@@ -197,7 +197,7 @@ struct PortalOfficeChatMsg: Decodable, Identifiable, Equatable {
         authorImageUrl = try? c.decodeIfPresent(String.self, forKey: .authorImageUrl)
         body = (try? c.decode(String.self, forKey: .body)) ?? ""
         let atts = (try? c.decodeIfPresent([Attachment].self, forKey: .attachments)) ?? []
-        imageURLs = (atts ?? []).compactMap { $0.url }.filter { $0.hasPrefix("http") }
+        imageURLs = atts.compactMap { $0.url }.filter { $0.hasPrefix("http") }
         status = try? c.decodeIfPresent(String.self, forKey: .status)
         isAgentReply = (try? c.decodeIfPresent(Bool.self, forKey: .isAgentReply)) ?? false
         createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)

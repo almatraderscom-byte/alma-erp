@@ -41,8 +41,8 @@ public class EntityCacheBridgePlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let orders = call.getArray("orders", []) ?? []
-        let products = call.getArray("products", []) ?? []
+        let orders = call.getArray("orders", [])
+        let products = call.getArray("products", [])
 
         persist(orders, forKey: "orders", into: defaults)
         persist(products, forKey: "products", into: defaults)
