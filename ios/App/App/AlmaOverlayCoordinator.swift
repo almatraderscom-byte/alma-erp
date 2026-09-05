@@ -47,6 +47,9 @@ final class AlmaOverlayCoordinator {
 
     private init() {
         NotificationCenter.default.addObserver(
+            self, selector: #selector(reapplyAppTheme),
+            name: .almaThemeChanged, object: nil)
+        NotificationCenter.default.addObserver(
             self, selector: #selector(keyboardWillChange(_:)),
             name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(
@@ -81,6 +84,30 @@ final class AlmaOverlayCoordinator {
     /// Accessibility passthroughs — one source so overlays stay consistent.
     var reduceMotion: Bool { UIAccessibility.isReduceMotionEnabled }
     var reduceTransparency: Bool { UIAccessibility.isReduceTransparencyEnabled }
+
+    // MARK: App theme on overlay windows
+
+    /// Overlay windows registered here. The app follows its OWN persisted light/dark
+    /// mode (AlmaTheme, web-synced), not the system appearance. The main tab window
+    /// carries `overrideUserInterfaceStyle` (SwiftUIShell.applyTheme), but a separate
+    /// overlay UIWindow does not inherit it — so anything presented FROM that window
+    /// (robot task tray / office chat / quick actions, offline beacon, agent call) fell
+    /// back to the system style and rendered light inside a dark app. Registering the
+    /// window here pins it to the app theme and re-pins it on every theme flip.
+    private var themedWindows: [WeakWindow] = []
+    private struct WeakWindow { weak var window: UIWindow? }
+
+    /// Pin an overlay window to the app's light/dark mode (call once after creating it).
+    func adoptAppTheme(_ window: UIWindow) {
+        window.overrideUserInterfaceStyle = AlmaTheme.interfaceStyle
+        themedWindows.removeAll { $0.window == nil || $0.window === window }
+        themedWindows.append(WeakWindow(window: window))
+    }
+
+    @objc private func reapplyAppTheme() {
+        themedWindows.removeAll { $0.window == nil }
+        for entry in themedWindows { entry.window?.overrideUserInterfaceStyle = AlmaTheme.interfaceStyle }
+    }
 
     /// The single foreground-scene lookup (was copied verbatim in three files).
     func foregroundScene() -> UIWindowScene? {

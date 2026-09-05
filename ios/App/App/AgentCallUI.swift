@@ -349,6 +349,7 @@ final class AgentCallController: NSObject {
         let w = UIWindow(windowScene: scene)
         w.windowLevel = .alert - 1   // above app UI + FloatingChatHead, below system alerts
         w.backgroundColor = .clear
+        AlmaOverlayCoordinator.shared.adoptAppTheme(w)
         w.rootViewController = UIHostingController(
             rootView: AgentCallScreen(engine: engine, startedAt: startedAt ?? Date()) { [weak self] in
                 self?.endFromUI()
