@@ -245,6 +245,9 @@ final class FloatingChatHead {
         let w = PassthroughWindow(windowScene: scene)
         w.windowLevel = AlmaOverlayCoordinator.Level.chatHead
         w.backgroundColor = .clear
+        // Sheets presented from this window (task tray / office chat / quick actions)
+        // must follow the app's own dark/light mode, not the system appearance.
+        AlmaOverlayCoordinator.shared.adoptAppTheme(w)
         let root = UIViewController()
         root.view.backgroundColor = .clear
         w.rootViewController = root

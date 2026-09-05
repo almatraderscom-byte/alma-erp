@@ -96,6 +96,7 @@ final class ConnectivityBeacon: @unchecked Sendable {
         let w = UIWindow(windowScene: scene)
         w.windowLevel = AlmaOverlayCoordinator.Level.beacon
         w.backgroundColor = .clear
+        AlmaOverlayCoordinator.shared.adoptAppTheme(w)
         let host = UIHostingController(rootView: OfflineBeaconView())
         host.view.backgroundColor = .clear
         w.rootViewController = host
